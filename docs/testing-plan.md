@@ -6,17 +6,17 @@ Testing must prove business invariants, tenant/location isolation, server-enforc
 
 ## Test layers
 
-| Layer | Scope | Runs |
-| --- | --- | --- |
-| Static checks | Formatting, lint rules, strict TypeScript, dependency and migration consistency | Every change |
-| Unit tests | Pure validation, state machines, scores, due dates, recurrence, qualification and retraining rules | Every change |
-| Database integration | Constraints, transactions, repositories, tenant predicates, migrations and indexes | Every pull request against PostgreSQL |
-| Service/route integration | Authentication, authorization, validation, idempotency, errors, jobs, uploads with provider fakes | Every pull request |
-| Component tests | Accessible behavior, form validation, state rendering, keyboard/touch interactions | Every pull request for UI changes |
-| Browser E2E | Cross-role workflows on real app/database and representative viewports | Critical subset per PR; full suite before phase/release |
-| Security regression | IDOR/tenant escape, rate limits, session separation, QR/file/upload abuse, CSRF | Every relevant change and full audit |
-| Performance checks | Query counts/plans, list pagination, payload/media budgets, dashboard aggregates | Feature gates and release audit |
-| Visual/accessibility | Approved-screen comparison, automated accessibility plus manual keyboard/screen-reader review | After designs exist and before phase signoff |
+| Layer                     | Scope                                                                                              | Runs                                                    |
+| ------------------------- | -------------------------------------------------------------------------------------------------- | ------------------------------------------------------- |
+| Static checks             | Formatting, lint rules, strict TypeScript, dependency and migration consistency                    | Every change                                            |
+| Unit tests                | Pure validation, state machines, scores, due dates, recurrence, qualification and retraining rules | Every change                                            |
+| Database integration      | Constraints, transactions, repositories, tenant predicates, migrations and indexes                 | Every pull request against PostgreSQL                   |
+| Service/route integration | Authentication, authorization, validation, idempotency, errors, jobs, uploads with provider fakes  | Every pull request                                      |
+| Component tests           | Accessible behavior, form validation, state rendering, keyboard/touch interactions                 | Every pull request for UI changes                       |
+| Browser E2E               | Cross-role workflows on real app/database and representative viewports                             | Critical subset per PR; full suite before phase/release |
+| Security regression       | IDOR/tenant escape, rate limits, session separation, QR/file/upload abuse, CSRF                    | Every relevant change and full audit                    |
+| Performance checks        | Query counts/plans, list pagination, payload/media budgets, dashboard aggregates                   | Feature gates and release audit                         |
+| Visual/accessibility      | Approved-screen comparison, automated accessibility plus manual keyboard/screen-reader review      | After designs exist and before phase signoff            |
 
 ## Test environment and data
 
@@ -30,20 +30,20 @@ Testing must prove business invariants, tenant/location isolation, server-enforc
 
 ## Core invariant matrix
 
-| Domain | Required proof |
-| --- | --- |
-| Tenancy | A user cannot read, mutate, infer existence of, export, print, scan, or access media from another organization. |
-| Locations | Restricted Managers and Employees cannot cross authorized locations through URLs, filters, payload IDs, bulk targets, or indirect relations. |
-| Sessions | Manager and employee cookies are non-interchangeable, expire/revoke correctly, and preserve only safe internal redirects. |
-| Credentials | PIN/password/recovery values never persist or log in plain text; rate limits and temporary lockouts behave deterministically. |
-| SOPs | Publish requires valid finished uploads and steps; publication is immutable; restoration and editing clone drafts; training retains exact version. |
-| QR | Tokens are high entropy, revocable, stable across publication updates, and do not reveal sequential identities. |
-| Training | Server rejects skipped requirements, duplicate transitions, excess attempts, invalid scoring, and unauthorized evidence. Resume returns the authoritative step. |
-| Approvals | Decisions are permanent, notes are required where specified, corrections retain original and replacement evidence, and status transitions are valid. |
-| Qualifications | Awards require every configured prerequisite; expiry/revocation retains history; timezone/date calculations are correct. |
-| Checklists | Required proof/timers block completion; submission is idempotent; submitted runs cannot be silently edited. |
-| AI/translations | Only schema-valid AI data enters drafts; AI never publishes; approved translations are not overwritten. |
-| Notifications/jobs | Dedupe keys prevent repeats, retries are safe, disabled accounts receive nothing, and timezone windows are correct. |
+| Domain             | Required proof                                                                                                                                                  |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Tenancy            | A user cannot read, mutate, infer existence of, export, print, scan, or access media from another organization.                                                 |
+| Locations          | Restricted Managers and Employees cannot cross authorized locations through URLs, filters, payload IDs, bulk targets, or indirect relations.                    |
+| Sessions           | Manager and employee cookies are non-interchangeable, expire/revoke correctly, and preserve only safe internal redirects.                                       |
+| Credentials        | PIN/password/recovery values never persist or log in plain text; rate limits and temporary lockouts behave deterministically.                                   |
+| SOPs               | Publish requires valid finished uploads and steps; publication is immutable; restoration and editing clone drafts; training retains exact version.              |
+| QR                 | Tokens are high entropy, revocable, stable across publication updates, and do not reveal sequential identities.                                                 |
+| Training           | Server rejects skipped requirements, duplicate transitions, excess attempts, invalid scoring, and unauthorized evidence. Resume returns the authoritative step. |
+| Approvals          | Decisions are permanent, notes are required where specified, corrections retain original and replacement evidence, and status transitions are valid.            |
+| Qualifications     | Awards require every configured prerequisite; expiry/revocation retains history; timezone/date calculations are correct.                                        |
+| Checklists         | Required proof/timers block completion; submission is idempotent; submitted runs cannot be silently edited.                                                     |
+| AI/translations    | Only schema-valid AI data enters drafts; AI never publishes; approved translations are not overwritten.                                                         |
+| Notifications/jobs | Dedupe keys prevent repeats, retries are safe, disabled accounts receive nothing, and timezone windows are correct.                                             |
 
 ## Phase-by-phase minimum coverage
 
@@ -90,4 +90,3 @@ Add malicious cases for oversized/forged uploads, path/object-key manipulation, 
 Before each phase closes, record exact commands and outcomes. Required gates are clean formatting, lint, strict type check, relevant unit/integration/component/E2E tests, empty-database migration, and production build when the application exists. Do not skip or weaken a failing test. Quarantined tests require an owner, reason, and short expiry and cannot cover a critical security or business invariant.
 
 Because approved designs are absent, visual regression baselines cannot be accepted during Phase 0. Add baseline screenshots only after design reconciliation; otherwise tests may entrench an unapproved UI.
-

@@ -9,4 +9,3 @@ Place the visual source-of-truth files here, including:
 - Loading, empty, validation, success, and error states
 
 Record the origin and approval status of each artifact when possible.
-

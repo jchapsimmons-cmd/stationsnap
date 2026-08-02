@@ -19,6 +19,7 @@ test-results/
 logs/
 tmp/
 temp/
+.tmp/
 
 # Uploaded or generated media
 uploads/
@@ -31,4 +32,3 @@ Thumbs.db
 
 # TypeScript cache
 *.tsbuildinfo
-

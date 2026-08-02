@@ -1,0 +1,65 @@
+{
+  "name": "stationsnap",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Mobile-first restaurant SOP and training platform",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "eslint . --max-warnings=0",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate": "tsx src/server/db/migrate.ts",
+    "db:seed": "tsx src/server/db/seed.ts",
+    "db:verify": "tsx src/server/db/verify.ts",
+    "verify": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run db:verify && npm run build"
+  },
+  "dependencies": {
+    "clsx": "^2.1.1",
+    "drizzle-orm": "^0.45.2",
+    "next": "^16.2.12",
+    "pg": "^8.22.0",
+    "pino": "^10.3.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^7.0.0",
+    "@testing-library/react": "^16.3.2",
+    "@testing-library/user-event": "^14.6.1",
+    "@types/node": "^26.1.2",
+    "@types/pg": "^8.20.3",
+    "@types/react": "^19.2.18",
+    "@types/react-dom": "^19.2.4",
+    "@vitejs/plugin-react": "^6.0.5",
+    "@vitest/coverage-v8": "^4.1.10",
+    "drizzle-kit": "^0.31.10",
+    "embedded-postgres": "^18.4.0-beta.17",
+    "eslint": "^9.39.5",
+    "eslint-config-next": "^16.2.12",
+    "jsdom": "^30.0.1",
+    "prettier": "^3.9.6",
+    "tsx": "^4.23.4",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.10"
+  },
+  "allowScripts": {
+    "@embedded-postgres/windows-x64@18.4.0-beta.17": true,
+    "esbuild@0.25.12": true
+  },
+  "overrides": {
+    "esbuild": "0.25.12",
+    "postcss": "8.5.25",
+    "sharp": "0.35.3"
+  }
+}

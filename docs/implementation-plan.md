@@ -10,17 +10,17 @@ The supplied build-phase specification is therefore the product and acceptance-c
 
 ## Current technology stack
 
-| Area | Current state | Phase 1 decision boundary |
-| --- | --- | --- |
-| Application framework | None | Select a maintained TypeScript web framework with server rendering and mobile-first routing. Next.js App Router is the leading candidate, subject to Phase 1 dependency review. |
-| Language | None | TypeScript with strict checking and no unchecked JavaScript application paths. |
-| Database | None | PostgreSQL, as required. Choose and lock a typed migration/query layer in Phase 1. |
-| Authentication | None | Select a manager session implementation that supports secure recovery or email login; implement separate employee PIN sessions in Phase 2. |
-| Validation | None | Shared schemas at every external boundary, including environment, forms, APIs, jobs, and AI output. |
-| Storage | None | Object-storage abstraction with private objects and signed access; provider selection can wait until media work. |
-| Jobs | None | Durable, idempotent background jobs before AI, schedules, or notification automation. |
-| Testing | None | Unit, integration, browser E2E, accessibility, and tenant-isolation coverage. |
-| Observability | None | Structured, redacted logs and monitoring hooks. |
+| Area                  | Current state | Phase 1 decision boundary                                                                                                                                                       |
+| --------------------- | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Application framework | None          | Select a maintained TypeScript web framework with server rendering and mobile-first routing. Next.js App Router is the leading candidate, subject to Phase 1 dependency review. |
+| Language              | None          | TypeScript with strict checking and no unchecked JavaScript application paths.                                                                                                  |
+| Database              | None          | PostgreSQL, as required. Choose and lock a typed migration/query layer in Phase 1.                                                                                              |
+| Authentication        | None          | Select a manager session implementation that supports secure recovery or email login; implement separate employee PIN sessions in Phase 2.                                      |
+| Validation            | None          | Shared schemas at every external boundary, including environment, forms, APIs, jobs, and AI output.                                                                             |
+| Storage               | None          | Object-storage abstraction with private objects and signed access; provider selection can wait until media work.                                                                |
+| Jobs                  | None          | Durable, idempotent background jobs before AI, schedules, or notification automation.                                                                                           |
+| Testing               | None          | Unit, integration, browser E2E, accessibility, and tenant-isolation coverage.                                                                                                   |
+| Observability         | None          | Structured, redacted logs and monitoring hooks.                                                                                                                                 |
 
 Exact package versions and providers must be selected in Phase 1 from maintained releases and recorded in the lockfile and architecture notes. Phase 0 intentionally does not install dependencies.
 
@@ -118,4 +118,3 @@ The exact technical order preserves the numbered phases because each later capab
 Each phase must finish with formatting, linting, strict type checking, relevant migrations from an empty database, seed verification when applicable, and automated tests. A phase is not complete when controls are decorative, authorization exists only in the browser, or documented acceptance criteria have not been exercised.
 
 Design files should ideally arrive before Phase 1 UI tokens are finalized and no later than before Phase 3 product screens. If they arrive later, perform a design reconciliation before continuing feature work rather than allowing visual divergence to compound.
-
