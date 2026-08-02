@@ -4,7 +4,7 @@ StationSnap is a mobile-first restaurant SOP, training, qualification, and check
 
 ## Repository status
 
-This repository is an empty project foundation. Application implementation should begin only after Phase 0 reviews the approved product requirements, design files, and any existing technical materials.
+Phase 0 is complete as a greenfield technical assessment. There is no application implementation yet. Approved visual designs are still required before visual fidelity can be evaluated; see `docs/design-component-map.md` for the provisional functional mapping.
 
 ## Add source materials
 
@@ -13,7 +13,7 @@ This repository is an empty project foundation. Application implementation shoul
 - Put technical assessment and implementation planning documents in `docs/`.
 - Do not commit passwords, API keys, database credentials, employee PINs, or production data.
 
-## Planned Phase 0 documents
+## Phase 0 documents
 
 - `docs/implementation-plan.md`
 - `docs/route-map.md`
@@ -24,4 +24,3 @@ This repository is an empty project foundation. Application implementation shoul
 ## Local environment
 
 Copy `.env.example` to `.env` when application development begins. The local `.env` file is ignored by Git.
-
