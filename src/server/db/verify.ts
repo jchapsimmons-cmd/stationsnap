@@ -62,13 +62,19 @@ import {
   createDraftFromCurrentVersion,
   createSop,
   createStep,
+  createTrainingQuestion,
   deleteStep,
+  deleteTrainingQuestion,
   duplicateStep,
   getPublishedSopForEmployee,
   getPublishReadiness,
   getSop,
   getSopDraft,
   getSopVersionDetail,
+  getStepTrainingRequirementsDraft,
+  getTrainingConfigDraft,
+  getTrainingQuestion,
+  getTrainingQuestionsDraft,
   hasDraftVersion,
   listPublishedSopsForEmployee,
   listRecentSopsForEmployee,
@@ -77,8 +83,12 @@ import {
   previewSop,
   publishSop,
   reorderSteps,
+  reorderTrainingQuestions,
   restoreSopVersion,
   updateStep,
+  updateStepTrainingRequirements,
+  updateTrainingConfig,
+  updateTrainingQuestion,
 } from "@/server/sops/service";
 import { getMediaFileForEmployee, uploadMedia } from "@/server/storage/media-service";
 
@@ -609,6 +619,16 @@ async function verifyDatabase(): Promise<void> {
       new File([new Uint8Array(smallPng)], "reference.png", { type: "image/png" }),
     );
     return uploadMedia(actor, formData, "verify-media-upload");
+  }
+  async function uploadTestVideo(actor: ManagerSessionContext) {
+    const formData = new FormData();
+    formData.set(
+      "file",
+      new File([new Uint8Array(Buffer.from("not-a-real-video"))], "reference.mp4", {
+        type: "video/mp4",
+      }),
+    );
+    return uploadMedia(actor, formData, "verify-media-upload-video");
   }
 
   const cleanCover = await uploadTestImage(managerContext);
@@ -1811,6 +1831,628 @@ async function verifyDatabase(): Promise<void> {
     throw new Error("QR token enumeration was not rate limited");
   }
 
+  // --- Phase 7: training configuration and questions ---
+
+  const trainingVideo = await uploadTestVideo(managerContext);
+  if (trainingVideo.status !== "ready") throw new Error("Video upload did not mark the file ready");
+
+  const trainingDraft = await createSop(
+    managerContext,
+    {
+      title: "Fryer safety training",
+      description: "Fryer startup and safe operation",
+      category: "safety",
+      locationId: seedIds.locations.downtown,
+      stationId: seedIds.stations.fry,
+      estimatedMinutes: 10,
+      difficulty: "beginner",
+      coverImageFileId: null,
+      sourceVideoFileId: null,
+      materials: [],
+      warnings: [],
+    },
+    "verify-phase7-sop-create",
+  );
+  const trainingStepA = await createStep(
+    managerContext,
+    trainingDraft.id,
+    {
+      title: "Watch the safety briefing",
+      instruction: "Watch the full safety briefing video before proceeding.",
+      imageFileId: null,
+      videoFileId: trainingVideo.id,
+      warning: "",
+      quantity: "",
+      unit: "",
+      equipmentSetting: "",
+      timerSeconds: 45,
+      isRequired: true,
+      expectedRevision: trainingDraft.version.revision,
+    },
+    "verify-phase7-step-a-create",
+  );
+  const trainingStepB = await createStep(
+    managerContext,
+    trainingDraft.id,
+    {
+      title: "Confirm the fryer is off",
+      instruction: "Confirm the fryer switch is in the off position.",
+      imageFileId: null,
+      videoFileId: null,
+      warning: "",
+      quantity: "",
+      unit: "",
+      equipmentSetting: "",
+      timerSeconds: null,
+      isRequired: true,
+      expectedRevision: trainingStepA.version.revision,
+    },
+    "verify-phase7-step-b-create",
+  );
+  const trainingStepAId = trainingStepB.steps.find(
+    (step) => step.title === "Watch the safety briefing",
+  )!.id;
+  const trainingStepBId = trainingStepB.steps.find(
+    (step) => step.title === "Confirm the fryer is off",
+  )!.id;
+
+  const defaultConfig = await getTrainingConfigDraft(managerContext, trainingDraft.id);
+  if (
+    defaultConfig.config.requirementState !== "disabled" ||
+    defaultConfig.config.defaultMode !== "learn" ||
+    defaultConfig.config.passingScorePercent !== 80 ||
+    defaultConfig.config.maxAttempts !== 3
+  ) {
+    throw new Error("A training config without a saved row did not default correctly");
+  }
+
+  let scopedTrainingConfigRejected = false;
+  try {
+    await updateTrainingConfig(
+      riversideManagerContext,
+      trainingDraft.id,
+      {
+        requirementState: "required",
+        defaultMode: "test",
+        allowBacktracking: true,
+        requireSequentialProgress: true,
+        requireFullVideoWatch: true,
+        requireEvidenceApproval: true,
+        passingScorePercent: 80,
+        maxAttempts: 3,
+        qualificationValidityDays: null,
+        retrainingGraceDays: null,
+        expectedRevision: defaultConfig.revision,
+      },
+      "verify-phase7-config-cross-location-rejected",
+    );
+  } catch {
+    scopedTrainingConfigRejected = true;
+  }
+  if (!scopedTrainingConfigRejected) {
+    throw new Error("A location-restricted manager updated training configuration out of scope");
+  }
+
+  const savedConfig = await updateTrainingConfig(
+    managerContext,
+    trainingDraft.id,
+    {
+      requirementState: "required",
+      defaultMode: "test",
+      allowBacktracking: false,
+      requireSequentialProgress: true,
+      requireFullVideoWatch: true,
+      requireEvidenceApproval: true,
+      passingScorePercent: 90,
+      maxAttempts: 2,
+      qualificationValidityDays: 365,
+      retrainingGraceDays: 14,
+      expectedRevision: defaultConfig.revision,
+    },
+    "verify-phase7-config-save",
+  );
+  if (
+    savedConfig.config.requirementState !== "required" ||
+    savedConfig.config.defaultMode !== "test" ||
+    savedConfig.config.passingScorePercent !== 90 ||
+    savedConfig.config.qualificationValidityDays !== 365 ||
+    savedConfig.revision !== defaultConfig.revision + 1
+  ) {
+    throw new Error("Saving the training configuration did not persist the new values");
+  }
+
+  let staleConfigRejected = false;
+  try {
+    await updateTrainingConfig(
+      managerContext,
+      trainingDraft.id,
+      {
+        requirementState: "optional",
+        defaultMode: "learn",
+        allowBacktracking: true,
+        requireSequentialProgress: true,
+        requireFullVideoWatch: false,
+        requireEvidenceApproval: false,
+        passingScorePercent: 80,
+        maxAttempts: 3,
+        qualificationValidityDays: null,
+        retrainingGraceDays: null,
+        expectedRevision: defaultConfig.revision,
+      },
+      "verify-phase7-config-stale-rejected",
+    );
+  } catch {
+    staleConfigRejected = true;
+  }
+  if (!staleConfigRejected) {
+    throw new Error("A stale training configuration write was accepted");
+  }
+
+  const defaultRequirements = await getStepTrainingRequirementsDraft(
+    managerContext,
+    trainingDraft.id,
+  );
+  if (
+    Object.keys(defaultRequirements.requirementsByStepId).length !== 2 ||
+    defaultRequirements.requirementsByStepId[trainingStepAId]?.requireFullVideo !== false
+  ) {
+    throw new Error("Step training requirements did not default for every step");
+  }
+
+  let timerWithoutStepTimerRejected = false;
+  try {
+    await updateStepTrainingRequirements(
+      managerContext,
+      trainingDraft.id,
+      trainingStepBId,
+      {
+        requireFullVideo: false,
+        requireConfirmation: false,
+        requireTimer: true,
+        requireQuestion: false,
+        requirePhoto: false,
+        requireVideo: false,
+        requireApproval: false,
+        expectedRevision: savedConfig.revision,
+      },
+      "verify-phase7-step-timer-guard",
+    );
+  } catch {
+    timerWithoutStepTimerRejected = true;
+  }
+  if (!timerWithoutStepTimerRejected) {
+    throw new Error("A timer requirement was accepted on a step without a timer");
+  }
+
+  let videoWithoutStepVideoRejected = false;
+  try {
+    await updateStepTrainingRequirements(
+      managerContext,
+      trainingDraft.id,
+      trainingStepBId,
+      {
+        requireFullVideo: true,
+        requireConfirmation: false,
+        requireTimer: false,
+        requireQuestion: false,
+        requirePhoto: false,
+        requireVideo: false,
+        requireApproval: false,
+        expectedRevision: savedConfig.revision,
+      },
+      "verify-phase7-video-guard",
+    );
+  } catch {
+    videoWithoutStepVideoRejected = true;
+  }
+  if (!videoWithoutStepVideoRejected) {
+    throw new Error("A full-video requirement was accepted on a step without a video");
+  }
+
+  const stepARequirements = await updateStepTrainingRequirements(
+    managerContext,
+    trainingDraft.id,
+    trainingStepAId,
+    {
+      requireFullVideo: true,
+      requireConfirmation: false,
+      requireTimer: true,
+      requireQuestion: true,
+      requirePhoto: false,
+      requireVideo: false,
+      requireApproval: false,
+      expectedRevision: savedConfig.revision,
+    },
+    "verify-phase7-step-a-requirements",
+  );
+  if (
+    !stepARequirements.requirementsByStepId[trainingStepAId]?.requireFullVideo ||
+    !stepARequirements.requirementsByStepId[trainingStepAId]?.requireTimer
+  ) {
+    throw new Error("Step A training requirements were not saved");
+  }
+
+  const stepBQuestionRequired = await updateStepTrainingRequirements(
+    managerContext,
+    trainingDraft.id,
+    trainingStepBId,
+    {
+      requireFullVideo: false,
+      requireConfirmation: true,
+      requireTimer: false,
+      requireQuestion: true,
+      requirePhoto: false,
+      requireVideo: false,
+      requireApproval: false,
+      expectedRevision: stepARequirements.revision,
+    },
+    "verify-phase7-step-b-requirements",
+  );
+
+  let publishMissingStepQuestionRejected = false;
+  try {
+    await publishSop(
+      managerContext,
+      trainingDraft.id,
+      {
+        expectedRevision: stepBQuestionRequired.revision,
+        changeSummary: "",
+        retrainingRule: { type: "none" },
+      },
+      "verify-phase7-publish-missing-step-question",
+    );
+  } catch {
+    publishMissingStepQuestionRejected = true;
+  }
+  if (!publishMissingStepQuestionRejected) {
+    throw new Error("Publishing was accepted with a question-required step that has no question");
+  }
+  const missingQuestionReadiness = await getPublishReadiness(managerContext, trainingDraft.id);
+  if (
+    !missingQuestionReadiness.issues.some((issue) => issue.code === "step_question_requirement")
+  ) {
+    throw new Error("Publish readiness did not flag the missing step question");
+  }
+
+  const stepAQuestion = await createTrainingQuestion(
+    managerContext,
+    trainingDraft.id,
+    {
+      stepId: trainingStepAId,
+      type: "single_choice",
+      text: "What must be watched before starting?",
+      explanation: "The safety briefing covers hazard awareness.",
+      points: 2,
+      placement: "after_step",
+      explanationPolicy: "on_incorrect",
+      choices: [
+        { text: "The safety briefing", isCorrect: true },
+        { text: "The delivery truck", isCorrect: false },
+      ],
+      expectedRevision: stepBQuestionRequired.revision,
+    },
+    "verify-phase7-question-step-a-create",
+  );
+  const stepAQuestionId = stepAQuestion.questions.find(
+    (question) => question.stepId === trainingStepAId,
+  )!.id;
+
+  let crossStepQuestionRejected = false;
+  try {
+    await createTrainingQuestion(
+      riversideManagerContext,
+      trainingDraft.id,
+      {
+        stepId: trainingStepAId,
+        type: "true_false",
+        text: "Should never happen",
+        explanation: "",
+        points: 1,
+        placement: "after_step",
+        explanationPolicy: "never",
+        choices: [
+          { text: "True", isCorrect: true },
+          { text: "False", isCorrect: false },
+        ],
+        expectedRevision: stepAQuestion.revision,
+      },
+      "verify-phase7-question-cross-location-rejected",
+    );
+  } catch {
+    crossStepQuestionRejected = true;
+  }
+  if (!crossStepQuestionRejected) {
+    throw new Error("A location-restricted manager created a training question out of scope");
+  }
+
+  let questionForOtherSopStepRejected = false;
+  try {
+    await createTrainingQuestion(
+      managerContext,
+      trainingDraft.id,
+      {
+        stepId: qrSopStep.steps[0]!.id,
+        type: "true_false",
+        text: "Attached to a foreign step",
+        explanation: "",
+        points: 1,
+        placement: "after_step",
+        explanationPolicy: "never",
+        choices: [
+          { text: "True", isCorrect: true },
+          { text: "False", isCorrect: false },
+        ],
+        expectedRevision: stepAQuestion.revision,
+      },
+      "verify-phase7-question-foreign-step-rejected",
+    );
+  } catch {
+    questionForOtherSopStepRejected = true;
+  }
+  if (!questionForOtherSopStepRejected) {
+    throw new Error("A question was attached to a step from a different SOP draft");
+  }
+
+  const stepBQuestion = await createTrainingQuestion(
+    managerContext,
+    trainingDraft.id,
+    {
+      stepId: trainingStepBId,
+      type: "true_false",
+      text: "The fryer switch must be off before servicing.",
+      explanation: "",
+      points: 1,
+      placement: "after_step",
+      explanationPolicy: "always",
+      choices: [
+        { text: "True", isCorrect: true },
+        { text: "False", isCorrect: false },
+      ],
+      expectedRevision: stepAQuestion.revision,
+    },
+    "verify-phase7-question-step-b-create",
+  );
+
+  const finalQuestionOne = await createTrainingQuestion(
+    managerContext,
+    trainingDraft.id,
+    {
+      stepId: null,
+      type: "multiple_choice",
+      text: "Which of these are fryer hazards?",
+      explanation: "",
+      points: 1,
+      placement: "final",
+      explanationPolicy: "on_incorrect",
+      choices: [
+        { text: "Hot oil", isCorrect: true },
+        { text: "Sharp edges", isCorrect: true },
+        { text: "Cold storage", isCorrect: false },
+      ],
+      expectedRevision: stepBQuestion.revision,
+    },
+    "verify-phase7-question-final-one-create",
+  );
+  const finalQuestionTwo = await createTrainingQuestion(
+    managerContext,
+    trainingDraft.id,
+    {
+      stepId: null,
+      type: "true_false",
+      text: "Training must be repeated after a fryer incident.",
+      explanation: "",
+      points: 1,
+      placement: "final",
+      explanationPolicy: "on_incorrect",
+      choices: [
+        { text: "True", isCorrect: true },
+        { text: "False", isCorrect: false },
+      ],
+      expectedRevision: finalQuestionOne.revision,
+    },
+    "verify-phase7-question-final-two-create",
+  );
+  const finalQuestionOneId = finalQuestionOne.questions.find(
+    (question) => question.text === "Which of these are fryer hazards?",
+  )!.id;
+  const finalQuestionTwoId = finalQuestionTwo.questions.find(
+    (question) => question.text === "Training must be repeated after a fryer incident.",
+  )!.id;
+  const finalOrderBeforeReorder = finalQuestionTwo.questions
+    .filter((question) => !question.stepId)
+    .sort((a, b) => a.displayOrder - b.displayOrder)
+    .map((question) => question.id);
+  if (finalOrderBeforeReorder[0] !== finalQuestionOneId) {
+    throw new Error("Final questions were not appended in creation order");
+  }
+
+  let invalidReorderRejected = false;
+  try {
+    await reorderTrainingQuestions(
+      managerContext,
+      trainingDraft.id,
+      null,
+      [finalQuestionOneId],
+      finalQuestionTwo.revision,
+      "verify-phase7-reorder-invalid",
+    );
+  } catch {
+    invalidReorderRejected = true;
+  }
+  if (!invalidReorderRejected) {
+    throw new Error("Reordering with a missing question id was accepted");
+  }
+
+  const trainingReordered = await reorderTrainingQuestions(
+    managerContext,
+    trainingDraft.id,
+    null,
+    [finalQuestionTwoId, finalQuestionOneId],
+    finalQuestionTwo.revision,
+    "verify-phase7-reorder-final",
+  );
+  const reorderedFinal = trainingReordered.questions
+    .filter((question) => !question.stepId)
+    .sort((a, b) => a.displayOrder - b.displayOrder);
+  if (
+    reorderedFinal[0]?.id !== finalQuestionTwoId ||
+    reorderedFinal[1]?.id !== finalQuestionOneId
+  ) {
+    throw new Error("Reordering final questions did not persist the new order");
+  }
+
+  const fetchedQuestion = await getTrainingQuestion(
+    managerContext,
+    trainingDraft.id,
+    stepAQuestionId,
+  );
+  if (fetchedQuestion.choices.filter((choice) => choice.isCorrect).length !== 1) {
+    throw new Error("Fetching a single question did not return exactly one correct choice");
+  }
+
+  const updatedQuestion = await updateTrainingQuestion(
+    managerContext,
+    trainingDraft.id,
+    stepAQuestionId,
+    {
+      stepId: trainingStepAId,
+      type: "single_choice",
+      text: "What must be watched before starting the fryer?",
+      explanation: "The safety briefing covers hazard awareness.",
+      points: 3,
+      placement: "after_step",
+      explanationPolicy: "always",
+      choices: [
+        { text: "The safety briefing", isCorrect: false },
+        { text: "The delivery truck", isCorrect: true },
+      ],
+      expectedRevision: trainingReordered.revision,
+    },
+    "verify-phase7-question-update",
+  );
+  const updatedStepAQuestion = updatedQuestion.questions.find(
+    (question) => question.id === stepAQuestionId,
+  )!;
+  if (
+    updatedStepAQuestion.points !== 3 ||
+    updatedStepAQuestion.choices.find((choice) => choice.text === "The delivery truck")
+      ?.isCorrect !== true
+  ) {
+    throw new Error("Updating a question did not replace its text, points, and choices");
+  }
+
+  const beforeDelete = updatedQuestion.questions.filter((question) => !question.stepId).length;
+  const trainingAfterDelete = await deleteTrainingQuestion(
+    managerContext,
+    trainingDraft.id,
+    finalQuestionOneId,
+    updatedQuestion.revision,
+    "verify-phase7-question-delete",
+  );
+  const remainingFinal = trainingAfterDelete.questions.filter((question) => !question.stepId);
+  if (
+    remainingFinal.length !== beforeDelete - 1 ||
+    remainingFinal.some((question, index) => question.displayOrder !== index + 1)
+  ) {
+    throw new Error("Deleting a question did not resequence the remaining questions");
+  }
+
+  const readyReadiness = await getPublishReadiness(managerContext, trainingDraft.id);
+  if (!readyReadiness.canPublish) {
+    throw new Error(
+      `A fully-configured training draft unexpectedly failed publish readiness: ${JSON.stringify(readyReadiness.issues)}`,
+    );
+  }
+
+  const publishedTraining = await publishSop(
+    managerContext,
+    trainingDraft.id,
+    {
+      expectedRevision: trainingAfterDelete.revision,
+      changeSummary: "",
+      retrainingRule: { type: "none" },
+    },
+    "verify-phase7-publish",
+  );
+  if (publishedTraining.status !== "published") {
+    throw new Error("Publishing the training-configured draft did not succeed");
+  }
+
+  let configEditAfterPublishRejected = false;
+  try {
+    await updateTrainingConfig(
+      managerContext,
+      trainingDraft.id,
+      {
+        requirementState: "disabled",
+        defaultMode: "learn",
+        allowBacktracking: true,
+        requireSequentialProgress: true,
+        requireFullVideoWatch: false,
+        requireEvidenceApproval: false,
+        passingScorePercent: 80,
+        maxAttempts: 3,
+        qualificationValidityDays: null,
+        retrainingGraceDays: null,
+        expectedRevision: trainingAfterDelete.revision,
+      },
+      "verify-phase7-config-edit-after-publish-rejected",
+    );
+  } catch {
+    configEditAfterPublishRejected = true;
+  }
+  if (!configEditAfterPublishRejected) {
+    throw new Error("A published SOP's training configuration was edited without a new draft");
+  }
+
+  const trainingCloneDraft = await createDraftFromCurrentVersion(
+    managerContext,
+    trainingDraft.id,
+    "verify-phase7-clone-draft",
+  );
+  const clonedConfig = await getTrainingConfigDraft(managerContext, trainingDraft.id);
+  if (
+    clonedConfig.config.requirementState !== "required" ||
+    clonedConfig.config.defaultMode !== "test" ||
+    clonedConfig.config.passingScorePercent !== 90 ||
+    clonedConfig.config.qualificationValidityDays !== 365
+  ) {
+    throw new Error("Cloning a draft did not carry over the training configuration");
+  }
+  const clonedStepAId = trainingCloneDraft.steps.find(
+    (step) => step.title === "Watch the safety briefing",
+  )!.id;
+  const clonedStepBId = trainingCloneDraft.steps.find(
+    (step) => step.title === "Confirm the fryer is off",
+  )!.id;
+  const clonedRequirements = await getStepTrainingRequirementsDraft(
+    managerContext,
+    trainingDraft.id,
+  );
+  if (
+    !clonedRequirements.requirementsByStepId[clonedStepAId]?.requireFullVideo ||
+    !clonedRequirements.requirementsByStepId[clonedStepBId]?.requireQuestion
+  ) {
+    throw new Error("Cloning a draft did not carry over the step training requirements");
+  }
+  const clonedQuestions = await getTrainingQuestionsDraft(managerContext, trainingDraft.id);
+  if (clonedQuestions.questions.length !== updatedQuestion.questions.length - 1) {
+    throw new Error("Cloning a draft did not carry over every training question");
+  }
+  const clonedStepAQuestion = clonedQuestions.questions.find(
+    (question) => question.stepId === clonedStepAId,
+  );
+  if (
+    !clonedStepAQuestion ||
+    clonedStepAQuestion.text !== "What must be watched before starting the fryer?" ||
+    clonedStepAQuestion.choices.length !== 2 ||
+    !clonedStepAQuestion.choices.some(
+      (choice) => choice.text === "The delivery truck" && choice.isCorrect,
+    )
+  ) {
+    throw new Error("Cloning a draft did not carry over question choices and correctness");
+  }
+
   const actions = new Set(
     (await getDb().select({ action: auditEvents.action }).from(auditEvents)).map(
       (event) => event.action,
@@ -1854,7 +2496,7 @@ async function verifyDatabase(): Promise<void> {
   await verifyUpgradeMigration();
 
   process.stdout.write(
-    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true, employeeStationReader: true, employeeSopReader: true, employeeCategoryLibrary: true, employeeRecentViews: true, employeeMediaAuthorization: true, qrCreationAndTargetValidation: true, qrLocationScoping: true, qrRevocation: true, qrRotation: true, qrScanResolution: true, qrUnavailableTarget: true, qrEnumerationRateLimit: true })}\n`,
+    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true, employeeStationReader: true, employeeSopReader: true, employeeCategoryLibrary: true, employeeRecentViews: true, employeeMediaAuthorization: true, qrCreationAndTargetValidation: true, qrLocationScoping: true, qrRevocation: true, qrRotation: true, qrScanResolution: true, qrUnavailableTarget: true, qrEnumerationRateLimit: true, trainingConfigDefaultsAndScoping: true, trainingConfigStaleWriteRejection: true, trainingStepRequirementGuards: true, trainingQuestionCrudAndReorder: true, trainingPublishReadinessRules: true, trainingPublishedImmutability: true, trainingDraftCloning: true })}\n`,
   );
 }
 

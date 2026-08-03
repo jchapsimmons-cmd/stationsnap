@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, ilike, inArray, lt, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import { AppError } from "@/lib/errors";
 import { writeAuditEvent } from "@/server/audit";
 import { requireManagerManagedLocation } from "@/server/auth/authorization";
@@ -18,6 +18,10 @@ import {
   sopVersions,
   sopWarnings,
   stations,
+  stepTrainingRequirements,
+  trainingConfigs,
+  trainingQuestionChoices,
+  trainingQuestions,
 } from "@/server/db/schema";
 import { getManagedLocationIds, requireActiveManagedLocation } from "@/server/management/service";
 import type {
@@ -29,9 +33,40 @@ import type {
   SopQuery,
   SopStepCreateInput,
   SopStepUpdateInput,
+  StepTrainingRequirementsInput,
+  TrainingConfigUpdateInput,
+  TrainingQuestionCreateInput,
+  TrainingQuestionUpdateInput,
 } from "@/server/sops/schemas";
 
 type Tx = Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0];
+
+function defaultTrainingConfigValues() {
+  return {
+    requirementState: "disabled" as const,
+    defaultMode: "learn" as const,
+    allowBacktracking: true,
+    requireSequentialProgress: true,
+    requireFullVideoWatch: false,
+    requireEvidenceApproval: true,
+    passingScorePercent: 80,
+    maxAttempts: 3,
+    qualificationValidityDays: null as number | null,
+    retrainingGraceDays: null as number | null,
+  };
+}
+
+function defaultStepRequirementValues() {
+  return {
+    requireFullVideo: false,
+    requireConfirmation: false,
+    requireTimer: false,
+    requireQuestion: false,
+    requirePhoto: false,
+    requireVideo: false,
+    requireApproval: false,
+  };
+}
 
 async function auditSop(
   actor: ManagerSessionContext,
@@ -740,6 +775,459 @@ export async function reorderSteps(
   return getSopDraft(actor, sopId);
 }
 
+async function loadTrainingConfig(organizationId: string, sopVersionId: string) {
+  const [row] = await getDb()
+    .select()
+    .from(trainingConfigs)
+    .where(
+      and(
+        eq(trainingConfigs.sopVersionId, sopVersionId),
+        eq(trainingConfigs.organizationId, organizationId),
+      ),
+    )
+    .limit(1);
+  if (!row) return defaultTrainingConfigValues();
+  return {
+    requirementState: row.requirementState,
+    defaultMode: row.defaultMode,
+    allowBacktracking: row.allowBacktracking,
+    requireSequentialProgress: row.requireSequentialProgress,
+    requireFullVideoWatch: row.requireFullVideoWatch,
+    requireEvidenceApproval: row.requireEvidenceApproval,
+    passingScorePercent: row.passingScorePercent,
+    maxAttempts: row.maxAttempts,
+    qualificationValidityDays: row.qualificationValidityDays,
+    retrainingGraceDays: row.retrainingGraceDays,
+  };
+}
+
+/** The in-progress draft's training configuration, or defaults when none has been saved yet. */
+export async function getTrainingConfigDraft(actor: ManagerSessionContext, sopId: string) {
+  const detail = await requireDraftForEdit(actor, sopId);
+  const config = await loadTrainingConfig(actor.organizationId, detail.version.id);
+  return { sopId, revision: detail.version.revision, config };
+}
+
+export async function updateTrainingConfig(
+  actor: ManagerSessionContext,
+  sopId: string,
+  input: TrainingConfigUpdateInput,
+  requestId?: string,
+) {
+  const detail = await requireDraftForEdit(actor, sopId);
+  const values = {
+    requirementState: input.requirementState,
+    defaultMode: input.defaultMode,
+    allowBacktracking: input.allowBacktracking,
+    requireSequentialProgress: input.requireSequentialProgress,
+    requireFullVideoWatch: input.requireFullVideoWatch,
+    requireEvidenceApproval: input.requireEvidenceApproval,
+    passingScorePercent: input.passingScorePercent,
+    maxAttempts: input.maxAttempts,
+    qualificationValidityDays: input.qualificationValidityDays,
+    retrainingGraceDays: input.retrainingGraceDays,
+  };
+
+  await getDb().transaction(async (tx) => {
+    await bumpRevision(tx, actor.organizationId, detail.version.id, input.expectedRevision);
+    await tx
+      .insert(trainingConfigs)
+      .values({
+        id: randomUUID(),
+        sopVersionId: detail.version.id,
+        organizationId: actor.organizationId,
+        ...values,
+      })
+      .onConflictDoUpdate({
+        target: trainingConfigs.sopVersionId,
+        set: { ...values, updatedAt: new Date() },
+      });
+  });
+
+  await auditSop(actor, "sop.updated", sopId, detail.sop.locationId, requestId);
+  return getTrainingConfigDraft(actor, sopId);
+}
+
+async function loadStepTrainingRequirementsMap(sopVersionId: string) {
+  const steps = await getDb()
+    .select({ id: sopSteps.id })
+    .from(sopSteps)
+    .where(eq(sopSteps.sopVersionId, sopVersionId));
+  const rows =
+    steps.length > 0
+      ? await getDb()
+          .select()
+          .from(stepTrainingRequirements)
+          .where(
+            inArray(
+              stepTrainingRequirements.stepId,
+              steps.map((step) => step.id),
+            ),
+          )
+      : [];
+  const rowByStepId = new Map(rows.map((row) => [row.stepId, row]));
+  const requirementsByStepId: Record<string, ReturnType<typeof defaultStepRequirementValues>> = {};
+  for (const step of steps) {
+    const row = rowByStepId.get(step.id);
+    requirementsByStepId[step.id] = row
+      ? {
+          requireFullVideo: row.requireFullVideo,
+          requireConfirmation: row.requireConfirmation,
+          requireTimer: row.requireTimer,
+          requireQuestion: row.requireQuestion,
+          requirePhoto: row.requirePhoto,
+          requireVideo: row.requireVideo,
+          requireApproval: row.requireApproval,
+        }
+      : defaultStepRequirementValues();
+  }
+  return requirementsByStepId;
+}
+
+/** Every step's training requirements for the in-progress draft, defaulted where unset. */
+export async function getStepTrainingRequirementsDraft(
+  actor: ManagerSessionContext,
+  sopId: string,
+) {
+  const detail = await requireDraftForEdit(actor, sopId);
+  const requirementsByStepId = await loadStepTrainingRequirementsMap(detail.version.id);
+  return { sopId, revision: detail.version.revision, requirementsByStepId };
+}
+
+export async function updateStepTrainingRequirements(
+  actor: ManagerSessionContext,
+  sopId: string,
+  stepId: string,
+  input: StepTrainingRequirementsInput,
+  requestId?: string,
+) {
+  const detail = await requireDraftForEdit(actor, sopId);
+  const [step] = await getDb()
+    .select()
+    .from(sopSteps)
+    .where(and(eq(sopSteps.id, stepId), eq(sopSteps.sopVersionId, detail.version.id)))
+    .limit(1);
+  if (!step) throw new AppError("NOT_FOUND", "Step not found.");
+  if (input.requireTimer && !step.timerSeconds) {
+    throw new AppError("BAD_REQUEST", "Add a step timer before requiring it in training.");
+  }
+  if (input.requireFullVideo && !step.videoFileId) {
+    throw new AppError("BAD_REQUEST", "Add a step video before requiring it to be fully watched.");
+  }
+
+  const values = {
+    requireFullVideo: input.requireFullVideo,
+    requireConfirmation: input.requireConfirmation,
+    requireTimer: input.requireTimer,
+    requireQuestion: input.requireQuestion,
+    requirePhoto: input.requirePhoto,
+    requireVideo: input.requireVideo,
+    requireApproval: input.requireApproval,
+  };
+
+  await getDb().transaction(async (tx) => {
+    await bumpRevision(tx, actor.organizationId, detail.version.id, input.expectedRevision);
+    await tx
+      .insert(stepTrainingRequirements)
+      .values({ id: randomUUID(), stepId, organizationId: actor.organizationId, ...values })
+      .onConflictDoUpdate({
+        target: stepTrainingRequirements.stepId,
+        set: { ...values, updatedAt: new Date() },
+      });
+  });
+
+  await auditSop(actor, "sop.updated", sopId, detail.sop.locationId, requestId);
+  return getStepTrainingRequirementsDraft(actor, sopId);
+}
+
+function questionGroupCondition(sopVersionId: string, stepId: string | null) {
+  return stepId
+    ? and(eq(trainingQuestions.sopVersionId, sopVersionId), eq(trainingQuestions.stepId, stepId))
+    : and(eq(trainingQuestions.sopVersionId, sopVersionId), isNull(trainingQuestions.stepId));
+}
+
+async function loadTrainingQuestions(sopVersionId: string) {
+  const questions = await getDb()
+    .select()
+    .from(trainingQuestions)
+    .where(eq(trainingQuestions.sopVersionId, sopVersionId))
+    .orderBy(asc(trainingQuestions.displayOrder));
+  if (questions.length === 0) return [];
+  const choices = await getDb()
+    .select()
+    .from(trainingQuestionChoices)
+    .where(
+      inArray(
+        trainingQuestionChoices.questionId,
+        questions.map((question) => question.id),
+      ),
+    )
+    .orderBy(asc(trainingQuestionChoices.displayOrder));
+  const choicesByQuestionId = new Map<string, typeof choices>();
+  for (const choice of choices) {
+    const list = choicesByQuestionId.get(choice.questionId) ?? [];
+    list.push(choice);
+    choicesByQuestionId.set(choice.questionId, list);
+  }
+  return questions.map((question) => ({
+    ...question,
+    choices: choicesByQuestionId.get(question.id) ?? [],
+  }));
+}
+
+/** The in-progress draft's step and final questions, each with their ordered choices. */
+export async function getTrainingQuestionsDraft(actor: ManagerSessionContext, sopId: string) {
+  const detail = await requireDraftForEdit(actor, sopId);
+  return {
+    sopId,
+    revision: detail.version.revision,
+    questions: await loadTrainingQuestions(detail.version.id),
+  };
+}
+
+export async function getTrainingQuestion(
+  actor: ManagerSessionContext,
+  sopId: string,
+  questionId: string,
+) {
+  const detail = await requireDraftForEdit(actor, sopId);
+  const [question] = await getDb()
+    .select()
+    .from(trainingQuestions)
+    .where(
+      and(
+        eq(trainingQuestions.id, questionId),
+        eq(trainingQuestions.sopVersionId, detail.version.id),
+      ),
+    )
+    .limit(1);
+  if (!question) throw new AppError("NOT_FOUND", "Question not found.");
+  const choices = await getDb()
+    .select()
+    .from(trainingQuestionChoices)
+    .where(eq(trainingQuestionChoices.questionId, questionId))
+    .orderBy(asc(trainingQuestionChoices.displayOrder));
+  return { ...question, choices };
+}
+
+async function assertQuestionStepBelongsToVersion(
+  organizationId: string,
+  sopVersionId: string,
+  stepId: string,
+): Promise<void> {
+  const [step] = await getDb()
+    .select({ id: sopSteps.id })
+    .from(sopSteps)
+    .where(
+      and(
+        eq(sopSteps.id, stepId),
+        eq(sopSteps.sopVersionId, sopVersionId),
+        eq(sopSteps.organizationId, organizationId),
+      ),
+    )
+    .limit(1);
+  if (!step) throw new AppError("BAD_REQUEST", "That step is not part of this SOP draft.");
+}
+
+export async function createTrainingQuestion(
+  actor: ManagerSessionContext,
+  sopId: string,
+  input: TrainingQuestionCreateInput,
+  requestId?: string,
+) {
+  const detail = await requireDraftForEdit(actor, sopId);
+  if (input.stepId) {
+    await assertQuestionStepBelongsToVersion(actor.organizationId, detail.version.id, input.stepId);
+  }
+
+  await getDb().transaction(async (tx) => {
+    await bumpRevision(tx, actor.organizationId, detail.version.id, input.expectedRevision);
+    const maxOrderRows = await tx
+      .select({ maxOrder: sql<number>`coalesce(max(${trainingQuestions.displayOrder}), 0)` })
+      .from(trainingQuestions)
+      .where(questionGroupCondition(detail.version.id, input.stepId));
+    const maxOrder = maxOrderRows[0]?.maxOrder ?? 0;
+    const questionId = randomUUID();
+    await tx.insert(trainingQuestions).values({
+      id: questionId,
+      sopVersionId: detail.version.id,
+      organizationId: actor.organizationId,
+      stepId: input.stepId,
+      type: input.type,
+      text: input.text,
+      explanation: input.explanation,
+      points: input.points,
+      placement: input.placement,
+      displayOrder: maxOrder + 1,
+      explanationPolicy: input.explanationPolicy,
+    });
+    await tx.insert(trainingQuestionChoices).values(
+      input.choices.map((choice, index) => ({
+        id: randomUUID(),
+        questionId,
+        organizationId: actor.organizationId,
+        text: choice.text,
+        isCorrect: choice.isCorrect,
+        displayOrder: index + 1,
+      })),
+    );
+  });
+
+  await auditSop(actor, "sop.updated", sopId, detail.sop.locationId, requestId);
+  return getTrainingQuestionsDraft(actor, sopId);
+}
+
+export async function updateTrainingQuestion(
+  actor: ManagerSessionContext,
+  sopId: string,
+  questionId: string,
+  input: TrainingQuestionUpdateInput,
+  requestId?: string,
+) {
+  const detail = await requireDraftForEdit(actor, sopId);
+  if (input.stepId) {
+    await assertQuestionStepBelongsToVersion(actor.organizationId, detail.version.id, input.stepId);
+  }
+
+  await getDb().transaction(async (tx) => {
+    await bumpRevision(tx, actor.organizationId, detail.version.id, input.expectedRevision);
+    const [existing] = await tx
+      .select({ id: trainingQuestions.id, stepId: trainingQuestions.stepId })
+      .from(trainingQuestions)
+      .where(
+        and(
+          eq(trainingQuestions.id, questionId),
+          eq(trainingQuestions.sopVersionId, detail.version.id),
+        ),
+      )
+      .limit(1);
+    if (!existing) throw new AppError("NOT_FOUND", "Question not found.");
+
+    let displayOrder: number;
+    if (existing.stepId === input.stepId) {
+      const [current] = await tx
+        .select({ displayOrder: trainingQuestions.displayOrder })
+        .from(trainingQuestions)
+        .where(eq(trainingQuestions.id, questionId))
+        .limit(1);
+      displayOrder = current?.displayOrder ?? 1;
+    } else {
+      const maxOrderRows = await tx
+        .select({ maxOrder: sql<number>`coalesce(max(${trainingQuestions.displayOrder}), 0)` })
+        .from(trainingQuestions)
+        .where(questionGroupCondition(detail.version.id, input.stepId));
+      displayOrder = (maxOrderRows[0]?.maxOrder ?? 0) + 1;
+    }
+
+    await tx
+      .update(trainingQuestions)
+      .set({
+        stepId: input.stepId,
+        type: input.type,
+        text: input.text,
+        explanation: input.explanation,
+        points: input.points,
+        placement: input.placement,
+        displayOrder,
+        explanationPolicy: input.explanationPolicy,
+        updatedAt: new Date(),
+      })
+      .where(eq(trainingQuestions.id, questionId));
+
+    await tx
+      .delete(trainingQuestionChoices)
+      .where(eq(trainingQuestionChoices.questionId, questionId));
+    await tx.insert(trainingQuestionChoices).values(
+      input.choices.map((choice, index) => ({
+        id: randomUUID(),
+        questionId,
+        organizationId: actor.organizationId,
+        text: choice.text,
+        isCorrect: choice.isCorrect,
+        displayOrder: index + 1,
+      })),
+    );
+  });
+
+  await auditSop(actor, "sop.updated", sopId, detail.sop.locationId, requestId);
+  return getTrainingQuestionsDraft(actor, sopId);
+}
+
+export async function deleteTrainingQuestion(
+  actor: ManagerSessionContext,
+  sopId: string,
+  questionId: string,
+  expectedRevision: number,
+  requestId?: string,
+) {
+  const detail = await requireDraftForEdit(actor, sopId);
+
+  await getDb().transaction(async (tx) => {
+    await bumpRevision(tx, actor.organizationId, detail.version.id, expectedRevision);
+    const [row] = await tx
+      .delete(trainingQuestions)
+      .where(
+        and(
+          eq(trainingQuestions.id, questionId),
+          eq(trainingQuestions.sopVersionId, detail.version.id),
+        ),
+      )
+      .returning({ id: trainingQuestions.id, stepId: trainingQuestions.stepId });
+    if (!row) throw new AppError("NOT_FOUND", "Question not found.");
+    const remaining = await tx
+      .select({ id: trainingQuestions.id })
+      .from(trainingQuestions)
+      .where(questionGroupCondition(detail.version.id, row.stepId))
+      .orderBy(asc(trainingQuestions.displayOrder));
+    for (let index = 0; index < remaining.length; index += 1) {
+      const question = remaining[index];
+      if (!question) continue;
+      await tx
+        .update(trainingQuestions)
+        .set({ displayOrder: index + 1 })
+        .where(eq(trainingQuestions.id, question.id));
+    }
+  });
+
+  await auditSop(actor, "sop.updated", sopId, detail.sop.locationId, requestId);
+  return getTrainingQuestionsDraft(actor, sopId);
+}
+
+export async function reorderTrainingQuestions(
+  actor: ManagerSessionContext,
+  sopId: string,
+  stepId: string | null,
+  orderedQuestionIds: readonly string[],
+  expectedRevision: number,
+  requestId?: string,
+) {
+  const detail = await requireDraftForEdit(actor, sopId);
+
+  await getDb().transaction(async (tx) => {
+    await bumpRevision(tx, actor.organizationId, detail.version.id, expectedRevision);
+    const existing = await tx
+      .select({ id: trainingQuestions.id })
+      .from(trainingQuestions)
+      .where(questionGroupCondition(detail.version.id, stepId));
+    const existingIds = new Set(existing.map((row) => row.id));
+    if (
+      orderedQuestionIds.length !== existingIds.size ||
+      !orderedQuestionIds.every((id) => existingIds.has(id))
+    ) {
+      throw new AppError("BAD_REQUEST", "The question order is invalid.");
+    }
+    for (let index = 0; index < orderedQuestionIds.length; index += 1) {
+      await tx
+        .update(trainingQuestions)
+        .set({ displayOrder: index + 1 })
+        .where(eq(trainingQuestions.id, orderedQuestionIds[index]!));
+    }
+  });
+
+  await auditSop(actor, "sop.updated", sopId, detail.sop.locationId, requestId);
+  return getTrainingQuestionsDraft(actor, sopId);
+}
+
 /** Previews the in-progress draft when one exists, otherwise the current published version. */
 export async function previewSop(actor: ManagerSessionContext, sopId: string, requestId?: string) {
   const base = await requireManageableSop(actor, sopId);
@@ -805,6 +1293,47 @@ async function evaluatePublishReadiness(
     if (referencedFileIds.some((id) => !readyIds.has(id))) {
       issues.push({ code: "media", message: "Finish uploading all media before publishing." });
     }
+  }
+
+  const [config, stepRequirementRows, questionRows] = await Promise.all([
+    loadTrainingConfig(organizationId, detail.version.id),
+    steps.length > 0
+      ? getDb()
+          .select({
+            stepId: stepTrainingRequirements.stepId,
+            requireQuestion: stepTrainingRequirements.requireQuestion,
+          })
+          .from(stepTrainingRequirements)
+          .where(
+            inArray(
+              stepTrainingRequirements.stepId,
+              steps.map((step) => step.id),
+            ),
+          )
+      : Promise.resolve([]),
+    getDb()
+      .select({ id: trainingQuestions.id, stepId: trainingQuestions.stepId })
+      .from(trainingQuestions)
+      .where(eq(trainingQuestions.sopVersionId, detail.version.id)),
+  ]);
+  if (
+    config.requirementState !== "disabled" &&
+    (config.defaultMode === "test" || config.defaultMode === "demonstration") &&
+    questionRows.length === 0
+  ) {
+    issues.push({
+      code: "training_questions",
+      message: "Add at least one question before publishing test or demonstration training.",
+    });
+  }
+  const questionStepIds = new Set(
+    questionRows.filter((question) => question.stepId).map((question) => question.stepId as string),
+  );
+  if (stepRequirementRows.some((row) => row.requireQuestion && !questionStepIds.has(row.stepId))) {
+    issues.push({
+      code: "step_question_requirement",
+      message: "Every step that requires a question needs at least one attached question.",
+    });
   }
 
   return issues;
@@ -955,6 +1484,17 @@ export async function publishSop(
       .update(sops)
       .set({ status: "published", currentVersionId: draft.id, updatedAt: new Date() })
       .where(eq(sops.id, sopId));
+    // A training configuration always exists for a published version, even if the manager never
+    // visited the training page: default it to disabled rather than leaving it unset.
+    await tx
+      .insert(trainingConfigs)
+      .values({
+        id: randomUUID(),
+        sopVersionId: draft.id,
+        organizationId: actor.organizationId,
+        ...defaultTrainingConfigValues(),
+      })
+      .onConflictDoNothing({ target: trainingConfigs.sopVersionId });
     if (isUpdate) {
       await persistRetrainingRule(tx, actor.organizationId, draft.id, input.retrainingRule);
     }
@@ -1055,10 +1595,13 @@ async function cloneVersionIntoNewDraft(
       })),
     );
   }
+  const stepIdMap = new Map<string, string>();
   if (steps.length > 0) {
-    await tx.insert(sopSteps).values(
-      steps.map((step) => ({
-        id: randomUUID(),
+    const stepInserts = steps.map((step) => {
+      const newStepId = randomUUID();
+      stepIdMap.set(step.id, newStepId);
+      return {
+        id: newStepId,
         sopVersionId: versionId,
         organizationId,
         displayOrder: step.displayOrder,
@@ -1072,9 +1615,116 @@ async function cloneVersionIntoNewDraft(
         equipmentSetting: step.equipmentSetting,
         timerSeconds: step.timerSeconds,
         isRequired: step.isRequired,
+      };
+    });
+    await tx.insert(sopSteps).values(stepInserts);
+  }
+
+  const [config, stepRequirementRows, questions] = await Promise.all([
+    tx
+      .select()
+      .from(trainingConfigs)
+      .where(eq(trainingConfigs.sopVersionId, sourceVersion.id))
+      .limit(1),
+    steps.length > 0
+      ? tx
+          .select()
+          .from(stepTrainingRequirements)
+          .where(
+            inArray(
+              stepTrainingRequirements.stepId,
+              steps.map((step) => step.id),
+            ),
+          )
+      : Promise.resolve([]),
+    tx
+      .select()
+      .from(trainingQuestions)
+      .where(eq(trainingQuestions.sopVersionId, sourceVersion.id))
+      .orderBy(asc(trainingQuestions.displayOrder)),
+  ]);
+
+  if (config[0]) {
+    const sourceConfig = config[0];
+    await tx.insert(trainingConfigs).values({
+      id: randomUUID(),
+      sopVersionId: versionId,
+      organizationId,
+      requirementState: sourceConfig.requirementState,
+      defaultMode: sourceConfig.defaultMode,
+      allowBacktracking: sourceConfig.allowBacktracking,
+      requireSequentialProgress: sourceConfig.requireSequentialProgress,
+      requireFullVideoWatch: sourceConfig.requireFullVideoWatch,
+      requireEvidenceApproval: sourceConfig.requireEvidenceApproval,
+      passingScorePercent: sourceConfig.passingScorePercent,
+      maxAttempts: sourceConfig.maxAttempts,
+      qualificationValidityDays: sourceConfig.qualificationValidityDays,
+      retrainingGraceDays: sourceConfig.retrainingGraceDays,
+    });
+  }
+
+  if (stepRequirementRows.length > 0) {
+    await tx.insert(stepTrainingRequirements).values(
+      stepRequirementRows.map((row) => ({
+        id: randomUUID(),
+        stepId: stepIdMap.get(row.stepId)!,
+        organizationId,
+        requireFullVideo: row.requireFullVideo,
+        requireConfirmation: row.requireConfirmation,
+        requireTimer: row.requireTimer,
+        requireQuestion: row.requireQuestion,
+        requirePhoto: row.requirePhoto,
+        requireVideo: row.requireVideo,
+        requireApproval: row.requireApproval,
       })),
     );
   }
+
+  const questionIdMap = new Map<string, string>();
+  if (questions.length > 0) {
+    const questionInserts = questions.map((question) => {
+      const newQuestionId = randomUUID();
+      questionIdMap.set(question.id, newQuestionId);
+      return {
+        id: newQuestionId,
+        sopVersionId: versionId,
+        organizationId,
+        stepId: question.stepId ? (stepIdMap.get(question.stepId) ?? null) : null,
+        type: question.type,
+        text: question.text,
+        explanation: question.explanation,
+        points: question.points,
+        placement: question.placement,
+        displayOrder: question.displayOrder,
+        explanationPolicy: question.explanationPolicy,
+      };
+    });
+    await tx.insert(trainingQuestions).values(questionInserts);
+
+    const choices = await tx
+      .select()
+      .from(trainingQuestionChoices)
+      .where(
+        inArray(
+          trainingQuestionChoices.questionId,
+          questions.map((question) => question.id),
+        ),
+      )
+      .orderBy(asc(trainingQuestionChoices.displayOrder));
+    if (choices.length > 0) {
+      await tx.insert(trainingQuestionChoices).values(
+        choices.map((choice) => ({
+          id: randomUUID(),
+          questionId: questionIdMap.get(choice.questionId)!,
+          organizationId,
+          text: choice.text,
+          isCorrect: choice.isCorrect,
+          displayOrder: choice.displayOrder,
+        })),
+      );
+    }
+  }
+
   return versionId;
 }
 

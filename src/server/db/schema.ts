@@ -52,6 +52,27 @@ export const qrScanResult = pgEnum("qr_scan_result", [
   "unavailable",
   "invalid",
 ]);
+export const trainingRequirementState = pgEnum("training_requirement_state", [
+  "disabled",
+  "optional",
+  "required",
+]);
+export const trainingMode = pgEnum("training_mode", ["learn", "guided", "test", "demonstration"]);
+export const trainingQuestionType = pgEnum("training_question_type", [
+  "single_choice",
+  "multiple_choice",
+  "true_false",
+]);
+export const trainingQuestionPlacement = pgEnum("training_question_placement", [
+  "before_step",
+  "after_step",
+  "final",
+]);
+export const trainingExplanationPolicy = pgEnum("training_explanation_policy", [
+  "never",
+  "on_incorrect",
+  "always",
+]);
 
 const timestamps = {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -575,6 +596,7 @@ export const sopSteps = pgTable(
       foreignColumns: [files.id, files.organizationId],
       name: "sop_steps_video_file_org_fk",
     }).onDelete("restrict"),
+    unique("sop_steps_id_org_unique").on(table.id, table.organizationId),
     index("sop_steps_version_order_idx").on(table.sopVersionId, table.displayOrder),
   ],
 );
@@ -725,5 +747,126 @@ export const qrScanEvents = pgTable(
   (table) => [
     index("qr_scan_events_qr_created_idx").on(table.qrCodeId, table.createdAt),
     index("qr_scan_events_token_created_idx").on(table.tokenHash, table.createdAt),
+  ],
+);
+
+export const trainingConfigs = pgTable(
+  "training_configs",
+  {
+    id: uuid("id").primaryKey(),
+    sopVersionId: uuid("sop_version_id").notNull(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    requirementState: trainingRequirementState("requirement_state").notNull().default("disabled"),
+    defaultMode: trainingMode("default_mode").notNull().default("learn"),
+    allowBacktracking: boolean("allow_backtracking").notNull().default(true),
+    requireSequentialProgress: boolean("require_sequential_progress").notNull().default(true),
+    requireFullVideoWatch: boolean("require_full_video_watch").notNull().default(false),
+    requireEvidenceApproval: boolean("require_evidence_approval").notNull().default(true),
+    passingScorePercent: integer("passing_score_percent").notNull().default(80),
+    maxAttempts: integer("max_attempts").notNull().default(3),
+    qualificationValidityDays: integer("qualification_validity_days"),
+    retrainingGraceDays: integer("retraining_grace_days"),
+    ...timestamps,
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.sopVersionId, table.organizationId],
+      foreignColumns: [sopVersions.id, sopVersions.organizationId],
+      name: "training_configs_version_org_fk",
+    }).onDelete("cascade"),
+    unique("training_configs_version_uidx").on(table.sopVersionId),
+    unique("training_configs_id_org_unique").on(table.id, table.organizationId),
+  ],
+);
+
+export const stepTrainingRequirements = pgTable(
+  "step_training_requirements",
+  {
+    id: uuid("id").primaryKey(),
+    stepId: uuid("step_id").notNull(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    requireFullVideo: boolean("require_full_video").notNull().default(false),
+    requireConfirmation: boolean("require_confirmation").notNull().default(false),
+    requireTimer: boolean("require_timer").notNull().default(false),
+    requireQuestion: boolean("require_question").notNull().default(false),
+    requirePhoto: boolean("require_photo").notNull().default(false),
+    requireVideo: boolean("require_video").notNull().default(false),
+    requireApproval: boolean("require_approval").notNull().default(false),
+    ...timestamps,
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.stepId, table.organizationId],
+      foreignColumns: [sopSteps.id, sopSteps.organizationId],
+      name: "step_training_requirements_step_org_fk",
+    }).onDelete("cascade"),
+    unique("step_training_requirements_step_uidx").on(table.stepId),
+    unique("step_training_requirements_id_org_unique").on(table.id, table.organizationId),
+  ],
+);
+
+export const trainingQuestions = pgTable(
+  "training_questions",
+  {
+    id: uuid("id").primaryKey(),
+    sopVersionId: uuid("sop_version_id").notNull(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    stepId: uuid("step_id"),
+    type: trainingQuestionType("type").notNull(),
+    text: text("text").notNull(),
+    explanation: text("explanation").notNull().default(""),
+    points: integer("points").notNull().default(1),
+    placement: trainingQuestionPlacement("placement").notNull(),
+    displayOrder: integer("display_order").notNull(),
+    explanationPolicy: trainingExplanationPolicy("explanation_policy")
+      .notNull()
+      .default("on_incorrect"),
+    ...timestamps,
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.sopVersionId, table.organizationId],
+      foreignColumns: [sopVersions.id, sopVersions.organizationId],
+      name: "training_questions_version_org_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.stepId, table.organizationId],
+      foreignColumns: [sopSteps.id, sopSteps.organizationId],
+      name: "training_questions_step_org_fk",
+    }).onDelete("cascade"),
+    unique("training_questions_id_org_unique").on(table.id, table.organizationId),
+    index("training_questions_version_step_order_idx").on(
+      table.sopVersionId,
+      table.stepId,
+      table.displayOrder,
+    ),
+  ],
+);
+
+export const trainingQuestionChoices = pgTable(
+  "training_question_choices",
+  {
+    id: uuid("id").primaryKey(),
+    questionId: uuid("question_id").notNull(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    text: text("text").notNull(),
+    isCorrect: boolean("is_correct").notNull().default(false),
+    displayOrder: integer("display_order").notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.questionId, table.organizationId],
+      foreignColumns: [trainingQuestions.id, trainingQuestions.organizationId],
+      name: "training_question_choices_question_org_fk",
+    }).onDelete("cascade"),
+    index("training_question_choices_question_order_idx").on(table.questionId, table.displayOrder),
   ],
 );
