@@ -11,6 +11,7 @@ export default async function ManagerLayout({ children }: { children: ReactNode 
     { href: "/manager/sops", label: "SOPs" },
     { href: "/manager/settings/locations", label: "Locations" },
     { href: "/manager/settings/stations", label: "Stations" },
+    { href: "/manager/qr", label: "QR codes" },
     { href: "/manager/employees", label: "Employees" },
     { href: "/manager/settings/organization", label: "Organization" },
     ...(session.role === "owner" ? [{ href: "/manager/managers", label: "Manager access" }] : []),

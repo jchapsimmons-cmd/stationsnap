@@ -43,6 +43,13 @@
       "when": 1785761677359,
       "tag": "0005_phase5_versions_and_retraining",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1785776094838,
+      "tag": "0006_large_sir_ram",
+      "breakpoints": true
     }
   ]
 }

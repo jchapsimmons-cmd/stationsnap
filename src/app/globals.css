@@ -965,6 +965,35 @@ h2 {
   flex-wrap: wrap;
   gap: var(--space-3);
 }
+.qr-print-card {
+  display: grid;
+  gap: var(--space-3);
+  justify-items: start;
+  max-width: 24rem;
+}
+.qr-print-card__image {
+  width: 100%;
+  max-width: 20rem;
+  height: auto;
+  border-radius: var(--radius-md);
+  background: white;
+  padding: var(--space-3);
+}
+.qr-print-card__url code {
+  word-break: break-all;
+}
+@media print {
+  .app-bar,
+  .side-nav,
+  .bottom-nav,
+  .page-header,
+  .action-row .button--secondary {
+    display: none !important;
+  }
+  .app-content {
+    padding: 0;
+  }
+}
 .checkbox-list {
   flex-direction: column;
 }

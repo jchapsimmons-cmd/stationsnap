@@ -116,6 +116,14 @@ export const sopPublishSchema = z.object({
   retrainingRule: retrainingRuleSchema.default({ type: "none" }),
 });
 
+export const employeeSopQuerySchema = z.object({
+  search: z.string().trim().max(120).default(""),
+  category: z.union([z.literal(""), category]).default(""),
+  stationId: z.union([z.literal(""), z.uuid()]).default(""),
+  cursor: z.string().trim().max(500).default(""),
+  limit: z.coerce.number().int().min(1).max(50).default(20),
+});
+
 export const sopVersionIdParamSchema = z.object({
   versionId: z.uuid(),
 });
@@ -134,3 +142,4 @@ export type SopStepReorderInput = z.infer<typeof sopStepReorderSchema>;
 export type SopRevisionOnlyInput = z.infer<typeof sopRevisionOnlySchema>;
 export type SopPublishInput = z.infer<typeof sopPublishSchema>;
 export type RetrainingRuleInput = z.infer<typeof retrainingRuleSchema>;
+export type EmployeeSopQuery = z.infer<typeof employeeSopQuerySchema>;

@@ -1,10 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, eq, or } from "drizzle-orm";
 import { AppError } from "@/lib/errors";
 import { writeAuditEvent } from "@/server/audit";
-import type { ManagerSessionContext } from "@/server/auth/sessions";
+import type { EmployeeSessionContext, ManagerSessionContext } from "@/server/auth/sessions";
 import { getDb } from "@/server/db/client";
-import { files } from "@/server/db/schema";
+import { files, sops, sopSteps, sopVersions } from "@/server/db/schema";
 import { maxBytesForMediaType, mediaTypeForMime } from "@/server/storage/constants";
 import {
   createObjectKey,
@@ -90,6 +90,61 @@ export async function getMediaFile(actor: ManagerSessionContext, fileId: string)
     .where(and(eq(files.id, fileId), eq(files.organizationId, actor.organizationId)))
     .limit(1);
   if (!row || row.status !== "ready") throw new AppError("NOT_FOUND", "File not found.");
+  const buffer = await readStoredObject(row.objectKey);
+  return { buffer, mimeType: row.mimeType, originalName: row.originalName };
+}
+
+export async function getMediaFileForEmployee(session: EmployeeSessionContext, fileId: string) {
+  const [row] = await getDb()
+    .select()
+    .from(files)
+    .where(and(eq(files.id, fileId), eq(files.organizationId, session.organizationId)))
+    .limit(1);
+  if (!row || row.status !== "ready") throw new AppError("NOT_FOUND", "File not found.");
+
+  const [versionMatch] = await getDb()
+    .select({ id: sopVersions.id })
+    .from(sops)
+    .innerJoin(
+      sopVersions,
+      and(
+        eq(sopVersions.id, sops.currentVersionId),
+        eq(sopVersions.organizationId, sops.organizationId),
+      ),
+    )
+    .where(
+      and(
+        eq(sops.organizationId, session.organizationId),
+        eq(sops.locationId, session.locationId),
+        eq(sops.status, "published"),
+        or(eq(sopVersions.coverImageFileId, fileId), eq(sopVersions.sourceVideoFileId, fileId)),
+      ),
+    )
+    .limit(1);
+  const [stepMatch] = versionMatch
+    ? []
+    : await getDb()
+        .select({ id: sopSteps.id })
+        .from(sops)
+        .innerJoin(
+          sopVersions,
+          and(
+            eq(sopVersions.id, sops.currentVersionId),
+            eq(sopVersions.organizationId, sops.organizationId),
+          ),
+        )
+        .innerJoin(sopSteps, eq(sopSteps.sopVersionId, sopVersions.id))
+        .where(
+          and(
+            eq(sops.organizationId, session.organizationId),
+            eq(sops.locationId, session.locationId),
+            eq(sops.status, "published"),
+            or(eq(sopSteps.imageFileId, fileId), eq(sopSteps.videoFileId, fileId)),
+          ),
+        )
+        .limit(1);
+  if (!versionMatch && !stepMatch) throw new AppError("NOT_FOUND", "File not found.");
+
   const buffer = await readStoredObject(row.objectKey);
   return { buffer, mimeType: row.mimeType, originalName: row.originalName };
 }

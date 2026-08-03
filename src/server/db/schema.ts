@@ -44,6 +44,14 @@ export const sopRetrainingRuleType = pgEnum("sop_retraining_rule_type", [
 ]);
 export const fileMediaType = pgEnum("file_media_type", ["image", "video"]);
 export const fileStatus = pgEnum("file_status", ["processing", "ready", "failed"]);
+export const qrTargetType = pgEnum("qr_target_type", ["station", "sop"]);
+export const qrCodeStatus = pgEnum("qr_code_status", ["active", "revoked"]);
+export const qrScanResult = pgEnum("qr_scan_result", [
+  "resolved",
+  "revoked",
+  "unavailable",
+  "invalid",
+]);
 
 const timestamps = {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -635,5 +643,87 @@ export const sopRetrainingRuleLocations = pgTable(
       name: "sop_retraining_rule_locations_location_org_fk",
     }).onDelete("cascade"),
     unique("sop_retraining_rule_locations_rule_location_uidx").on(table.ruleId, table.locationId),
+  ],
+);
+
+export const sopRecentViews = pgTable(
+  "sop_recent_views",
+  {
+    id: uuid("id").primaryKey(),
+    employeeId: uuid("employee_id").notNull(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    sopId: uuid("sop_id").notNull(),
+    lastViewedAt: timestamp("last_viewed_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.employeeId, table.organizationId],
+      foreignColumns: [employees.id, employees.organizationId],
+      name: "sop_recent_views_employee_org_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.sopId, table.organizationId],
+      foreignColumns: [sops.id, sops.organizationId],
+      name: "sop_recent_views_sop_org_fk",
+    }).onDelete("cascade"),
+    unique("sop_recent_views_employee_sop_uidx").on(table.employeeId, table.sopId),
+    index("sop_recent_views_employee_viewed_idx").on(table.employeeId, table.lastViewedAt),
+  ],
+);
+
+export const qrCodes = pgTable(
+  "qr_codes",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    locationId: uuid("location_id").notNull(),
+    targetType: qrTargetType("target_type").notNull(),
+    targetId: uuid("target_id").notNull(),
+    label: text("label").notNull().default(""),
+    tokenHash: text("token_hash").notNull(),
+    status: qrCodeStatus("status").notNull().default("active"),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdByManagerUserId: uuid("created_by_manager_user_id")
+      .notNull()
+      .references(() => managerUsers.id, { onDelete: "restrict" }),
+    ...timestamps,
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.locationId, table.organizationId],
+      foreignColumns: [locations.id, locations.organizationId],
+      name: "qr_codes_location_org_fk",
+    }).onDelete("restrict"),
+    unique("qr_codes_id_org_unique").on(table.id, table.organizationId),
+    uniqueIndex("qr_codes_token_hash_uidx").on(table.tokenHash),
+    index("qr_codes_org_location_status_idx").on(
+      table.organizationId,
+      table.locationId,
+      table.status,
+    ),
+  ],
+);
+
+export const qrScanEvents = pgTable(
+  "qr_scan_events",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id").references(() => organizations.id, {
+      onDelete: "restrict",
+    }),
+    qrCodeId: uuid("qr_code_id").references(() => qrCodes.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    result: qrScanResult("result").notNull(),
+    employeeId: uuid("employee_id"),
+    ipHash: text("ip_hash").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("qr_scan_events_qr_created_idx").on(table.qrCodeId, table.createdAt),
+    index("qr_scan_events_token_created_idx").on(table.tokenHash, table.createdAt),
   ],
 );

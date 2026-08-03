@@ -4,9 +4,11 @@ StationSnap is a mobile-first restaurant SOP, training, qualification, and check
 
 ## Repository status
 
-Phases 0 through 5 are complete. The repository now includes the project foundation, secure manager and employee authentication, tenant-safe manager tools for organization settings, locations, stations, manager location assignments, and employees, a manual SOP draft builder, and immutable SOP publication with version history, restoration, comparison, and retraining rules.
+Phases 0 through 6 are complete. The repository now includes the project foundation, secure manager and employee authentication, tenant-safe manager tools for organization settings, locations, stations, manager location assignments, and employees, a manual SOP draft builder, immutable SOP publication with version history, restoration, comparison, and retraining rules, and the authorized employee reader with revocable QR indirection.
 
 Publishing an SOP freezes an immutable version. Editing a published SOP always starts a new draft cloned from the current (or any historical) version; publishing that draft creates the next version and never mutates prior published records. Publishing an update requires a change summary and an explicit retraining rule (none, all currently qualified employees, selected job roles, or selected locations), recorded against the newly published version for later training phases to act on.
+
+Employees browse published SOPs scoped to their authenticated location through stations and recipe/cleaning/opening/closing libraries, view a full procedure reader, and see recently viewed procedures. Managers generate stable, revocable QR codes under `/manager/qr` that always resolve to a station's library or an SOP's current published version; scanning a QR at `/q/[token]` preserves the destination through employee sign-in. QR tokens are stored only as hashes, every scan is recorded with its outcome, and a revoked or reissued QR immediately invalidates its previous printed code.
 
 The approved 20-screen mobile workflow handoff and Nocturne design system are stored in `design/stationsnap-mobile-workflows/`. New and revised screens must use that package as their visual and interaction source of truth.
 
