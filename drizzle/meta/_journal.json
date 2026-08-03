@@ -8,6 +8,20 @@
       "when": 1785710358125,
       "tag": "0000_colossal_sugar_man",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1785716302429,
+      "tag": "0001_hard_squadron_supreme",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1785716920403,
+      "tag": "0002_lumpy_arachne",
+      "breakpoints": true
     }
   ]
 }

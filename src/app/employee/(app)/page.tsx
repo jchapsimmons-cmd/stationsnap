@@ -1,17 +1,19 @@
 import { Card, EmptyState, PageHeader, ProgressIndicator, StatusBadge } from "@/components/ui";
+import { requireEmployeePage } from "@/server/auth/authorization";
 
-export default function EmployeeFoundationPage() {
+export default async function EmployeeFoundationPage() {
+  await requireEmployeePage("/employee");
   return (
     <div className="page-stack employee-home">
       <PageHeader
-        title="Good shift, Maya"
-        description="Your station information and training will appear here."
-        actions={<StatusBadge tone="info">Downtown</StatusBadge>}
+        title="Your StationSnap home"
+        description="Your employee session is separate from manager access and checked by the server."
+        actions={<StatusBadge tone="success">Signed in</StatusBadge>}
       />
       <div className="metric-grid">
         <Card>
-          <p className="eyebrow">Today</p>
-          <h2>Grill station</h2>
+          <p className="eyebrow">Station</p>
+          <h2>Procedures coming next</h2>
           <p className="muted">Station details arrive in Phase 6.</p>
         </Card>
         <Card>

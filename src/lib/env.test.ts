@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseServerEnv } from "@/lib/env";
+import { parseSeedEnv, parseServerEnv } from "@/lib/env";
 
 describe("parseServerEnv", () => {
   it("parses a valid PostgreSQL environment", () => {
@@ -23,5 +23,32 @@ describe("parseServerEnv", () => {
     expect(() =>
       parseServerEnv({ NODE_ENV: "test", DATABASE_URL: "mysql://localhost/stationsnap" }),
     ).toThrow(/must be a PostgreSQL connection URL/);
+  });
+
+  it("requires SMTP settings as a complete group", () => {
+    expect(() =>
+      parseServerEnv({
+        NODE_ENV: "test",
+        DATABASE_URL: "postgresql://user:password@localhost/stationsnap",
+        SMTP_HOST: "smtp.example.com",
+      }),
+    ).toThrow(/must be configured together/);
+  });
+
+  it("allows seed credentials only outside production", () => {
+    expect(
+      parseSeedEnv({
+        NODE_ENV: "test",
+        SEED_MANAGER_PASSWORD: "long-development-password",
+        SEED_EMPLOYEE_PIN: "4826",
+      }),
+    ).toMatchObject({ NODE_ENV: "test" });
+    expect(() =>
+      parseSeedEnv({
+        NODE_ENV: "production",
+        SEED_MANAGER_PASSWORD: "long-development-password",
+        SEED_EMPLOYEE_PIN: "4826",
+      }),
+    ).toThrow(/Invalid seed environment/);
   });
 });

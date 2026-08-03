@@ -268,6 +268,27 @@ h2 {
   text-transform: uppercase;
   color: #cce2d6;
 }
+.app-bar__account {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+.app-bar__context {
+  max-width: min(42vw, 20rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-bar__logout.button--ghost {
+  min-height: 2.25rem;
+  color: white;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.8rem;
+}
+.app-bar__logout.button--ghost:hover {
+  background: rgb(255 255 255 / 12%);
+}
 .side-nav {
   display: none;
 }
@@ -634,6 +655,81 @@ h2 {
   width: min(100%, 42rem);
 }
 
+.auth-page {
+  min-height: 100dvh;
+  display: grid;
+  background: var(--color-surface);
+}
+.auth-card {
+  width: min(100%, 34rem);
+  align-self: center;
+  margin-inline: auto;
+  padding: clamp(1.5rem, 6vw, 4rem);
+}
+.auth-card__brand {
+  display: inline-block;
+  color: var(--color-primary);
+  margin-bottom: var(--space-7);
+}
+.auth-card h1 {
+  font-size: clamp(2.2rem, 7vw, 4rem);
+}
+.auth-card__description {
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-6);
+}
+.auth-card__alternate {
+  display: block;
+  width: fit-content;
+  margin: var(--space-5) auto 0;
+  color: var(--color-primary);
+  font-weight: 750;
+}
+.auth-form {
+  display: grid;
+  gap: var(--space-4);
+}
+.auth-form .button {
+  width: 100%;
+  margin-top: var(--space-2);
+}
+.auth-form__link {
+  width: fit-content;
+  color: var(--color-primary);
+  font-weight: 700;
+}
+.auth-form__status {
+  margin: 0;
+  border-radius: var(--radius-sm);
+  padding: var(--space-3);
+  background: var(--color-primary-soft);
+  color: var(--color-primary-strong);
+  font-weight: 650;
+}
+.auth-form__status--error {
+  background: var(--color-danger-soft);
+  color: var(--color-danger);
+}
+.auth-page__aside {
+  display: none;
+  background: var(--color-primary);
+  color: white;
+  padding: clamp(2rem, 6vw, 6rem);
+  align-content: end;
+}
+.auth-page__aside .eyebrow {
+  color: #b7dbc9;
+}
+.auth-page__aside h2 {
+  max-width: 9ch;
+  font-size: clamp(2.5rem, 5vw, 5.5rem);
+  letter-spacing: -0.05em;
+}
+.auth-page__aside > p:last-child {
+  max-width: 34rem;
+  color: #dbeae3;
+}
+
 .modal-backdrop {
   position: fixed;
   z-index: 100;
@@ -755,6 +851,12 @@ h2 {
     grid-area: nav;
     align-self: end;
     display: none;
+  }
+  .auth-page {
+    grid-template-columns: minmax(26rem, 0.9fr) minmax(28rem, 1.1fr);
+  }
+  .auth-page__aside {
+    display: grid;
   }
 }
 

@@ -1,4 +1,7 @@
 import { pathToFileURL } from "node:url";
+import { eq, inArray } from "drizzle-orm";
+import { parseSeedEnv } from "@/lib/env";
+import { hashSecret } from "@/server/auth/crypto";
 import { closeDatabase, getDb } from "@/server/db/client";
 import {
   employees,
@@ -14,12 +17,18 @@ import { logger } from "@/server/logger";
 
 export async function runSeed(): Promise<void> {
   const db = getDb();
+  const seedEnv = parseSeedEnv(process.env);
+  const [passwordHash, pinHash] = await Promise.all([
+    hashSecret(seedEnv.SEED_MANAGER_PASSWORD),
+    hashSecret(seedEnv.SEED_EMPLOYEE_PIN),
+  ]);
 
   await db.transaction(async (tx) => {
     await tx
       .insert(organizations)
       .values({
         id: seedIds.organization,
+        accessSlug: "stationsnap-demo",
         name: "StationSnap Demo Kitchen",
         defaultLanguage: "en",
         timezone: "America/Chicago",
@@ -27,22 +36,38 @@ export async function runSeed(): Promise<void> {
       .onConflictDoNothing();
 
     await tx
+      .update(organizations)
+      .set({ accessSlug: "stationsnap-demo" })
+      .where(eq(organizations.id, seedIds.organization));
+
+    await tx
       .insert(locations)
       .values([
         {
           id: seedIds.locations.downtown,
           organizationId: seedIds.organization,
+          accessSlug: "downtown",
           name: "Downtown",
           timezone: "America/Chicago",
         },
         {
           id: seedIds.locations.riverside,
           organizationId: seedIds.organization,
+          accessSlug: "riverside",
           name: "Riverside",
           timezone: "America/Chicago",
         },
       ])
       .onConflictDoNothing();
+
+    await tx
+      .update(locations)
+      .set({ accessSlug: "downtown" })
+      .where(eq(locations.id, seedIds.locations.downtown));
+    await tx
+      .update(locations)
+      .set({ accessSlug: "riverside" })
+      .where(eq(locations.id, seedIds.locations.riverside));
 
     await tx
       .insert(stations)
@@ -84,8 +109,17 @@ export async function runSeed(): Promise<void> {
 
     await tx
       .insert(managerUsers)
-      .values([...managerSeed])
+      .values(managerSeed.map((manager) => ({ ...manager, passwordHash })))
       .onConflictDoNothing();
+    await tx
+      .update(managerUsers)
+      .set({ passwordHash })
+      .where(
+        inArray(
+          managerUsers.id,
+          managerSeed.map((manager) => manager.id),
+        ),
+      );
 
     await tx
       .insert(managerMemberships)
@@ -133,9 +167,19 @@ export async function runSeed(): Promise<void> {
         employeeSeed.map((employee) => ({
           ...employee,
           organizationId: seedIds.organization,
+          pinHash,
         })),
       )
       .onConflictDoNothing();
+    await tx
+      .update(employees)
+      .set({ pinHash })
+      .where(
+        inArray(
+          employees.id,
+          employeeSeed.map((employee) => employee.id),
+        ),
+      );
   });
 
   logger.info(

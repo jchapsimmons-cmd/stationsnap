@@ -1,0 +1,5 @@
+ALTER TABLE "audit_events" ADD CONSTRAINT "audit_events_location_org_fk" FOREIGN KEY ("location_id","organization_id") REFERENCES "public"."locations"("id","organization_id") ON DELETE restrict ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "employees" ADD CONSTRAINT "employees_id_org_location_unique" UNIQUE("id","organization_id","primary_location_id");--> statement-breakpoint
+ALTER TABLE "manager_memberships" ADD CONSTRAINT "manager_memberships_id_org_user_unique" UNIQUE("id","organization_id","manager_user_id");--> statement-breakpoint
+ALTER TABLE "employee_sessions" ADD CONSTRAINT "employee_sessions_employee_org_location_fk" FOREIGN KEY ("employee_id","organization_id","location_id") REFERENCES "public"."employees"("id","organization_id","primary_location_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
+ALTER TABLE "manager_sessions" ADD CONSTRAINT "manager_sessions_membership_org_user_fk" FOREIGN KEY ("membership_id","organization_id","manager_user_id") REFERENCES "public"."manager_memberships"("id","organization_id","manager_user_id") ON DELETE cascade ON UPDATE no action;
