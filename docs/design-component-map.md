@@ -2,7 +2,34 @@
 
 ## Design status
 
-No approved design screens are available as of 2026-08-02. This map connects required product screens to routes, reusable components, data, permissions, states, and responsive behavior. Visual properties—typography, spacing, colors, radii, shadows, iconography, imagery, and exact navigation—remain `TBD: approved design` and must not be treated as approved.
+The approved high-fidelity handoff is available in `design/stationsnap-mobile-workflows/`. `StationSnap.dc.html` contains 20 interactive mobile screens, its companion `README.md` specifies screen geometry and behavior, and `nocturne/styles.css` defines the approved visual tokens. This map connects those design references to production routes, data, permissions, states, and responsive behavior.
+
+The handoff's API prototype states that employee PINs are completion signatures rather than login credentials. That conflicts with the approved Phase 2 requirement for employee PIN authentication and separate employee sessions. Production keeps the Phase 2 security model while recreating the handoff's visual flows. PINs remain hashed and are never displayed after creation.
+
+## Approved handoff index
+
+| Design ID | Production area                                         | Primary route or phase                                                                    |
+| --------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `1a`      | Employee QR, station, procedure, proof, PIN, completion | `/q/[token]`, `/employee/stations/[stationId]`, `/employee/sops/[sopId]`; Phases 6 and 12 |
+| `1b`      | Employee scrolling procedure checklist                  | Employee SOP/checklist presentation variant; Phases 6 and 12                              |
+| `1c`      | Manager dashboard, review, record, AI draft             | `/manager`, approvals and SOP AI routes; Phases 10, 13, and 15                            |
+| `2a`      | Employee correction and resubmission                    | `/employee/approvals/[submissionId]`; Phase 10                                            |
+| `2b`      | Station QR card and printable SOP sheet                 | Manager QR/print routes; Phases 6 and 16                                                  |
+| `2c`      | Manager completion history                              | `/manager/activity` and reports; Phase 15                                                 |
+| `3a`      | Organization, location, and station setup               | `/manager/settings/*`; Phase 3                                                            |
+| `3b`      | Employee roster and PIN management                      | `/manager/employees*`; Phase 3                                                            |
+| `3c`      | Task assignment                                         | `/manager/training/assignments/new`; Phase 9                                              |
+| `3d`      | Spanish translation review                              | SOP translation routes; Phase 14                                                          |
+| `3e`      | Training question builder and taker                     | SOP training editor and employee runner; Phases 7 and 8                                   |
+| `3f`      | Employee home                                           | `/employee`; Phase 6                                                                      |
+| `3g`      | Notifications                                           | Manager/employee notification routes; Phase 17                                            |
+| `4a`      | Employee training list and station path                 | `/employee/training`; Phases 9 and 11                                                     |
+| `4b`      | Learn, Guided, Test, and Demonstration runner           | Employee training session route; Phase 8                                                  |
+| `4c`      | Per-SOP training settings                               | `/manager/sops/[sopId]/training`; Phase 7                                                 |
+| `4d`      | Station training-path builder                           | `/manager/training/paths*`; Phase 11                                                      |
+| `4e`      | Manager training dashboard                              | `/manager/training` and reports; Phases 9 and 15                                          |
+| `5a`      | Manager demonstration verification                      | Approval review route; Phase 10                                                           |
+| `5b`      | Mid-training SOP update review                          | Employee “What Changed” route; Phases 5 and 8                                             |
 
 All screens require a focus-visible state, keyboard-operable controls where relevant, labeled inputs, touch targets appropriate for mobile use, semantic headings, non-color-only status communication, and announced validation/status messages.
 
@@ -59,4 +86,4 @@ All screens require a focus-visible state, keyboard-operable controls where rele
 
 ## Design reconciliation checklist
 
-When approved designs arrive, inventory every frame and state, attach its source identifier to the matching row above, and record deviations. Verify all typography, spacing, color, responsive breakpoints, navigation, control variants, media ratios, dialogs, and state screens. Any required product interaction absent from the designs should use approved primitives and be sent for design review rather than silently improvised.
+Use screen identifiers `1a`–`5b` from the handoff when implementing matching flows. Verify typography, spacing, color, responsive breakpoints, navigation, control variants, media ratios, dialogs, motion, light/dark themes, and state screens against the rendered reference. Required product interactions absent from the designs should use Nocturne primitives and be recorded as deliberate extensions rather than silently improvised.

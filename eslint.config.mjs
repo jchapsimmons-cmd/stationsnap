@@ -5,5 +5,11 @@ import nextTypeScript from "eslint-config-next/typescript";
 export default defineConfig([
   ...nextVitals,
   ...nextTypeScript,
-  globalIgnores([".next/**", "coverage/**", "dist/**", "drizzle/**"]),
+  globalIgnores([
+    ".next/**",
+    "coverage/**",
+    "dist/**",
+    "drizzle/**",
+    "design/stationsnap-mobile-workflows/**",
+  ]),
 ]);

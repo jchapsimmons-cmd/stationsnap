@@ -6,7 +6,7 @@ StationSnap is a mobile-first restaurant SOP, training, qualification, and check
 
 Phases 0 through 3 are complete. The repository now includes the project foundation, secure manager and employee authentication, and tenant-safe manager tools for organization settings, locations, stations, manager location assignments, and employees.
 
-Approved visual designs are still required before visual fidelity can be evaluated; see `docs/design-component-map.md` for the provisional functional mapping.
+The approved 20-screen mobile workflow handoff and Nocturne design system are stored in `design/stationsnap-mobile-workflows/`. New and revised screens must use that package as their visual and interaction source of truth.
 
 ## Add source materials
 

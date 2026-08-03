@@ -1,0 +1,1901 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<meta name="design_doc_mode" content="canvas">
+<link rel="stylesheet" href="nocturne/styles.css">
+<script src="nocturne/_ds_bundle.js"></script>
+<script src="./image-slot.js"></script>
+<style>
+body{margin:0;background:#0e0f18;font-family:Inter,system-ui,sans-serif;transition:background .2s}
+a{color:#9184d9}a:hover{color:#b5abfc}
+.dv-turn{padding:40px 44px 32px;border-bottom:1px solid var(--color-divider);scroll-margin-top:16px}
+.dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 20px}
+.dv-tid{font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:var(--color-accent);color:var(--color-bg);border-radius:4px;text-decoration:none}
+.dv-tname{font:500 13px/1.2 Inter,system-ui,sans-serif;color:var(--color-text)}
+.dv-opts{display:flex;flex-wrap:wrap;gap:34px;align-items:flex-start}
+.dv-opt{flex:none;display:flex;flex-direction:column;gap:9px;scroll-margin-top:16px}
+.dv-oid{font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:var(--color-divider);color:var(--color-text);border-radius:5px;text-decoration:none}
+.dv-olabel{display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 Inter,system-ui,sans-serif;color:var(--color-neutral-500)}
+.dv-opt:target .dv-oid{background:var(--color-accent);color:var(--color-bg)}
+.dv-next{margin:22px 0 0;font:12px/1.5 Inter,system-ui,sans-serif;color:var(--color-neutral-500)}
+.dv-note{margin:0 0 18px;max-width:760px;font:13px/1.6 Inter,system-ui,sans-serif;color:var(--color-neutral-500)}
+@keyframes ss-inA{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes ss-inB{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:none}}
+@keyframes ss-slideA{from{opacity:0;transform:translateX(16px)}to{opacity:1;transform:none}}
+@keyframes ss-slideB{from{opacity:0;transform:translateX(16px)}to{opacity:1;transform:none}}
+@keyframes ss-pop{0%{transform:scale(.82);opacity:.4}60%{transform:scale(1.06)}100%{transform:scale(1);opacity:1}}
+@keyframes ss-pulse{0%,100%{opacity:1}50%{opacity:.35}}
+@keyframes ss-glow{0%,100%{box-shadow:0 0 10px var(--color-accent)}50%{box-shadow:0 0 22px var(--color-accent)}}
+@keyframes ss-sweep{from{transform:translateX(-100%)}to{transform:translateX(240%)}}
+button{transition:background .18s ease,border-color .18s ease,color .18s ease,opacity .2s ease,transform .1s ease,box-shadow .2s ease}
+button:hover{filter:brightness(1.1) saturate(1.04)}
+button:active{transform:scale(.975);filter:brightness(1.16)}
+button:disabled,button[disabled]{filter:none;transform:none;cursor:not-allowed}
+input,textarea{transition:border-color .18s ease,box-shadow .18s ease,background .2s ease}
+input:focus-visible,textarea:focus-visible{outline:2px solid var(--color-accent);outline-offset:2px}
+.tag{transition:background .2s ease,color .2s ease,border-color .2s ease}
+image-slot:hover{opacity:.92}
+@media (prefers-reduced-motion:reduce){*{animation-duration:.01ms !important;transition-duration:.01ms !important}}
+button:focus-visible{outline:2px solid var(--color-accent);outline-offset:2px}
+a{transition:color .16s ease}
+image-slot{transition:opacity .3s ease}
+.dv-opt{transition:transform .35s cubic-bezier(.2,.8,.2,1)}
+.dv-opt:target{transform:translateY(-4px)}
+</style>
+</helmet>
+
+<section style="position:fixed;top:16px;right:20px;z-index:99;display:flex">
+<button onClick="{{ toggleTheme }}" style="display:flex;align-items:center;gap:10px;min-height:44px;padding:0 12px 0 14px;border-radius:22px;border:1px solid var(--color-accent);background:var(--color-surface);color:var(--color-text);font:500 13px Inter,system-ui,sans-serif;cursor:pointer;box-shadow:var(--shadow-md)">
+<span>{{ themeLabel }}</span>
+<span style="width:44px;height:26px;flex:none;border-radius:13px;background:{{ themeTrack }};display:flex;align-items:center;justify-content:{{ themeKnob }};padding:3px;transition:background .25s ease"><span style="width:20px;height:20px;border-radius:50%;background:var(--color-accent)"></span></span>
+</button>
+</section>
+
+<section class="dv-turn" id="t5">
+<div class="dv-thd"><a class="dv-tid" href="#t5">5</a><span class="dv-tname">The last two — demonstration verification and a mid-training SOP change</span></div>
+<p class="dv-note">These close turn 4: the manager side of the demonstration <a class="dv-oid" href="#4b">4b</a> submits to, and what an employee sees when a required SOP is republished under them. Both live.</p>
+<div class="dv-opts">
+
+<div class="dv-opt" id="5a">
+<div class="dv-olabel"><a class="dv-oid" href="#5a">5a</a>Manager — verify a demonstration</div>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ frameDark }}" hint-size="440px,900px">
+<div style="min-height:874px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);animation:ss-inA .45s cubic-bezier(.2,.8,.2,1) both;padding:70px 18px 34px;display:flex;flex-direction:column;gap:14px">
+<div><div style="font-size:13px;color:var(--color-neutral-600)">Grill Training · demonstration</div><div style="font-size:27px;font-weight:500;font-family:var(--font-heading);letter-spacing:-.02em">Marisol R.</div><div style="font-size:14px;color:var(--color-neutral-500);margin-top:4px">Clean the grill · 2:41 · submitted 10:48 PM</div></div>
+<div style="width:100%;height:186px;border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm)"><image-slot id="ss-ver-video" shape="rounded" radius="14" placeholder="Demonstration video"></image-slot></div>
+
+<sc-if value="{{ verDone }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;animation:{{ verAnim }}">
+<div style="display:flex;align-items:center;gap:14px;padding:16px;border-radius:14px;background:var(--color-accent-900);border:1px solid var(--color-accent-700)">
+<span style="width:40px;height:40px;flex:none;border-radius:50%;border:1px solid var(--color-accent);color:var(--color-accent);display:flex;align-items:center;justify-content:center;font-size:18px">✓</span>
+<div><div style="font-size:19px;font-family:var(--font-heading);font-weight:500;color:var(--color-accent-100)">Qualified for Grill</div><div style="font-size:13px;color:var(--color-accent-300);margin-top:2px">4 of 4 SOPs · test 100% · retrain Jan 30, 2027</div></div>
+</div>
+<div style="font-size:15px;line-height:1.5;color:var(--color-neutral-400)">Marisol can now be scheduled on the grill alone. She'll get a retraining assignment automatically six months out.</div>
+<button onClick="{{ verReset }}" style="margin-top:auto;width:100%;min-height:64px;border-radius:16px;border:1px solid var(--color-divider);background:transparent;color:var(--color-text);font-family:var(--font-heading);font-size:17px;font-weight:500;cursor:pointer">Replay this review</button>
+</div>
+</sc-if>
+
+<sc-if value="{{ verWatch }}" hint-placeholder-val="{{ true }}">
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;animation:{{ verAnim }}">
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent)">Confirm what you saw · {{ verCount }}</div>
+<sc-for list="{{ verChecks }}" as="c" hint-placeholder-count="4">
+<button onClick="{{ c.toggle }}" style="display:flex;align-items:center;gap:13px;width:100%;min-height:62px;padding:0 16px;border-radius:14px;border:1px solid {{ c.border }};background:{{ c.bg }};color:var(--color-text);font-family:var(--font-heading);font-size:16px;font-weight:500;cursor:pointer;text-align:left">
+<span style="width:28px;height:28px;flex:none;border-radius:8px;border:1.5px solid var(--color-accent);background:{{ c.fill }};color:var(--color-bg);display:flex;align-items:center;justify-content:center;font-size:15px;transition:background .22s ease,border-color .22s ease">{{ c.tick }}</span>
+<span style="flex:1">{{ c.label }}</span>
+</button>
+</sc-for>
+<div style="margin-top:auto;display:flex;flex-direction:column;gap:10px">
+<button onClick="{{ verPass }}" disabled="{{ verPassDisabled }}" style="width:100%;min-height:70px;border-radius:16px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 14%, transparent);color:var(--color-text);font-family:var(--font-heading);font-size:18px;font-weight:500;cursor:pointer;opacity:{{ verPassOpacity }}">{{ verPassLabel }}</button>
+<button onClick="{{ verReject }}" style="width:100%;min-height:60px;border-radius:16px;border:1px solid var(--color-divider);background:transparent;color:var(--color-text);font-family:var(--font-heading);font-size:17px;font-weight:500;cursor:pointer">{{ verRejectLabel }}</button>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ verFail }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;gap:12px;animation:{{ verAnim }}">
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent)">What to redo</div>
+<div style="display:flex;flex-wrap:wrap;gap:8px"><span class="tag tag-outline">Scraped too early</span><span class="tag tag-outline">Contact time short</span><span class="tag tag-neutral">Camera angle</span></div>
+<textarea class="input" rows="3" placeholder="Note for Marisol…" style="min-height:82px;font-size:15px"></textarea>
+<div style="padding:14px 16px;border-radius:14px;background:var(--color-surface);box-shadow:var(--shadow-sm);font-size:14px;line-height:1.5;color:var(--color-neutral-400)">This uses attempt 2 of 3. After the last attempt Marisol needs you to reset the demonstration.</div>
+<div style="margin-top:auto;display:flex;flex-direction:column;gap:10px">
+<button onClick="{{ verReset }}" style="width:100%;min-height:70px;border-radius:16px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 14%, transparent);color:var(--color-text);font-family:var(--font-heading);font-size:18px;font-weight:500;cursor:pointer">Send retry request</button>
+<button onClick="{{ verReject }}" style="width:100%;min-height:58px;border-radius:16px;border:1px solid var(--color-divider);background:transparent;color:var(--color-text);font-family:var(--font-heading);font-size:16px;font-weight:500;cursor:pointer">Back to review</button>
+</div>
+</div>
+</sc-if>
+</div>
+</x-import>
+</div>
+
+<div class="dv-opt" id="5b">
+<div class="dv-olabel"><a class="dv-oid" href="#5b">5b</a>Employee — the SOP changed mid-training</div>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ frameDark }}" hint-size="440px,900px">
+<div style="min-height:874px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);animation:ss-inA .45s cubic-bezier(.2,.8,.2,1) both;padding:74px 18px 34px;display:flex;flex-direction:column;gap:16px">
+<div style="display:flex;align-items:center;gap:9px;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent)">
+<span style="width:6px;height:6px;border-radius:50%;background:var(--color-accent);box-shadow:0 0 10px var(--color-accent)"></span>SOP updated
+</div>
+<div style="font-size:29px;line-height:1.15;font-weight:500;font-family:var(--font-heading);letter-spacing:-.02em;text-wrap:pretty">Clean the grill is now v4.</div>
+<div style="font-size:15px;color:var(--color-neutral-500)">Dev O. republished it 8 minutes ago · required training</div>
+<div style="display:flex;flex-direction:column;gap:10px">
+<div style="display:flex;gap:12px;padding:14px;border-radius:14px;border:1px solid var(--color-accent-700);background:color-mix(in srgb, var(--color-accent) 8%, transparent)">
+<span style="font-size:13px;color:var(--color-neutral-600);width:14px">3</span>
+<span style="flex:1"><span style="display:block;font-size:13px;color:var(--color-neutral-500);text-decoration:line-through">Apply 2 oz degreaser. 30 sec contact.</span><span style="display:block;font-size:17px;line-height:1.35;font-family:var(--font-heading);font-weight:500;margin-top:5px">Apply 4 oz degreaser. 60 sec contact.</span></span>
+</div>
+<div style="display:flex;gap:12px;padding:14px;border-radius:14px;border:1px solid var(--color-accent-700);background:color-mix(in srgb, var(--color-accent) 8%, transparent)">
+<span style="font-size:13px;color:var(--color-neutral-600);width:14px">5</span>
+<span style="flex:1"><span style="display:block;font-size:13px;color:var(--color-neutral-500);text-decoration:line-through">Sanitize and air dry.</span><span style="display:block;font-size:17px;line-height:1.35;font-family:var(--font-heading);font-weight:500;margin-top:5px">Sanitize at 200 ppm, air dry, photograph.</span></span>
+</div>
+</div>
+<div style="padding:15px;border-radius:14px;background:var(--color-surface);box-shadow:var(--shadow-sm);font-size:15px;line-height:1.5;color:var(--color-neutral-300)">{{ updNote }}</div>
+<div style="display:flex;gap:8px;flex-wrap:wrap"><span class="tag tag-accent">2 steps changed</span><span class="tag tag-neutral">Test unchanged</span><span class="tag tag-outline">Progress reset</span></div>
+<button onClick="{{ ackUpdate }}" style="margin-top:auto;width:100%;min-height:72px;border-radius:16px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 14%, transparent);color:var(--color-text);font-family:var(--font-heading);font-size:19px;font-weight:500;cursor:pointer" style-hover="background:color-mix(in srgb, var(--color-accent) 24%, transparent)">{{ updBtn }}</button>
+</div>
+</x-import>
+</div>
+
+</div>
+<p class="dv-next">Every screen on the MVP + Training list is now built. Try next: "turn <a class="dv-oid" href="#2b">2b</a> into an exportable PDF" · "wire the employee screens into one continuous prototype" · "a second visual direction for the manager side"</p>
+</section>
+
+<section class="dv-turn" id="t4">
+<div class="dv-thd"><a class="dv-tid" href="#t4">4</a><span class="dv-tname">Training Mode — four modes, no-skip gating, paths and qualification</span></div>
+<p class="dv-note">The runner in <a class="dv-oid" href="#4b">4b</a> is the whole feature: Learn / Guided / Test / Demonstration in one screen, with real gates — a confirm step, a 60-second timer step and a photo step each block Next until they're satisfied. Failing the test sends you back to Learn and burns an attempt; passing routes to Demonstration, which ends in manager verification.</p>
+<div class="dv-opts">
+
+<div class="dv-opt" id="4a">
+<div class="dv-olabel"><a class="dv-oid" href="#4a">4a</a>Employee — Training screen + station path</div>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ frameDark }}" hint-size="440px,900px">
+<div style="min-height:874px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);animation:ss-inA .45s cubic-bezier(.2,.8,.2,1) both;padding:70px 18px 36px;display:flex;flex-direction:column;gap:14px">
+<div><div style="font-size:13px;color:var(--color-neutral-600)">Marisol R. · Riverside</div><div style="font-size:30px;font-weight:500;font-family:var(--font-heading);letter-spacing:-.02em">Training</div></div>
+<div style="display:flex;flex-direction:column;gap:10px;padding:16px;border-radius:16px;border:1px solid var(--color-accent-700);background:color-mix(in srgb, var(--color-accent) 8%, transparent)">
+<div style="display:flex;justify-content:space-between;align-items:baseline"><span style="font-size:20px;font-family:var(--font-heading);font-weight:500">Grill Training</span><span style="font-size:13px;color:var(--color-accent-300)">{{ pathLabel }}</span></div>
+<div style="height:5px;border-radius:3px;background:var(--color-neutral-900);overflow:hidden"><div style="height:100%;width:{{ pathPct }};background:var(--color-accent);box-shadow:0 0 12px var(--color-accent);transition:width .5s cubic-bezier(.2,.8,.2,1)"></div></div>
+<sc-for list="{{ pathRows }}" as="p" hint-placeholder-count="4">
+<div style="display:flex;align-items:center;gap:12px;min-height:44px;opacity:{{ p.op }}">
+<span style="width:24px;height:24px;flex:none;border-radius:7px;border:1.5px solid {{ p.mark }};background:{{ p.fill }};color:{{ p.color }};display:flex;align-items:center;justify-content:center;font-size:13px">{{ p.tick }}</span>
+<span style="flex:1;font-size:16px;font-family:var(--font-heading);font-weight:500">{{ p.name }}</span>
+<span style="font-size:12px;color:var(--color-neutral-500)">{{ p.kind }}</span>
+</div>
+</sc-for>
+<div style="font-size:13px;line-height:1.5;color:var(--color-neutral-400)">Finish all four to be marked qualified for the grill station.</div>
+</div>
+<div style="display:flex;gap:8px;flex-wrap:wrap">
+<sc-for list="{{ trFilters }}" as="f" hint-placeholder-count="5">
+<button onClick="{{ f.pick }}" style="min-height:44px;padding:0 14px;border-radius:12px;border:1px solid {{ f.border }};background:{{ f.bg }};color:{{ f.color }};font-size:14px;cursor:pointer;transition:all .2s ease">{{ f.label }}</button>
+</sc-for>
+</div>
+<div style="font-size:13px;color:var(--color-neutral-600)">{{ trCount }}</div>
+<div style="display:flex;flex-direction:column;gap:10px">
+<sc-for list="{{ trList }}" as="t" hint-placeholder-count="5">
+<div style="display:flex;flex-direction:column;gap:7px;padding:15px;border-radius:14px;border:1px solid {{ t.border }};background:{{ t.bg }};opacity:{{ t.op }}">
+<div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline"><span style="font-size:18px;font-family:var(--font-heading);font-weight:500">{{ t.name }}</span><span style="font-size:12px;color:{{ t.chipColor }}">{{ t.state }}</span></div>
+<div style="font-size:13px;color:var(--color-neutral-500)">{{ t.kind }} · {{ t.meta }}</div>
+</div>
+</sc-for>
+</div>
+</div>
+</x-import>
+</div>
+
+<div class="dv-opt" id="4b">
+<div class="dv-olabel"><a class="dv-oid" href="#4b">4b</a>Employee — the runner: Learn · Guided · Test · Demonstration</div>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ frameDark }}" hint-size="440px,900px">
+<div style="min-height:874px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);animation:ss-inA .45s cubic-bezier(.2,.8,.2,1) both;padding:66px 18px 34px;display:flex;flex-direction:column;gap:14px">
+<div style="display:flex;border:1px solid var(--color-divider);border-radius:14px;overflow:hidden">
+<sc-for list="{{ modeChips }}" as="m" hint-placeholder-count="4">
+<button onClick="{{ m.pick }}" style="flex:1;min-height:50px;border:0;border-left:1px solid var(--color-divider);background:{{ m.bg }};color:{{ m.color }};font-family:var(--font-heading);font-size:14px;font-weight:500;cursor:pointer">{{ m.label }}</button>
+</sc-for>
+</div>
+<div style="font-size:13px;color:var(--color-neutral-600)">Clean the grill · Grill Training · required</div>
+
+<sc-if value="{{ modeLearn }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:12px;animation:{{ modeAnim }}">
+<div style="font-size:26px;font-weight:500;font-family:var(--font-heading);letter-spacing:-.02em">Read it through</div>
+<div style="width:100%;height:150px;border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm)"><image-slot id="ss-learn-vid" shape="rounded" radius="14" placeholder="SOP video"></image-slot></div>
+<sc-for list="{{ learnSteps }}" as="l" hint-placeholder-count="5">
+<div style="display:flex;gap:12px;padding:13px 14px;border-radius:12px;background:var(--color-surface);box-shadow:var(--shadow-sm)">
+<span style="font-size:13px;color:var(--color-neutral-600);width:14px">{{ l.n }}</span>
+<span style="flex:1"><span style="display:block;font-size:16px;line-height:1.35">{{ l.text }}</span><span style="display:block;font-size:12px;color:var(--color-accent-300);margin-top:3px">{{ l.meta }}</span></span>
+</div>
+</sc-for>
+<div style="font-size:13px;line-height:1.5;color:var(--color-neutral-500)">Learn Mode records that you reviewed it. Nothing is submitted from here.</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ modeGuided }}" hint-placeholder-val="{{ true }}">
+<div style="flex:1;display:flex;flex-direction:column;gap:14px;animation:{{ tStepAnim }}">
+<div style="display:flex;gap:4px">
+<sc-for list="{{ tBars }}" as="b" hint-placeholder-count="5">
+<div style="flex:1;height:5px;border-radius:3px;background:{{ b.bg }};transition:background .3s ease"></div>
+</sc-for>
+</div>
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-600)">{{ tStepCounter }} · in order</div>
+<div style="font-size:27px;line-height:1.2;font-weight:500;font-family:var(--font-heading);letter-spacing:-.015em;text-wrap:pretty">{{ tText }}</div>
+<sc-if value="{{ tHasWarn }}" hint-placeholder-val="{{ true }}">
+<div style="display:flex;gap:12px;padding:13px 15px;border-radius:14px;background:var(--color-accent-900);border:1px solid var(--color-accent-700)"><span style="font-size:18px;color:var(--color-accent-300)">▲</span><div style="font-size:15px;line-height:1.4;color:var(--color-accent-200)">{{ tWarn }}</div></div>
+</sc-if>
+<div style="display:flex;gap:10px;flex-wrap:wrap">
+<sc-if value="{{ tHasSetting }}" hint-placeholder-val="{{ true }}"><span class="tag tag-outline">{{ tSetting }}</span></sc-if>
+<sc-if value="{{ tHasAmount }}" hint-placeholder-val="{{ false }}"><span class="tag tag-accent">{{ tAmount }}</span></sc-if>
+</div>
+<div style="width:100%;height:150px;border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm)"><image-slot id="ss-train-step" shape="rounded" radius="14" placeholder="Step clip"></image-slot></div>
+
+<sc-if value="{{ tNeedsConfirm }}" hint-placeholder-val="{{ true }}">
+<button onClick="{{ toggleConfirm }}" style="display:flex;align-items:center;gap:14px;width:100%;min-height:68px;padding:0 16px;border-radius:14px;border:1px solid {{ tConfirmBorder }};background:{{ tConfirmFill }};color:var(--color-text);font-family:var(--font-heading);font-size:17px;font-weight:500;cursor:pointer;text-align:left">
+<span style="width:30px;height:30px;flex:none;border-radius:9px;border:1.5px solid var(--color-accent);background:{{ tConfirmBg }};color:var(--color-bg);display:flex;align-items:center;justify-content:center;font-size:16px;transition:background .22s ease">{{ tConfirmTick }}</span>
+<span style="flex:1">{{ tConfirmLabel }}</span>
+</button>
+</sc-if>
+<sc-if value="{{ tNeedsTimer }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;align-items:center;gap:14px;padding:14px 16px;border-radius:14px;background:var(--color-surface);box-shadow:var(--shadow-sm)">
+<div style="flex:1"><div style="font-size:13px;color:var(--color-neutral-500)">Contact time</div><div style="font-family:var(--font-heading);font-size:32px;font-weight:500;color:{{ tTimerColor }};animation:{{ tTimerAnim }}">{{ tTimerText }}</div></div>
+<button onClick="{{ startTrainTimer }}" style="min-width:126px;height:58px;border-radius:14px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 12%, transparent);color:var(--color-accent);font-size:15px;font-weight:500;cursor:pointer">{{ tTimerBtn }}</button>
+</div>
+</sc-if>
+<sc-if value="{{ tNeedsPhoto }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:10px">
+<sc-if value="{{ tPhotoTaken }}" hint-placeholder-val="{{ false }}">
+<div style="width:100%;height:140px;border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm)"><image-slot id="ss-train-proof" shape="rounded" radius="14" placeholder="Your proof photo"></image-slot></div>
+</sc-if>
+<sc-if value="{{ tNoPhoto }}" hint-placeholder-val="{{ true }}">
+<div style="width:100%;height:140px;border-radius:14px;border:1px dashed var(--color-neutral-700);display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--color-neutral-600)">Proof photo required</div>
+</sc-if>
+<button onClick="{{ takeTrainPhoto }}" style="width:100%;min-height:64px;border-radius:14px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 12%, transparent);color:var(--color-text);font-family:var(--font-heading);font-size:17px;font-weight:500;cursor:pointer">◉ Take proof photo</button>
+</div>
+</sc-if>
+
+<div style="font-size:13px;line-height:1.45;color:var(--color-neutral-500)">{{ tBlockedNote }}</div>
+<div style="margin-top:auto;display:flex;gap:12px">
+<button onClick="{{ trainPrev }}" style="width:70px;min-height:66px;border-radius:16px;border:1px solid var(--color-divider);background:transparent;color:var(--color-text);font-size:20px;cursor:pointer">←</button>
+<button onClick="{{ trainNext }}" disabled="{{ tNextDisabled }}" style="flex:1;min-height:66px;border-radius:16px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 14%, transparent);color:var(--color-text);font-family:var(--font-heading);font-size:18px;font-weight:500;cursor:pointer;opacity:{{ tNextOpacity }}">{{ tNextLabel }}</button>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ modeTest }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;gap:14px">
+<sc-if value="{{ tqOpen }}" hint-placeholder-val="{{ true }}">
+<div style="display:flex;flex-direction:column;gap:14px;animation:{{ tqAnim }}">
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-600)">{{ tqCounter }}</div>
+<div style="font-size:24px;line-height:1.25;font-weight:500;font-family:var(--font-heading);text-wrap:pretty">{{ tqQ }}</div>
+<sc-for list="{{ tqOptions }}" as="o" hint-placeholder-count="3">
+<button onClick="{{ o.pick }}" style="width:100%;min-height:66px;padding:0 18px;border-radius:14px;border:1px solid {{ o.border }};background:{{ o.bg }};color:var(--color-text);font-family:var(--font-heading);font-size:18px;font-weight:500;cursor:pointer;text-align:left">{{ o.label }}</button>
+</sc-for>
+<button onClick="{{ tqNext }}" disabled="{{ tqNextDisabled }}" style="width:100%;min-height:66px;border-radius:16px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 14%, transparent);color:var(--color-text);font-family:var(--font-heading);font-size:18px;font-weight:500;cursor:pointer;opacity:{{ tqNextOpacity }}">{{ tqNextLabel }}</button>
+</div>
+</sc-if>
+<sc-if value="{{ tqClosed }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:16px;padding-top:20px;animation:{{ popAnim }}">
+<div style="font-size:56px;font-family:var(--font-heading);font-weight:500;letter-spacing:-.03em;color:var(--color-accent)">{{ tqScoreLabel }}</div>
+<div style="font-size:30px;font-weight:500;font-family:var(--font-heading)">{{ tqVerdict }}</div>
+<div style="font-size:16px;line-height:1.5;color:var(--color-neutral-400)">{{ tqSub }}</div>
+<button onClick="{{ tqRetry }}" style="width:100%;min-height:68px;border-radius:16px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 14%, transparent);color:var(--color-text);font-family:var(--font-heading);font-size:18px;font-weight:500;cursor:pointer">{{ tqRetryLabel }}</button>
+</div>
+</sc-if>
+</div>
+</sc-if>
+
+<sc-if value="{{ modeDemo }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;gap:14px;animation:{{ modeAnim }}">
+<div style="font-size:26px;line-height:1.2;font-weight:500;font-family:var(--font-heading);letter-spacing:-.02em">Show us the whole thing.</div>
+<div style="font-size:15px;line-height:1.5;color:var(--color-neutral-400)">Record yourself cleaning the grill start to finish. Dev verifies it before you're qualified.</div>
+<div style="width:100%;height:190px;border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm)"><image-slot id="ss-demo" shape="rounded" radius="14" placeholder="Your demonstration"></image-slot></div>
+<sc-if value="{{ demoRecorded }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;gap:8px;flex-wrap:wrap"><span class="tag tag-neutral">2:41 recorded</span><span class="tag tag-outline">Not submitted</span></div>
+</sc-if>
+<sc-if value="{{ demoSent }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;align-items:center;gap:12px;padding:15px;border-radius:14px;background:var(--color-accent-900);border:1px solid var(--color-accent-700)"><span style="font-size:18px;color:var(--color-accent-300)">◷</span><div style="font-size:15px;line-height:1.4;color:var(--color-accent-100)">Sent to Dev O. Grill Training shows as qualified once it's verified.</div></div>
+</sc-if>
+<button onClick="{{ demoAction }}" style="margin-top:auto;width:100%;min-height:70px;border-radius:16px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 14%, transparent);color:var(--color-text);font-family:var(--font-heading);font-size:18px;font-weight:500;cursor:pointer">{{ demoBtn }}</button>
+</div>
+</sc-if>
+</div>
+</x-import>
+</div>
+
+<div class="dv-opt" id="4c">
+<div class="dv-olabel"><a class="dv-oid" href="#4c">4c</a>Manager — training settings for one SOP</div>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ frameDark }}" hint-size="440px,900px">
+<div style="min-height:874px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);animation:ss-inA .45s cubic-bezier(.2,.8,.2,1) both;padding:70px 18px 34px;display:flex;flex-direction:column;gap:14px">
+<div><div style="font-size:13px;color:var(--color-neutral-600)">Clean the grill · v4</div><div style="font-size:28px;font-weight:500;font-family:var(--font-heading);letter-spacing:-.02em">Training settings</div></div>
+<button onClick="{{ toggleReq }}" style="display:flex;align-items:center;gap:14px;width:100%;min-height:64px;padding:0 16px;border-radius:14px;border:1px solid var(--color-divider);background:var(--color-surface);color:var(--color-text);cursor:pointer;text-align:left">
+<span style="flex:1;font-size:17px;font-family:var(--font-heading);font-weight:500">Required training<span style="display:block;font-size:13px;font-weight:400;color:var(--color-neutral-500);margin-top:2px">Off = optional reference only</span></span>
+<span style="width:54px;height:32px;flex:none;border-radius:16px;background:{{ reqTrack }};display:flex;align-items:center;justify-content:{{ reqKnob }};padding:3px;transition:background .25s ease"><span style="width:26px;height:26px;border-radius:50%;background:var(--color-text)"></span></span>
+</button>
+<button onClick="{{ toggleOrd }}" style="display:flex;align-items:center;gap:14px;width:100%;min-height:64px;padding:0 16px;border-radius:14px;border:1px solid var(--color-divider);background:var(--color-surface);color:var(--color-text);cursor:pointer;text-align:left">
+<span style="flex:1;font-size:17px;font-family:var(--font-heading);font-weight:500">Complete in order<span style="display:block;font-size:13px;font-weight:400;color:var(--color-neutral-500);margin-top:2px">No skipping required steps</span></span>
+<span style="width:54px;height:32px;flex:none;border-radius:16px;background:{{ ordTrack }};display:flex;align-items:center;justify-content:{{ ordKnob }};padding:3px;transition:background .25s ease"><span style="width:26px;height:26px;border-radius:50%;background:var(--color-text)"></span></span>
+</button>
+<button onClick="{{ toggleQuizOn }}" style="display:flex;align-items:center;gap:14px;width:100%;min-height:64px;padding:0 16px;border-radius:14px;border:1px solid var(--color-divider);background:var(--color-surface);color:var(--color-text);cursor:pointer;text-align:left">
+<span style="flex:1;font-size:17px;font-family:var(--font-heading);font-weight:500">Test at the end<span style="display:block;font-size:13px;font-weight:400;color:var(--color-neutral-500);margin-top:2px">5 questions from this SOP</span></span>
+<span style="width:54px;height:32px;flex:none;border-radius:16px;background:{{ quizTrack }};display:flex;align-items:center;justify-content:{{ quizKnob }};padding:3px;transition:background .25s ease"><span style="width:26px;height:26px;border-radius:50%;background:var(--color-text)"></span></span>
+</button>
+<button onClick="{{ toggleApp }}" style="display:flex;align-items:center;gap:14px;width:100%;min-height:64px;padding:0 16px;border-radius:14px;border:1px solid var(--color-divider);background:var(--color-surface);color:var(--color-text);cursor:pointer;text-align:left">
+<span style="flex:1;font-size:17px;font-family:var(--font-heading);font-weight:500">Manager approval<span style="display:block;font-size:13px;font-weight:400;color:var(--color-neutral-500);margin-top:2px">Demonstration must be verified</span></span>
+<span style="width:54px;height:32px;flex:none;border-radius:16px;background:{{ appTrack }};display:flex;align-items:center;justify-content:{{ appKnob }};padding:3px;transition:background .25s ease"><span style="width:26px;height:26px;border-radius:50%;background:var(--color-text)"></span></span>
+</button>
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent);margin-top:4px">Assign by</div>
+<div style="display:flex;gap:8px;flex-wrap:wrap">
+<sc-for list="{{ audienceChips }}" as="a" hint-placeholder-count="5">
+<button onClick="{{ a.pick }}" style="min-height:46px;padding:0 14px;border-radius:12px;border:1px solid {{ a.border }};background:{{ a.bg }};color:{{ a.color }};font-size:15px;cursor:pointer">{{ a.label }}</button>
+</sc-for>
+</div>
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent)">Passing score</div>
+<div style="display:flex;gap:8px;flex-wrap:wrap">
+<sc-for list="{{ passChips }}" as="p" hint-placeholder-count="4">
+<button onClick="{{ p.pick }}" style="min-height:46px;padding:0 16px;border-radius:12px;border:1px solid {{ p.border }};background:{{ p.bg }};color:{{ p.color }};font-size:15px;cursor:pointer">{{ p.label }}</button>
+</sc-for>
+</div>
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent)">Attempts</div>
+<div style="display:flex;gap:8px;flex-wrap:wrap">
+<sc-for list="{{ attemptChips }}" as="a" hint-placeholder-count="4">
+<button onClick="{{ a.pick }}" style="min-height:46px;padding:0 16px;border-radius:12px;border:1px solid {{ a.border }};background:{{ a.bg }};color:{{ a.color }};font-size:15px;cursor:pointer">{{ a.label }}</button>
+</sc-for>
+</div>
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent)">Retrain every</div>
+<div style="display:flex;gap:8px;flex-wrap:wrap">
+<sc-for list="{{ retrainChips }}" as="r" hint-placeholder-count="4">
+<button onClick="{{ r.pick }}" style="min-height:46px;padding:0 14px;border-radius:12px;border:1px solid {{ r.border }};background:{{ r.bg }};color:{{ r.color }};font-size:15px;cursor:pointer">{{ r.label }}</button>
+</sc-for>
+</div>
+<div style="margin-top:auto;display:flex;flex-direction:column;gap:12px">
+<div style="font-size:14px;line-height:1.5;color:var(--color-neutral-400)">{{ settingsSummary }}</div>
+<button style="width:100%;min-height:68px;border-radius:16px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 14%, transparent);color:var(--color-text);font-family:var(--font-heading);font-size:18px;font-weight:500;cursor:pointer">Save training settings</button>
+</div>
+</div>
+</x-import>
+</div>
+
+<div class="dv-opt" id="4d">
+<div class="dv-olabel"><a class="dv-oid" href="#4d">4d</a>Manager — build a station training path</div>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ frameDark }}" hint-size="440px,900px">
+<div style="min-height:874px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);animation:ss-inA .45s cubic-bezier(.2,.8,.2,1) both;padding:70px 18px 34px;display:flex;flex-direction:column;gap:14px">
+<div><div style="font-size:13px;color:var(--color-neutral-600)">Riverside · Grill station</div><div style="font-size:28px;font-weight:500;font-family:var(--font-heading);letter-spacing:-.02em">Grill Training</div><div style="font-size:14px;color:var(--color-neutral-500);margin-top:4px">{{ pathPickCount }} · completing all of them qualifies an employee</div></div>
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent)">SOPs in this path</div>
+<div style="display:flex;flex-direction:column;gap:10px">
+<sc-for list="{{ pathOptions }}" as="o" hint-placeholder-count="6">
+<button onClick="{{ o.toggle }}" style="display:flex;align-items:center;gap:12px;width:100%;min-height:62px;padding:0 16px;border-radius:14px;border:1px solid {{ o.border }};background:{{ o.bg }};color:{{ o.color }};font-family:var(--font-heading);font-size:17px;font-weight:500;cursor:pointer;text-align:left"><span style="font-size:15px;width:16px">{{ o.tick }}</span><span style="flex:1">{{ o.label }}</span></button>
+</sc-for>
+</div>
+<div style="padding:15px;border-radius:14px;background:var(--color-surface);box-shadow:var(--shadow-sm);display:flex;flex-direction:column;gap:8px">
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500)">Qualification</div>
+<div style="font-size:15px;line-height:1.5;color:var(--color-neutral-300)">Employee is marked <span style="color:var(--color-accent)">qualified for Grill</span> when every SOP, its test and its demonstration are complete and verified.</div>
+</div>
+<button style="margin-top:auto;width:100%;min-height:68px;border-radius:16px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 14%, transparent);color:var(--color-text);font-family:var(--font-heading);font-size:18px;font-weight:500;cursor:pointer">Save path · assign to station</button>
+</div>
+</x-import>
+</div>
+
+<div class="dv-opt" id="4e">
+<div class="dv-olabel"><a class="dv-oid" href="#4e">4e</a>Manager — training dashboard</div>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ frameDark }}" hint-size="440px,900px">
+<div style="min-height:874px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);animation:ss-inA .45s cubic-bezier(.2,.8,.2,1) both;padding:70px 18px 34px;display:flex;flex-direction:column;gap:14px">
+<div><div style="font-size:13px;color:var(--color-neutral-600)">Riverside</div><div style="font-size:30px;font-weight:500;font-family:var(--font-heading);letter-spacing:-.02em">Training</div></div>
+<div style="display:flex;gap:10px">
+<div style="flex:1;padding:13px;border-radius:14px;background:var(--color-surface);box-shadow:var(--shadow-sm)"><div style="font-size:26px;font-family:var(--font-heading);font-weight:500">12</div><div style="font-size:12px;color:var(--color-neutral-500)">Assigned</div></div>
+<div style="flex:1;padding:13px;border-radius:14px;background:var(--color-surface);box-shadow:var(--shadow-sm)"><div style="font-size:26px;font-family:var(--font-heading);font-weight:500;color:var(--color-accent)">3</div><div style="font-size:12px;color:var(--color-neutral-500)">Overdue</div></div>
+<div style="flex:1;padding:13px;border-radius:14px;background:var(--color-surface);box-shadow:var(--shadow-sm)"><div style="font-size:26px;font-family:var(--font-heading);font-weight:500;color:var(--color-accent)">2</div><div style="font-size:12px;color:var(--color-neutral-500)">To verify</div></div>
+</div>
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent)">Progress</div>
+<div style="display:flex;flex-direction:column;gap:10px">
+<sc-for list="{{ trDash }}" as="r" hint-placeholder-count="4">
+<div style="display:flex;flex-direction:column;gap:8px;padding:14px;border-radius:14px;background:var(--color-surface);box-shadow:var(--shadow-sm)">
+<div style="display:flex;justify-content:space-between;gap:10px;align-items:baseline"><span style="font-size:17px;font-family:var(--font-heading);font-weight:500">{{ r.who }}</span><span style="font-size:13px;color:var(--color-neutral-500)">{{ r.path }}</span></div>
+<div style="height:5px;border-radius:3px;background:var(--color-neutral-900);overflow:hidden"><div style="height:100%;width:{{ r.pct }};background:{{ r.bar }};transition:width .5s cubic-bezier(.2,.8,.2,1)"></div></div>
+<div style="font-size:13px;color:{{ r.statusColor }}">{{ r.status }}</div>
+</div>
+</sc-for>
+</div>
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-600)">Qualifications &amp; retraining</div>
+<div style="display:flex;flex-direction:column">
+<div style="display:flex;justify-content:space-between;align-items:center;min-height:50px;border-bottom:1px solid var(--color-neutral-900);font-size:16px">Andre T. · Fry<span style="font-size:13px;color:var(--color-accent-300)">Qualified</span></div>
+<div style="display:flex;justify-content:space-between;align-items:center;min-height:50px;border-bottom:1px solid var(--color-neutral-900);font-size:16px">Marisol R. · Grill<span style="font-size:13px;color:var(--color-neutral-500)">Retrain Jan 30</span></div>
+<div style="display:flex;justify-content:space-between;align-items:center;min-height:50px;border-bottom:1px solid var(--color-neutral-900);font-size:16px">Kev L. · Prep<span style="font-size:13px;color:var(--color-accent)">Retraining due</span></div>
+</div>
+<button style="margin-top:auto;width:100%;min-height:64px;border-radius:16px;border:1px solid var(--color-accent);background:transparent;color:var(--color-accent);font-family:var(--font-heading);font-size:17px;font-weight:500;cursor:pointer">Verify 2 demonstrations →</button>
+</div>
+</x-import>
+</div>
+
+</div>
+<p class="dv-next">Try next: "add the manager's demonstration-verification screen" · "let managers reorder steps inside a path" · "show what an employee sees when a required SOP is updated mid-training"</p>
+</section>
+
+<section class="dv-turn" id="t3">
+<div class="dv-thd"><a class="dv-tid" href="#t3">3</a><span class="dv-tname">The rest of the MVP — setup, people, assignment, Spanish, quiz, home, alerts</span></div>
+<p class="dv-note">Everything left on the MVP list. Setup and roster are the manager's first ten minutes; assignment, translation review and quiz-building are the weekly work; employee home and notifications are what people actually live in. All seven are live.</p>
+<div class="dv-opts">
+
+<div class="dv-opt" id="3a">
+<div class="dv-olabel"><a class="dv-oid" href="#3a">3a</a>Manager — business, location, stations (first run)</div>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ frameDark }}" hint-size="440px,900px">
+<div style="min-height:874px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);animation:ss-inA .45s cubic-bezier(.2,.8,.2,1) both;padding:70px 20px 36px;display:flex;flex-direction:column;gap:18px">
+<div style="display:flex;gap:5px">
+<sc-for list="{{ setupBar }}" as="b" hint-placeholder-count="4">
+<div style="flex:1;height:5px;border-radius:3px;background:{{ b.bg }};transition:background .3s ease"></div>
+</sc-for>
+</div>
+
+<sc-if value="{{ setupBiz }}" hint-placeholder-val="{{ true }}">
+<div style="display:flex;flex-direction:column;gap:16px;animation:{{ setupAnim }}">
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent)">Step 1 · Business</div>
+<div style="font-size:32px;line-height:1.1;font-weight:500;font-family:var(--font-heading);letter-spacing:-.02em">What's the business called?</div>
+<div class="field"><label style="font-size:13px">Business name</label><input class="input" value="Ember &amp; Ash Burgers" style="min-height:56px;font-size:18px"></div>
+<div class="field"><label style="font-size:13px">Your name</label><input class="input" value="Dev Osei" style="min-height:56px;font-size:18px"></div>
+<div style="font-size:14px;line-height:1.5;color:var(--color-neutral-500)">One account covers every location. You can add more later without changing anything employees use.</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ setupLoc }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:16px;animation:{{ setupAnim }}">
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent)">Step 2 · Location</div>
+<div style="font-size:32px;line-height:1.1;font-weight:500;font-family:var(--font-heading);letter-spacing:-.02em">Add your first location.</div>
+<div class="field"><label style="font-size:13px">Location name</label><input class="input" value="Riverside" style="min-height:56px;font-size:18px"></div>
+<div class="field"><label style="font-size:13px">Address</label><input class="input" value="418 Mill St, Riverside" style="min-height:56px;font-size:18px"></div>
+<div style="padding:14px 16px;border-radius:14px;background:var(--color-surface);box-shadow:var(--shadow-sm);font-size:15px;line-height:1.5;color:var(--color-neutral-300)">Each location keeps its own employees, stations, QR codes and history — but shares your approved procedures.</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ setupSt }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:14px;animation:{{ setupAnim }}">
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent)">Step 3 · Stations</div>
+<div style="font-size:30px;line-height:1.1;font-weight:500;font-family:var(--font-heading);letter-spacing:-.02em">Which stations does Riverside have?</div>
+<div style="font-size:14px;color:var(--color-neutral-500)">{{ stationCount }} · each gets its own QR code</div>
+<div style="display:flex;flex-wrap:wrap;gap:10px">
+<sc-for list="{{ stationOptions }}" as="o" hint-placeholder-count="8">
+<button onClick="{{ o.toggle }}" style="display:flex;align-items:center;gap:8px;min-height:54px;padding:0 16px;border-radius:14px;border:1px solid {{ o.border }};background:{{ o.bg }};color:{{ o.color }};font-family:var(--font-heading);font-size:16px;font-weight:500;cursor:pointer"><span style="font-size:14px">{{ o.tick }}</span>{{ o.label }}</button>
+</sc-for>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ setupDone }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:16px;animation:{{ setupAnim }}">
+<div style="width:60px;height:60px;border-radius:50%;border:1px solid var(--color-accent);color:var(--color-accent);display:flex;align-items:center;justify-content:center;font-size:26px;box-shadow:0 0 32px color-mix(in srgb, var(--color-accent) 30%, transparent);animation:{{ popAnim }}">✓</div>
+<div style="font-size:32px;line-height:1.1;font-weight:500;font-family:var(--font-heading);letter-spacing:-.02em">Riverside is live.</div>
+<div style="font-size:16px;line-height:1.5;color:var(--color-neutral-400)">{{ stationCount }} stations created with QR codes ready to print. Next: add your people, then record your first procedure.</div>
+<div style="display:flex;flex-wrap:wrap;gap:8px"><span class="tag tag-accent">QR codes ready</span><span class="tag tag-neutral">0 procedures</span><span class="tag tag-neutral">0 employees</span></div>
+</div>
+</sc-if>
+
+<div style="margin-top:auto;display:flex;gap:12px">
+<button onClick="{{ setupBack }}" style="width:70px;min-height:66px;border-radius:16px;border:1px solid var(--color-divider);background:transparent;color:var(--color-text);font-size:20px;cursor:pointer">←</button>
+<button onClick="{{ setupNext }}" style="flex:1;min-height:66px;border-radius:16px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 14%, transparent);color:var(--color-text);font-family:var(--font-heading);font-size:18px;font-weight:500;cursor:pointer" style-hover="background:color-mix(in srgb, var(--color-accent) 24%, transparent)">{{ setupBtn }}</button>
+</div>
+</div>
+</x-import>
+</div>
+
+<div class="dv-opt" id="3b">
+<div class="dv-olabel"><a class="dv-oid" href="#3b">3b</a>Manager — employee roster + 4-digit PINs</div>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ frameDark }}" hint-size="440px,900px">
+<div style="min-height:874px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);animation:ss-inA .45s cubic-bezier(.2,.8,.2,1) both;padding:70px 18px 36px;display:flex;flex-direction:column;gap:14px">
+<div><div style="font-size:13px;color:var(--color-neutral-600)">Riverside</div><div style="font-size:30px;font-weight:500;font-family:var(--font-heading);letter-spacing:-.02em">People</div><div style="font-size:14px;color:var(--color-neutral-500);margin-top:4px">{{ rosterCount }}</div></div>
+<div style="display:flex;flex-direction:column;gap:10px">
+<sc-for list="{{ roster }}" as="e" hint-placeholder-count="3">
+<div style="display:flex;align-items:center;gap:14px;padding:14px;border-radius:14px;background:var(--color-surface);box-shadow:var(--shadow-sm)">
+<span style="width:46px;height:46px;flex:none;border-radius:50%;border:1px solid var(--color-accent-700);color:var(--color-accent-200);display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-size:16px;font-weight:500">{{ e.initials }}</span>
+<span style="flex:1;min-width:0"><span style="display:block;font-size:18px;font-family:var(--font-heading);font-weight:500">{{ e.name }}</span><span style="display:block;font-size:13px;color:var(--color-neutral-500);margin-top:2px">{{ e.st }}</span></span>
+<span style="font-family:ui-monospace,Menlo,monospace;font-size:19px;letter-spacing:.14em;color:var(--color-accent-300)">{{ e.pin }}</span>
+</div>
+</sc-for>
+</div>
+<sc-if value="{{ adding }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:12px;padding:16px;border-radius:14px;border:1px solid var(--color-accent-700);background:color-mix(in srgb, var(--color-accent) 8%, transparent)">
+<div class="field"><label style="font-size:13px">Name</label><input class="input" value="Sam K." style="min-height:52px;font-size:17px"></div>
+<div class="field"><label style="font-size:13px">Station</label><input class="input" value="Front counter" style="min-height:52px;font-size:17px"></div>
+<div style="display:flex;align-items:center;gap:12px">
+<div style="flex:1"><div style="font-size:13px;color:var(--color-neutral-500)">PIN</div><div style="font-family:ui-monospace,Menlo,monospace;font-size:28px;letter-spacing:.18em;color:var(--color-accent)">{{ newPin }}</div></div>
+<button onClick="{{ rollPin }}" style="min-height:48px;padding:0 14px;border-radius:12px;border:1px solid var(--color-divider);background:transparent;color:var(--color-text);font-size:15px;cursor:pointer">New PIN</button>
+</div>
+<div style="display:flex;gap:10px">
+<button onClick="{{ cancelAdd }}" style="flex:none;min-height:56px;padding:0 18px;border-radius:14px;border:1px solid var(--color-divider);background:transparent;color:var(--color-text);font-size:16px;cursor:pointer">Cancel</button>
+<button onClick="{{ saveEmp }}" style="flex:1;min-height:56px;border-radius:14px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 14%, transparent);color:var(--color-text);font-family:var(--font-heading);font-size:17px;font-weight:500;cursor:pointer">Save employee</button>
+</div>
+</div>
+</sc-if>
+<sc-if value="{{ notAdding }}" hint-placeholder-val="{{ true }}">
+<button onClick="{{ startAdd }}" style="width:100%;min-height:64px;border-radius:16px;border:1px solid var(--color-accent);background:transparent;color:var(--color-accent);font-family:var(--font-heading);font-size:17px;font-weight:500;cursor:pointer" style-hover="background:color-mix(in srgb, var(--color-accent) 12%, transparent)">＋ Add employee</button>
+</sc-if>
+<div style="margin-top:auto;padding:14px 16px;border-radius:14px;background:var(--color-surface);box-shadow:var(--shadow-sm);font-size:14px;line-height:1.5;color:var(--color-neutral-400)">PINs are for signing completions, not logging in. Change one any time — no passwords, no recovery email.</div>
+</div>
+</x-import>
+</div>
+
+<div class="dv-opt" id="3c">
+<div class="dv-olabel"><a class="dv-oid" href="#3c">3c</a>Manager — assign a task</div>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ frameDark }}" hint-size="440px,900px">
+<div style="min-height:874px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);animation:ss-inA .45s cubic-bezier(.2,.8,.2,1) both;padding:70px 18px 36px;display:flex;flex-direction:column;gap:16px">
+<div><div style="font-size:13px;color:var(--color-neutral-600)">Assign</div><div style="font-size:28px;font-weight:500;font-family:var(--font-heading);letter-spacing:-.02em">Clean the grill</div></div>
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent)">Who</div>
+<div style="display:flex;flex-wrap:wrap;gap:10px">
+<sc-for list="{{ assignTargets }}" as="t" hint-placeholder-count="4">
+<button onClick="{{ t.pick }}" style="min-height:52px;padding:0 16px;border-radius:14px;border:1px solid {{ t.border }};background:{{ t.bg }};color:{{ t.color }};font-family:var(--font-heading);font-size:16px;font-weight:500;cursor:pointer">{{ t.label }}</button>
+</sc-for>
+</div>
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent)">When</div>
+<div style="display:flex;flex-wrap:wrap;gap:10px">
+<sc-for list="{{ assignWhens }}" as="t" hint-placeholder-count="3">
+<button onClick="{{ t.pick }}" style="min-height:52px;padding:0 16px;border-radius:14px;border:1px solid {{ t.border }};background:{{ t.bg }};color:{{ t.color }};font-family:var(--font-heading);font-size:16px;font-weight:500;cursor:pointer">{{ t.label }}</button>
+</sc-for>
+</div>
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent)">Requirements</div>
+<button onClick="{{ togglePhotoReq }}" style="display:flex;align-items:center;gap:14px;width:100%;min-height:66px;padding:0 16px;border-radius:14px;border:1px solid var(--color-divider);background:var(--color-surface);color:var(--color-text);cursor:pointer;text-align:left">
+<span style="flex:1;font-size:17px;font-family:var(--font-heading);font-weight:500">Completion photo<span style="display:block;font-size:13px;font-weight:400;color:var(--color-neutral-500);margin-top:2px">Compared to the approved photo</span></span>
+<span style="width:54px;height:32px;flex:none;border-radius:16px;background:{{ photoTrack }};display:flex;align-items:center;justify-content:{{ photoKnob }};padding:3px;transition:background .25s ease"><span style="width:26px;height:26px;border-radius:50%;background:var(--color-text)"></span></span>
+</button>
+<button onClick="{{ toggleApprovalReq }}" style="display:flex;align-items:center;gap:14px;width:100%;min-height:66px;padding:0 16px;border-radius:14px;border:1px solid var(--color-divider);background:var(--color-surface);color:var(--color-text);cursor:pointer;text-align:left">
+<span style="flex:1;font-size:17px;font-family:var(--font-heading);font-weight:500">Manager approval<span style="display:block;font-size:13px;font-weight:400;color:var(--color-neutral-500);margin-top:2px">Holds until you approve it</span></span>
+<span style="width:54px;height:32px;flex:none;border-radius:16px;background:{{ approvalTrack }};display:flex;align-items:center;justify-content:{{ approvalKnob }};padding:3px;transition:background .25s ease"><span style="width:26px;height:26px;border-radius:50%;background:var(--color-text)"></span></span>
+</button>
+<div style="margin-top:auto;display:flex;flex-direction:column;gap:12px">
+<div style="font-size:14px;line-height:1.5;color:var(--color-neutral-400)">{{ assignSummary }}</div>
+<button onClick="{{ doAssign }}" style="width:100%;min-height:70px;border-radius:16px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 14%, transparent);color:var(--color-text);font-family:var(--font-heading);font-size:19px;font-weight:500;cursor:pointer">{{ assignBtn }}</button>
+</div>
+</div>
+</x-import>
+</div>
+
+<div class="dv-opt" id="3d">
+<div class="dv-olabel"><a class="dv-oid" href="#3d">3d</a>Manager — review the Spanish translation</div>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ frameDark }}" hint-size="440px,900px">
+<div style="min-height:874px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);animation:ss-inA .45s cubic-bezier(.2,.8,.2,1) both;padding:70px 18px 36px;display:flex;flex-direction:column;gap:14px">
+<div><div style="font-size:13px;color:var(--color-neutral-600)">Clean the grill · v4</div><div style="font-size:28px;font-weight:500;font-family:var(--font-heading);letter-spacing:-.02em">Español</div><div style="font-size:14px;color:var(--color-neutral-500);margin-top:4px">{{ esCount }} · nothing publishes until you approve every line</div></div>
+<div style="height:5px;border-radius:3px;background:var(--color-neutral-900);overflow:hidden"><div style="height:100%;width:{{ esPct }};background:var(--color-accent);box-shadow:0 0 12px var(--color-accent);transition:width .5s cubic-bezier(.2,.8,.2,1)"></div></div>
+<div style="display:flex;flex-direction:column;gap:10px">
+<sc-for list="{{ esRows }}" as="r" hint-placeholder-count="5">
+<div style="display:flex;flex-direction:column;gap:8px;padding:14px;border-radius:14px;border:1px solid {{ r.border }};background:{{ r.bg }}">
+<div style="display:flex;gap:10px"><span style="font-size:12px;color:var(--color-neutral-600);width:14px">{{ r.n }}</span><span style="flex:1;font-size:14px;line-height:1.4;color:var(--color-neutral-500)">{{ r.en }}</span></div>
+<div style="display:flex;gap:10px"><span style="width:14px"></span><span style="flex:1;font-size:17px;line-height:1.35;font-family:var(--font-heading);font-weight:500">{{ r.es }}</span></div>
+<div style="display:flex;gap:10px;justify-content:flex-end">
+<button style="min-height:44px;padding:0 14px;border-radius:11px;border:1px solid var(--color-divider);background:transparent;color:var(--color-neutral-300);font-size:14px;cursor:pointer">Edit</button>
+<button onClick="{{ r.approve }}" style="min-height:44px;padding:0 14px;border-radius:11px;border:1px solid {{ r.border }};background:transparent;color:{{ r.color }};font-size:14px;font-weight:500;cursor:pointer">{{ r.tick }}</button>
+</div>
+</div>
+</sc-for>
+</div>
+<button disabled="{{ esDisabled }}" style="margin-top:auto;width:100%;min-height:70px;border-radius:16px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 14%, transparent);color:var(--color-text);font-family:var(--font-heading);font-size:18px;font-weight:500;cursor:pointer;opacity:{{ esOpacity }}">{{ esBtn }}</button>
+</div>
+</x-import>
+</div>
+
+<div class="dv-opt" id="3e">
+<div class="dv-olabel"><a class="dv-oid" href="#3e">3e</a>Training questions — manager builds, employee answers</div>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ frameDark }}" hint-size="440px,900px">
+<div style="min-height:874px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);animation:ss-inA .45s cubic-bezier(.2,.8,.2,1) both;padding:70px 18px 36px;display:flex;flex-direction:column;gap:16px">
+<div style="display:flex;gap:0;border:1px solid var(--color-divider);border-radius:14px;overflow:hidden">
+<button onClick="{{ setBuild }}" style="flex:1;min-height:52px;border:0;background:{{ buildTabBg }};color:{{ buildTabColor }};font-family:var(--font-heading);font-size:15px;font-weight:500;cursor:pointer">Manager</button>
+<button onClick="{{ setAnswer }}" style="flex:1;min-height:52px;border:0;border-left:1px solid var(--color-divider);background:{{ answerTabBg }};color:{{ answerTabColor }};font-family:var(--font-heading);font-size:15px;font-weight:500;cursor:pointer">Employee</button>
+</div>
+
+<sc-if value="{{ quizBuild }}" hint-placeholder-val="{{ true }}">
+<div style="display:flex;flex-direction:column;gap:14px">
+<div><div style="font-size:13px;color:var(--color-neutral-600)">Clean the grill</div><div style="font-size:26px;font-weight:500;font-family:var(--font-heading);letter-spacing:-.02em">Training questions</div><div style="font-size:14px;color:var(--color-neutral-500);margin-top:4px">Optional · asked once, after the last step</div></div>
+<sc-for list="{{ quizDraft }}" as="q" hint-placeholder-count="3">
+<div style="display:flex;flex-direction:column;gap:8px;padding:14px;border-radius:14px;background:var(--color-surface);box-shadow:var(--shadow-sm)">
+<div style="display:flex;justify-content:space-between;gap:10px"><span style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-600)">{{ q.kind }}</span><span style="font-size:12px;color:var(--color-neutral-600)">Q{{ q.n }}</span></div>
+<div style="font-size:17px;line-height:1.35;font-family:var(--font-heading);font-weight:500">{{ q.q }}</div>
+<div style="font-size:14px;color:var(--color-accent-300)">Answer: {{ q.answer }}</div>
+</div>
+</sc-for>
+<button style="width:100%;min-height:60px;border-radius:14px;border:1px solid var(--color-accent);background:transparent;color:var(--color-accent);font-family:var(--font-heading);font-size:16px;font-weight:500;cursor:pointer">＋ Add question</button>
+</div>
+</sc-if>
+
+<sc-if value="{{ quizAnswer }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;gap:16px">
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-600)">{{ quizCounter }}</div>
+<div style="font-size:26px;line-height:1.2;font-weight:500;font-family:var(--font-heading);letter-spacing:-.015em;text-wrap:pretty">{{ quizQ }}</div>
+<div style="display:flex;flex-direction:column;gap:12px">
+<sc-for list="{{ quizOptions }}" as="o" hint-placeholder-count="3">
+<button onClick="{{ o.pick }}" style="display:flex;align-items:center;gap:12px;width:100%;min-height:70px;padding:0 18px;border-radius:14px;border:1px solid {{ o.border }};background:{{ o.bg }};color:var(--color-text);font-family:var(--font-heading);font-size:19px;font-weight:500;cursor:pointer;text-align:left"><span style="flex:1">{{ o.label }}</span><span style="font-size:18px;color:var(--color-accent)">{{ o.mark }}</span></button>
+</sc-for>
+</div>
+<div style="font-size:16px;line-height:1.45;color:var(--color-accent-300);min-height:24px">{{ quizFeedback }}</div>
+<button onClick="{{ quizNext }}" disabled="{{ quizNextDisabled }}" style="margin-top:auto;width:100%;min-height:70px;border-radius:16px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 14%, transparent);color:var(--color-text);font-family:var(--font-heading);font-size:19px;font-weight:500;cursor:pointer;opacity:{{ quizNextOpacity }}">{{ quizNextLabel }}</button>
+</div>
+</sc-if>
+</div>
+</x-import>
+</div>
+
+<div class="dv-opt" id="3f">
+<div class="dv-olabel"><a class="dv-oid" href="#3f">3f</a>Employee home — arriving without a scan</div>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ frameDark }}" hint-size="440px,900px">
+<div style="min-height:874px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);animation:ss-inA .45s cubic-bezier(.2,.8,.2,1) both;padding:74px 18px 36px;display:flex;flex-direction:column;gap:16px">
+<div><div style="font-size:13px;color:var(--color-neutral-600)">Riverside · Monday close</div><div style="font-size:32px;font-weight:500;font-family:var(--font-heading);letter-spacing:-.02em">Hey, Marisol</div></div>
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent)">Due now</div>
+<div style="display:flex;flex-direction:column;gap:12px">
+<div style="display:flex;flex-direction:column;gap:8px;padding:18px;border-radius:16px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 10%, transparent)">
+<span style="font-size:22px;font-weight:500;font-family:var(--font-heading)">Clean the grill</span>
+<span style="display:flex;gap:8px;flex-wrap:wrap"><span class="tag tag-accent">Photo required</span><span class="tag tag-neutral">12 min</span></span>
+</div>
+<div style="display:flex;flex-direction:column;gap:8px;padding:18px;border-radius:16px;border:1px solid var(--color-divider);background:var(--color-surface)">
+<span style="font-size:22px;font-weight:500;font-family:var(--font-heading)">Closing checklist</span>
+<span style="display:flex;gap:8px"><span class="tag tag-neutral">0 of 6</span><span class="tag tag-outline">10:30 PM</span></span>
+</div>
+</div>
+<div style="display:flex;gap:12px">
+<div style="flex:1;min-height:96px;border-radius:16px;border:1px solid var(--color-accent);background:transparent;color:var(--color-accent);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px"><span style="font-size:26px">▣</span><span style="font-family:var(--font-heading);font-size:16px;font-weight:500">Scan a station</span></div>
+<div style="flex:1;min-height:96px;border-radius:16px;border:1px solid var(--color-divider);background:var(--color-surface);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;color:var(--color-neutral-300)"><span style="font-size:26px">≡</span><span style="font-family:var(--font-heading);font-size:16px;font-weight:500">My station</span></div>
+</div>
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-600)">Recently viewed</div>
+<div style="display:flex;flex-direction:column">
+<div style="display:flex;align-items:center;justify-content:space-between;min-height:56px;border-bottom:1px solid var(--color-neutral-900);font-size:17px;font-family:var(--font-heading);font-weight:500">Classic Smash Burger<span style="font-size:19px;color:var(--color-accent)">→</span></div>
+<div style="display:flex;align-items:center;justify-content:space-between;min-height:56px;border-bottom:1px solid var(--color-neutral-900);font-size:17px;font-family:var(--font-heading);font-weight:500">Filter the fryer<span style="font-size:19px;color:var(--color-accent)">→</span></div>
+<div style="display:flex;align-items:center;justify-content:space-between;min-height:56px;border-bottom:1px solid var(--color-neutral-900);font-size:17px;font-family:var(--font-heading);font-weight:500">Sanitizer bucket setup<span style="font-size:19px;color:var(--color-accent)">→</span></div>
+</div>
+<div style="margin-top:auto;display:flex;align-items:center;justify-content:space-between;font-size:14px;color:var(--color-neutral-600)"><span>Grill station · shift ends 11:00 PM</span><span style="color:var(--color-accent)">ES</span></div>
+</div>
+</x-import>
+</div>
+
+<div class="dv-opt" id="3g">
+<div class="dv-olabel"><a class="dv-oid" href="#3g">3g</a>Notifications</div>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ frameDark }}" hint-size="440px,900px">
+<div style="min-height:874px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);animation:ss-inA .45s cubic-bezier(.2,.8,.2,1) both;padding:70px 18px 36px;display:flex;flex-direction:column;gap:14px">
+<div style="display:flex;align-items:flex-end;justify-content:space-between;gap:12px">
+<div><div style="font-size:13px;color:var(--color-neutral-600)">{{ unreadLabel }}</div><div style="font-size:30px;font-weight:500;font-family:var(--font-heading);letter-spacing:-.02em">Alerts</div></div>
+<button onClick="{{ markAll }}" style="min-height:48px;padding:0 14px;border-radius:12px;border:1px solid var(--color-divider);background:transparent;color:var(--color-neutral-300);font-size:14px;cursor:pointer">{{ markAllLabel }}</button>
+</div>
+<div style="display:flex;flex-direction:column;gap:10px">
+<sc-for list="{{ notifs }}" as="n" hint-placeholder-count="4">
+<button onClick="{{ n.open }}" style="display:flex;gap:12px;width:100%;padding:16px;border-radius:14px;border:1px solid {{ n.border }};background:{{ n.bg }};color:var(--color-text);cursor:pointer;text-align:left">
+<span style="width:9px;height:9px;flex:none;margin-top:7px;border-radius:50%;background:{{ n.dotBg }}"></span>
+<span style="flex:1;min-width:0;opacity:{{ n.op }}"><span style="display:block;font-size:18px;font-family:var(--font-heading);font-weight:500">{{ n.title }}</span><span style="display:block;font-size:14px;line-height:1.45;color:var(--color-neutral-400);margin-top:4px">{{ n.body }}</span></span>
+<span style="flex:none;font-size:12px;color:var(--color-neutral-600)">{{ n.time }}</span>
+</button>
+</sc-for>
+</div>
+<div style="margin-top:auto;padding:14px 16px;border-radius:14px;background:var(--color-surface);box-shadow:var(--shadow-sm);font-size:14px;line-height:1.5;color:var(--color-neutral-400)">Email and in-app only in v1. Text messages come later.</div>
+</div>
+</x-import>
+</div>
+
+</div>
+<p class="dv-next">Try next: "turn <a class="dv-oid" href="#2b">2b</a> into a real printable PDF" · "make the whole employee flow one connected prototype" · "new visual direction for the manager side"</p>
+</section>
+
+<section class="dv-turn" id="t2">
+<div class="dv-thd"><a class="dv-tid" href="#t2">2</a><span class="dv-tname">Closing the loop — correction, QR + paper backup, history</span></div>
+<p class="dv-note">The three screens the flows in <a class="dv-oid" href="#1a">1a</a>/<a class="dv-oid" href="#1c">1c</a> opened but didn't finish. The printable sheet is the one place Nocturne inverts: paper is a light ground from the neutral ramp, ink from step 900 — the accent stays a line, not a fill.</p>
+<div class="dv-opts">
+
+<div class="dv-opt" id="2a">
+<div class="dv-olabel"><a class="dv-oid" href="#2a">2a</a>Employee — correction received → fix → resubmit</div>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ frameDark }}" hint-size="440px,900px">
+<div style="min-height:874px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);animation:ss-inA .45s cubic-bezier(.2,.8,.2,1) both;display:flex;flex-direction:column">
+
+<sc-if value="{{ corrNote }}" hint-placeholder-val="{{ true }}">
+<div style="flex:1;display:flex;flex-direction:column;padding:74px 20px 36px;gap:16px;animation:{{ corrAnim }}">
+<div style="display:flex;align-items:center;gap:9px;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent)">
+<span style="width:6px;height:6px;border-radius:50%;background:var(--color-accent);box-shadow:0 0 10px var(--color-accent)"></span>Correction requested
+</div>
+<div style="font-size:30px;line-height:1.15;font-weight:500;font-family:var(--font-heading);letter-spacing:-.02em;text-wrap:pretty">Clean the grill needs one fix.</div>
+<div style="font-size:15px;color:var(--color-neutral-500)">Dev O. · 10:26 PM · Grill · Riverside</div>
+<div style="padding:16px;border-radius:14px;background:var(--color-accent-900);border:1px solid var(--color-accent-700)">
+<div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-accent-300);margin-bottom:8px">Note from Dev</div>
+<div style="font-size:18px;line-height:1.4;color:var(--color-accent-100)">“Back edge still has grease. Scrape it, wipe again, retake the photo.”</div>
+</div>
+<div style="display:flex;gap:8px;flex-wrap:wrap"><span class="tag tag-outline">Grease at back edge</span><span class="tag tag-neutral">Redo step 2 + 4</span></div>
+<div style="display:flex;gap:12px">
+<div style="flex:1;min-width:0"><div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-accent);margin-bottom:6px">Approved</div><div style="width:100%;height:126px;border-radius:12px;overflow:hidden;box-shadow:var(--shadow-sm)"><image-slot id="ss-corr-ref" shape="rounded" radius="12" placeholder="Approved clean grill"></image-slot></div></div>
+<div style="flex:1;min-width:0"><div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-500);margin-bottom:6px">You sent</div><div style="width:100%;height:126px;border-radius:12px;overflow:hidden;box-shadow:var(--shadow-sm)"><image-slot id="ss-corr-sent" shape="rounded" radius="12" placeholder="Your first photo"></image-slot></div></div>
+</div>
+<button onClick="{{ startRedo }}" style="margin-top:auto;width:100%;min-height:74px;border-radius:16px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 14%, transparent);color:var(--color-text);font-family:var(--font-heading);font-size:19px;font-weight:500;cursor:pointer" style-hover="background:color-mix(in srgb, var(--color-accent) 24%, transparent)">Fix it now →</button>
+</div>
+</sc-if>
+
+<sc-if value="{{ corrRedo }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;padding:66px 20px 36px;gap:16px;animation:{{ corrAnim }}">
+<div style="display:flex;align-items:center;gap:12px">
+<button onClick="{{ corrBackToNote }}" style="width:48px;height:48px;border-radius:13px;border:1px solid var(--color-divider);background:transparent;color:var(--color-text);font-size:20px;cursor:pointer">←</button>
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-600)">Redo · 2 steps</div>
+</div>
+<div style="display:flex;gap:14px;padding:16px;border-radius:14px;background:var(--color-surface);box-shadow:var(--shadow-sm)">
+<span style="width:42px;height:42px;flex:none;border-radius:12px;border:1px solid var(--color-accent);color:var(--color-accent);display:flex;align-items:center;justify-content:center;font-size:19px;font-weight:500">2</span>
+<span style="flex:1;font-size:22px;line-height:1.25;font-family:var(--font-heading);font-weight:500">Scrape the back edge. Front to back.</span>
+</div>
+<div style="display:flex;gap:14px;padding:16px;border-radius:14px;background:var(--color-surface);box-shadow:var(--shadow-sm)">
+<span style="width:42px;height:42px;flex:none;border-radius:12px;border:1px solid var(--color-accent);color:var(--color-accent);display:flex;align-items:center;justify-content:center;font-size:19px;font-weight:500">4</span>
+<span style="flex:1;font-size:22px;line-height:1.25;font-family:var(--font-heading);font-weight:500">Wipe with a blue towel. Discard it.</span>
+</div>
+<div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-500)">New photo</div>
+<sc-if value="{{ corrPhoto }}" hint-placeholder-val="{{ false }}">
+<div style="width:100%;height:170px;border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm)"><image-slot id="ss-corr-new" shape="rounded" radius="14" placeholder="Your new photo"></image-slot></div>
+</sc-if>
+<sc-if value="{{ corrNoPhoto }}" hint-placeholder-val="{{ true }}">
+<div style="width:100%;height:170px;border-radius:14px;border:1px dashed var(--color-neutral-700);display:flex;align-items:center;justify-content:center;font-size:14px;color:var(--color-neutral-600)">Not taken</div>
+</sc-if>
+<div style="margin-top:auto;display:flex;flex-direction:column;gap:12px">
+<button onClick="{{ retake }}" style="width:100%;min-height:70px;border-radius:16px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 14%, transparent);color:var(--color-text);font-family:var(--font-heading);font-size:19px;font-weight:500;cursor:pointer">◉ Take new photo</button>
+<button onClick="{{ resubmit }}" disabled="{{ resubmitDisabled }}" style="width:100%;min-height:64px;border-radius:16px;border:1px solid var(--color-divider);background:var(--color-surface);color:var(--color-text);font-family:var(--font-heading);font-size:18px;font-weight:500;cursor:pointer;opacity:{{ resubmitOpacity }}">Resubmit to Dev</button>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ corrSent }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;padding:120px 20px 36px;gap:18px;animation:{{ corrAnim }}">
+<div style="width:64px;height:64px;border-radius:50%;border:1px solid var(--color-accent);color:var(--color-accent);display:flex;align-items:center;justify-content:center;font-size:28px;box-shadow:0 0 34px color-mix(in srgb, var(--color-accent) 30%, transparent);animation:{{ popAnim }}">↑</div>
+<div style="font-size:34px;line-height:1.1;font-weight:500;font-family:var(--font-heading);letter-spacing:-.02em">Resent to Dev</div>
+<div style="font-size:16px;line-height:1.5;color:var(--color-neutral-400)">Second submission at 10:41 PM. You'll see a note here if anything else needs fixing.</div>
+<button onClick="{{ corrRestart }}" style="margin-top:auto;width:100%;min-height:64px;border-radius:16px;border:1px solid var(--color-divider);background:transparent;color:var(--color-text);font-family:var(--font-heading);font-size:17px;font-weight:500;cursor:pointer">Replay this flow</button>
+</div>
+</sc-if>
+
+</div>
+</x-import>
+</div>
+
+<div class="dv-opt" id="2b">
+<div class="dv-olabel"><a class="dv-oid" href="#2b">2b</a>Station QR card + printable procedure sheet</div>
+<div style="display:flex;gap:24px;align-items:flex-start">
+<div style="width:300px;padding:26px 22px 22px;border-radius:16px;background:var(--color-surface);box-shadow:var(--shadow-md);animation:ss-inA .5s cubic-bezier(.2,.8,.2,1) both;display:flex;flex-direction:column;gap:16px;font-family:Inter,system-ui,sans-serif;color:var(--color-text)">
+<div style="display:flex;align-items:baseline;justify-content:space-between"><span style="font-size:15px;font-weight:500">StationSnap</span><span style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500)">Riverside</span></div>
+<div style="font-size:26px;line-height:1.1;font-weight:500;letter-spacing:-.02em">Grill Station</div>
+<div style="padding:14px;border-radius:12px;background:#f3f5fe;border:1px solid var(--color-accent-800)">
+<div style="display:grid;grid-template-columns:repeat(21,1fr);gap:0;aspect-ratio:1">
+<sc-for list="{{ qrCells }}" as="c" hint-placeholder-count="441">
+<div style="width:100%;aspect-ratio:1;background:{{ c.bg }}"></div>
+</sc-for>
+</div>
+</div>
+<div style="font-size:14px;line-height:1.45;color:var(--color-neutral-400)">Scan for every procedure, recipe and checklist at this station. No app needed.</div>
+<div style="height:1px;background:linear-gradient(to right,transparent,var(--color-divider) 30px,var(--color-divider) calc(100% - 30px),transparent)"></div>
+<div style="font-size:12px;color:var(--color-neutral-600)">stat.sn/gr-riv-01 · updated 2 days ago</div>
+</div>
+
+<div style="width:620px;padding:44px 46px;border-radius:8px;background:#f3f5fe;color:#292b31;font-family:Inter,system-ui,sans-serif;box-shadow:var(--shadow-lg);animation:ss-inB .5s cubic-bezier(.2,.8,.2,1) both">
+<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:24px">
+<div>
+<div style="font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:#4b4f5c">Grill Station · Riverside · Nightly</div>
+<div style="font-size:34px;line-height:1.1;font-weight:500;letter-spacing:-.02em;margin-top:8px">Clean the grill</div>
+<div style="font-size:14px;color:#4b4f5c;margin-top:8px">12 min · photo proof required · updated Aug 1, 2026</div>
+</div>
+<div style="width:104px;flex:none">
+<div style="display:grid;grid-template-columns:repeat(21,1fr);aspect-ratio:1">
+<sc-for list="{{ qrCells }}" as="c" hint-placeholder-count="441">
+<div style="width:100%;aspect-ratio:1;background:{{ c.bg }}"></div>
+</sc-for>
+</div>
+<div style="font-size:9px;text-align:center;color:#4b4f5c;margin-top:5px;letter-spacing:.06em">SCAN FOR VIDEO</div>
+</div>
+</div>
+<div style="height:1px;margin:24px 0 20px;background:linear-gradient(to right,#b2b6ca,#b2b6ca calc(100% - 48px),transparent)"></div>
+<div style="display:flex;gap:12px;padding:12px 14px;border:1px solid #292b31;border-radius:6px;margin-bottom:22px">
+<span style="font-size:15px">▲</span><div style="font-size:14px;line-height:1.4;font-weight:500">Warning: turn the grill off and let it cool below 300°F before cleaning.</div>
+</div>
+<div style="display:flex;gap:34px">
+<div style="flex:1;min-width:0;display:flex;flex-direction:column;gap:16px">
+<sc-for list="{{ sheetSteps }}" as="s" hint-placeholder-count="5">
+<div style="display:flex;gap:14px;align-items:flex-start">
+<span style="width:26px;height:26px;flex:none;border-radius:6px;border:1px solid #292b31;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:500">{{ s.n }}</span>
+<span style="flex:1"><span style="display:block;font-size:16px;line-height:1.35">{{ s.text }}</span><span style="display:block;font-size:12px;color:#4b4f5c;margin-top:3px">{{ s.meta }}</span></span>
+</div>
+</sc-for>
+<div style="display:flex;gap:14px;align-items:flex-start">
+<span style="width:26px;height:26px;flex:none;border-radius:6px;border:1px solid #292b31;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:500">6</span>
+<span style="flex:1;font-size:16px;line-height:1.35">Photograph the finished grill and submit with your PIN.</span>
+</div>
+</div>
+<div style="width:190px;flex:none;display:flex;flex-direction:column;gap:14px">
+<div><div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#4b4f5c;margin-bottom:6px">Approved result</div><div style="width:100%;height:128px;border-radius:6px;overflow:hidden;border:1px solid #b2b6ca"><image-slot id="ss-sheet-ref" shape="rect" placeholder="Approved photo"></image-slot></div></div>
+<div><div style="font-size:10px;letter-spacing:.1em;text-transform:uppercase;color:#4b4f5c;margin-bottom:6px">Materials</div><div style="font-size:13px;line-height:1.6">Grill brick · degreaser (4 oz) · blue towels · sanitizer cloth · heat gloves</div></div>
+</div>
+</div>
+<div style="margin-top:28px;padding-top:14px;border-top:1px solid #b2b6ca;display:flex;justify-content:space-between;font-size:11px;color:#4b4f5c">
+<span>StationSnap · paper backup only — the scan always shows the current version</span><span>v4 · Aug 1, 2026</span>
+</div>
+</div>
+</div>
+</div>
+
+<div class="dv-opt" id="2c">
+<div class="dv-olabel"><a class="dv-oid" href="#2c">2c</a>Manager — completion history with filters</div>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ frameDark }}" hint-size="440px,900px">
+<div style="min-height:874px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);animation:ss-inA .45s cubic-bezier(.2,.8,.2,1) both;padding:70px 18px 34px;display:flex;flex-direction:column;gap:14px">
+<div><div style="font-size:13px;color:var(--color-neutral-600)">Riverside</div><div style="font-size:30px;font-weight:500;font-family:var(--font-heading);letter-spacing:-.02em">History</div></div>
+<div style="display:flex;gap:8px">
+<sc-for list="{{ whenChips }}" as="w" hint-placeholder-count="3">
+<button onClick="{{ w.pick }}" style="min-height:46px;padding:0 16px;border-radius:12px;border:1px solid {{ w.border }};background:{{ w.bg }};color:{{ w.color }};font-size:15px;font-weight:500;cursor:pointer">{{ w.label }}</button>
+</sc-for>
+</div>
+<div style="display:flex;gap:8px;flex-wrap:wrap">
+<sc-for list="{{ whoChips }}" as="w" hint-placeholder-count="4">
+<button onClick="{{ w.pick }}" style="min-height:44px;padding:0 14px;border-radius:12px;border:1px solid {{ w.border }};background:{{ w.bg }};color:{{ w.color }};font-size:14px;cursor:pointer">{{ w.label }}</button>
+</sc-for>
+</div>
+<div style="font-size:13px;color:var(--color-neutral-600)">{{ histCount }}</div>
+<div style="display:flex;flex-direction:column;gap:10px">
+<sc-for list="{{ history }}" as="h" hint-placeholder-count="6">
+<div>
+<sc-if value="{{ h.isDay }}" hint-placeholder-val="{{ false }}">
+<div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent);padding:10px 2px 4px">{{ h.day }}</div>
+</sc-if>
+<sc-if value="{{ h.isRow }}" hint-placeholder-val="{{ true }}">
+<div style="display:flex;gap:12px;align-items:center;padding:12px;border-radius:14px;background:var(--color-surface);box-shadow:var(--shadow-sm)">
+<span style="width:56px;height:56px;flex:none;border-radius:10px;background:var(--color-neutral-900);border:1px solid var(--color-neutral-800);display:flex;align-items:center;justify-content:center;color:var(--color-neutral-600);font-size:15px">▣</span>
+<span style="flex:1;min-width:0"><span style="display:block;font-size:17px;font-family:var(--font-heading);font-weight:500">{{ h.task }}</span><span style="display:block;font-size:13px;color:var(--color-neutral-500);margin-top:2px">{{ h.who }} · {{ h.st }} · {{ h.t }}</span></span>
+<span style="flex:none;font-size:12px;padding:5px 10px;border-radius:9px;border:1px solid {{ h.statusBorder }};color:{{ h.statusColor }}">{{ h.status }}</span>
+</div>
+</sc-if>
+</div>
+</sc-for>
+</div>
+<div style="margin-top:auto;font-size:13px;color:var(--color-neutral-600);text-align:center">Export as CSV · filter by station or procedure</div>
+</div>
+</x-import>
+</div>
+
+</div>
+<p class="dv-next">Try next: "add station setup + employee PIN roster" · "make <a class="dv-oid" href="#2b">2b</a> a real print sheet I can export to PDF" · "add the Spanish translation review screen"</p>
+</section>
+
+<section class="dv-turn" id="t1">
+<div class="dv-thd"><a class="dv-tid" href="#t1">1</a><span class="dv-tname">StationSnap — employee mobile web + manager side</span></div>
+<p class="dv-note">Built on Nocturne: dark ground, blurple accent as line and glow, outlined actions, Inter at 500. Kitchen constraints drove the sizing — every action target is 60px+, instruction type is 26–30px, nothing critical is smaller than 15px, and each flow is reachable one-handed from the bottom third of the screen. All three phones are live; tap them.</p>
+<div class="dv-opts">
+
+<div class="dv-opt" id="1a">
+<div class="dv-olabel"><a class="dv-oid" href="#1a">1a</a>Employee — scan → guide → proof → PIN (one step at a time)</div>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ frameDark }}" hint-size="440px,900px">
+<div style="min-height:874px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);animation:ss-inA .45s cubic-bezier(.2,.8,.2,1) both;display:flex;flex-direction:column">
+
+<sc-if value="{{ isScan }}" hint-placeholder-val="{{ true }}">
+<div style="flex:1;display:flex;flex-direction:column;padding:78px 20px 40px;gap:20px;animation:{{ screenAnim }}">
+<div style="display:flex;align-items:center;gap:8px;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent)">
+<span style="width:6px;height:6px;border-radius:50%;background:var(--color-accent);box-shadow:0 0 10px var(--color-accent)"></span>QR scanned
+</div>
+<div>
+<div style="font-size:38px;line-height:1.05;font-weight:500;letter-spacing:-.02em">Grill Station</div>
+<div style="font-size:16px;color:var(--color-neutral-500);margin-top:6px">Riverside · Mon 4:58 PM</div>
+</div>
+<div style="height:1px;background:linear-gradient(to right,transparent,var(--color-divider) 40px,var(--color-divider) calc(100% - 40px),transparent)"></div>
+<div style="display:flex;flex-direction:column;gap:12px;margin-top:2px">
+<button onClick="{{ goStation }}" style="display:flex;align-items:center;justify-content:space-between;gap:12px;width:100%;min-height:82px;padding:0 20px;border-radius:16px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 12%, transparent);color:var(--color-text);font-family:var(--font-heading);font-size:20px;font-weight:500;cursor:pointer;text-align:left" style-hover="background:color-mix(in srgb, var(--color-accent) 20%, transparent)">
+<span>Open my station<span style="display:block;font-size:14px;font-weight:400;color:var(--color-neutral-400);margin-top:3px">2 tasks due now</span></span>
+<span style="font-size:26px;color:var(--color-accent)">→</span>
+</button>
+<div style="display:flex;gap:12px">
+<button onClick="{{ goRecipe }}" style="flex:1;min-height:72px;border-radius:16px;border:1px solid var(--color-divider);background:var(--color-surface);color:var(--color-text);font-family:var(--font-heading);font-size:16px;font-weight:500;cursor:pointer" style-hover="background:var(--color-neutral-800)">Recipes</button>
+<button onClick="{{ goChecklist }}" style="flex:1;min-height:72px;border-radius:16px;border:1px solid var(--color-divider);background:var(--color-surface);color:var(--color-text);font-family:var(--font-heading);font-size:16px;font-weight:500;cursor:pointer" style-hover="background:var(--color-neutral-800)">Closing list</button>
+</div>
+</div>
+<div style="margin-top:auto;font-size:13px;color:var(--color-neutral-600);line-height:1.5">No app to install. This page is the station.</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isStation }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;padding:70px 18px 40px;gap:16px;animation:{{ screenAnim }}">
+<div style="display:flex;align-items:center;justify-content:space-between">
+<button onClick="{{ goScan }}" style="width:52px;height:52px;border-radius:14px;border:1px solid var(--color-divider);background:transparent;color:var(--color-text);font-size:22px;cursor:pointer">←</button>
+<div style="text-align:right"><div style="font-size:20px;font-weight:500;font-family:var(--font-heading)">Grill Station</div><div style="font-size:13px;color:var(--color-neutral-600)">Marisol R. · Riverside</div></div>
+</div>
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent);margin-top:6px">Due now</div>
+<button onClick="{{ goProc }}" style="display:flex;flex-direction:column;align-items:flex-start;gap:8px;width:100%;padding:18px;border-radius:16px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 10%, transparent);color:var(--color-text);cursor:pointer;text-align:left" style-hover="background:color-mix(in srgb, var(--color-accent) 18%, transparent)">
+<span style="font-size:22px;font-weight:500;font-family:var(--font-heading)">Clean the grill</span>
+<span style="display:flex;gap:8px;flex-wrap:wrap"><span class="tag tag-accent">Photo required</span><span class="tag tag-neutral">6 steps · 12 min</span></span>
+</button>
+<button onClick="{{ goChecklist }}" style="display:flex;flex-direction:column;align-items:flex-start;gap:8px;width:100%;padding:18px;border-radius:16px;border:1px solid var(--color-divider);background:var(--color-surface);color:var(--color-text);cursor:pointer;text-align:left" style-hover="background:var(--color-neutral-800)">
+<span style="font-size:22px;font-weight:500;font-family:var(--font-heading)">Closing checklist</span>
+<span style="display:flex;gap:8px"><span class="tag tag-neutral">{{ checkDoneLabel }}</span><span class="tag tag-outline">Due 10:30 PM</span></span>
+</button>
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-600);margin-top:10px">Guides at this station</div>
+<button onClick="{{ goRecipe }}" style="display:flex;align-items:center;justify-content:space-between;width:100%;min-height:64px;padding:0 18px;border-radius:14px;border:1px solid var(--color-divider);background:transparent;color:var(--color-text);font-size:17px;font-family:var(--font-heading);font-weight:500;cursor:pointer" style-hover="background:var(--color-neutral-900)">Classic Smash Burger<span style="color:var(--color-accent);font-size:20px">→</span></button>
+<button onClick="{{ goProc }}" style="display:flex;align-items:center;justify-content:space-between;width:100%;min-height:64px;padding:0 18px;border-radius:14px;border:1px solid var(--color-divider);background:transparent;color:var(--color-text);font-size:17px;font-family:var(--font-heading);font-weight:500;cursor:pointer" style-hover="background:var(--color-neutral-900)">Nightly grill clean<span style="color:var(--color-accent);font-size:20px">→</span></button>
+<div style="margin-top:auto;padding-top:20px;font-size:13px;color:var(--color-neutral-600)">Updated by Dev O. · 2 days ago</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isProc }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;padding:66px 0 0">
+<div style="padding:0 18px;display:flex;align-items:center;gap:12px">
+<button onClick="{{ prev }}" style="width:48px;height:48px;flex:none;border-radius:13px;border:1px solid var(--color-divider);background:transparent;color:var(--color-text);font-size:20px;cursor:pointer">←</button>
+<div style="flex:1;display:flex;gap:4px">
+<sc-for list="{{ dots }}" as="d" hint-placeholder-count="6">
+<div style="flex:1;height:5px;border-radius:3px;background:{{ d.bg }};transition:background .3s ease"></div>
+</sc-for>
+</div>
+<button onClick="{{ toggleLang }}" style="min-width:56px;height:48px;flex:none;border-radius:13px;border:1px solid var(--color-accent);background:transparent;color:var(--color-accent);font-size:15px;font-weight:500;cursor:pointer">{{ langLabel }}</button>
+</div>
+<div style="padding:16px 20px 0;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-600)">{{ procTitle }} · {{ stepCounter }}</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:16px;padding:10px 20px 0;animation:{{ stepAnim }}">
+<div style="display:flex;align-items:flex-start;gap:14px">
+<div style="width:46px;height:46px;flex:none;border-radius:12px;border:1px solid var(--color-accent);color:var(--color-accent);display:flex;align-items:center;justify-content:center;font-size:21px;font-weight:500">{{ stepNum }}</div>
+<div style="font-size:28px;line-height:1.2;font-weight:500;font-family:var(--font-heading);letter-spacing:-.015em;text-wrap:pretty">{{ stepText }}</div>
+</div>
+<div style="position:relative;width:100%;height:190px;border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm)">
+<image-slot id="ss-step" shape="rounded" radius="14" placeholder="Video frame — step reference"></image-slot>
+</div>
+<sc-if value="{{ hasWarn }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;gap:12px;padding:14px 16px;border-radius:14px;background:var(--color-accent-900);border:1px solid var(--color-accent-700)">
+<span style="font-size:20px;line-height:1;color:var(--color-accent-300)">▲</span>
+<div style="font-size:16px;line-height:1.4;color:var(--color-accent-200)">{{ warnText }}</div>
+</div>
+</sc-if>
+<sc-if value="{{ hasTimer }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;align-items:center;gap:14px;padding:14px 16px;border-radius:14px;background:var(--color-surface);box-shadow:var(--shadow-sm)">
+<div style="flex:1"><div style="font-size:13px;color:var(--color-neutral-500)">{{ timerLabel }}</div><div style="font-family:var(--font-heading);font-size:32px;font-weight:500;letter-spacing:-.02em;color:{{ timerColor }};animation:{{ timerAnim }}">{{ timerText }}</div></div>
+<button onClick="{{ toggleTimer }}" style="min-width:112px;height:56px;border-radius:14px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 12%, transparent);color:var(--color-accent);font-size:16px;font-weight:500;cursor:pointer">{{ timerBtn }}</button>
+</div>
+</sc-if>
+</div>
+<div style="padding:14px 20px 40px;display:flex;gap:12px">
+<button onClick="{{ next }}" style="flex:1;min-height:66px;border-radius:16px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 14%, transparent);color:var(--color-text);font-family:var(--font-heading);font-size:19px;font-weight:500;cursor:pointer" style-hover="background:color-mix(in srgb, var(--color-accent) 24%, transparent)">{{ nextLabel }}</button>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isPhoto }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;padding:66px 20px 40px;gap:16px;animation:{{ screenAnim }}">
+<div style="display:flex;align-items:center;gap:12px">
+<button onClick="{{ prev }}" style="width:48px;height:48px;border-radius:13px;border:1px solid var(--color-divider);background:transparent;color:var(--color-text);font-size:20px;cursor:pointer">←</button>
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-600)">Step 6 of 6 · Proof</div>
+</div>
+<div style="font-size:28px;line-height:1.2;font-weight:500;font-family:var(--font-heading);letter-spacing:-.015em">{{ photoPrompt }}</div>
+<div style="display:flex;gap:12px">
+<div style="flex:1;min-width:0"><div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-accent);margin-bottom:6px">Approved</div><div style="width:100%;height:132px;border-radius:12px;overflow:hidden;box-shadow:var(--shadow-sm)"><image-slot id="ss-ref-grill" shape="rounded" radius="12" placeholder="Approved clean grill"></image-slot></div></div>
+<div style="flex:1;min-width:0"><div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-500);margin-bottom:6px">Yours</div>
+<sc-if value="{{ photoTaken }}" hint-placeholder-val="{{ false }}">
+<div style="width:100%;height:132px;border-radius:12px;overflow:hidden;box-shadow:var(--shadow-sm)"><image-slot id="ss-mine-grill" shape="rounded" radius="12" placeholder="Your photo"></image-slot></div>
+</sc-if>
+<sc-if value="{{ noPhoto }}" hint-placeholder-val="{{ true }}">
+<div style="width:100%;height:132px;border-radius:12px;border:1px dashed var(--color-neutral-700);display:flex;align-items:center;justify-content:center;font-size:13px;color:var(--color-neutral-600)">Not taken</div>
+</sc-if>
+</div>
+</div>
+<sc-if value="{{ verdictShown }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;align-items:center;gap:12px;padding:16px;border-radius:14px;background:var(--color-accent-900);border:1px solid var(--color-accent-700);animation:{{ popAnim }}">
+<span style="width:34px;height:34px;flex:none;border-radius:50%;border:1px solid var(--color-accent);color:var(--color-accent);display:flex;align-items:center;justify-content:center;font-size:17px">✓</span>
+<div><div style="font-size:19px;font-weight:500;font-family:var(--font-heading);color:var(--color-accent-100)">Looks correct</div><div style="font-size:13px;color:var(--color-accent-300)">Matches the approved photo. Manager can still review.</div></div>
+</div>
+</sc-if>
+<div style="margin-top:auto;display:flex;flex-direction:column;gap:12px">
+<button onClick="{{ takePhoto }}" style="width:100%;min-height:76px;border-radius:16px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 14%, transparent);color:var(--color-text);font-family:var(--font-heading);font-size:20px;font-weight:500;cursor:pointer" style-hover="background:color-mix(in srgb, var(--color-accent) 24%, transparent)">{{ photoBtn }}</button>
+<sc-if value="{{ photoTaken }}" hint-placeholder-val="{{ false }}">
+<button onClick="{{ goPin }}" style="width:100%;min-height:66px;border-radius:16px;border:1px solid var(--color-divider);background:var(--color-surface);color:var(--color-text);font-family:var(--font-heading);font-size:18px;font-weight:500;cursor:pointer" style-hover="background:var(--color-neutral-800)">Sign and submit →</button>
+</sc-if>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isPin }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;padding:66px 20px 34px;gap:14px">
+<button onClick="{{ goPhoto }}" style="width:48px;height:48px;border-radius:13px;border:1px solid var(--color-divider);background:transparent;color:var(--color-text);font-size:20px;cursor:pointer">←</button>
+<div style="font-size:26px;line-height:1.2;font-weight:500;font-family:var(--font-heading)">Marisol R.<span style="display:block;font-size:15px;font-weight:400;color:var(--color-neutral-500);margin-top:5px">Enter your 4-digit PIN</span></div>
+<div style="display:flex;gap:14px;margin:6px 0 2px">
+<sc-for list="{{ pinDots }}" as="p" hint-placeholder-count="4">
+<div style="width:20px;height:20px;border-radius:50%;border:1.5px solid var(--color-accent);background:{{ p.bg }}"></div>
+</sc-for>
+</div>
+<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:auto">
+<sc-for list="{{ keys }}" as="k" hint-placeholder-count="12">
+<button onClick="{{ k.press }}" style="min-height:68px;border-radius:15px;border:1px solid var(--color-divider);background:{{ k.bg }};color:var(--color-text);font-family:var(--font-heading);font-size:26px;font-weight:500;cursor:pointer" style-hover="background:var(--color-neutral-800)">{{ k.label }}</button>
+</sc-for>
+</div>
+<button onClick="{{ submit }}" disabled="{{ pinIncomplete }}" style="width:100%;min-height:68px;margin-top:12px;border-radius:16px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 14%, transparent);color:var(--color-text);font-family:var(--font-heading);font-size:19px;font-weight:500;cursor:pointer;opacity:{{ submitOpacity }}">Submit completion</button>
+</div>
+</sc-if>
+
+<sc-if value="{{ isDone }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;padding:110px 20px 40px;gap:18px;animation:{{ screenAnim }}">
+<div style="width:64px;height:64px;border-radius:50%;border:1px solid var(--color-accent);color:var(--color-accent);display:flex;align-items:center;justify-content:center;font-size:28px;box-shadow:0 0 34px color-mix(in srgb, var(--color-accent) 30%, transparent);animation:{{ popAnim }}">✓</div>
+<div style="font-size:34px;line-height:1.1;font-weight:500;font-family:var(--font-heading);letter-spacing:-.02em">Submitted</div>
+<div style="height:1px;background:linear-gradient(to right,transparent,var(--color-divider) 30px,var(--color-divider) calc(100% - 30px),transparent)"></div>
+<div style="display:flex;flex-direction:column;gap:10px;font-size:16px">
+<div style="display:flex;justify-content:space-between"><span style="color:var(--color-neutral-500)">Task</span><span>Clean the grill</span></div>
+<div style="display:flex;justify-content:space-between"><span style="color:var(--color-neutral-500)">Station</span><span>Grill · Riverside</span></div>
+<div style="display:flex;justify-content:space-between"><span style="color:var(--color-neutral-500)">Time</span><span>10:14 PM</span></div>
+<div style="display:flex;justify-content:space-between"><span style="color:var(--color-neutral-500)">Status</span><span style="color:var(--color-accent)">Waiting on manager</span></div>
+</div>
+<div style="margin-top:auto;display:flex;flex-direction:column;gap:12px">
+<button onClick="{{ goChecklist }}" style="width:100%;min-height:70px;border-radius:16px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 14%, transparent);color:var(--color-text);font-family:var(--font-heading);font-size:19px;font-weight:500;cursor:pointer">Next: closing checklist</button>
+<button onClick="{{ goStation }}" style="width:100%;min-height:60px;border-radius:16px;border:1px solid var(--color-divider);background:transparent;color:var(--color-text);font-size:17px;font-family:var(--font-heading);font-weight:500;cursor:pointer">Back to station</button>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ isChecklist }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;padding:66px 18px 34px;gap:14px;animation:{{ screenAnim }}">
+<div style="display:flex;align-items:center;gap:12px">
+<button onClick="{{ goStation }}" style="width:48px;height:48px;border-radius:13px;border:1px solid var(--color-divider);background:transparent;color:var(--color-text);font-size:20px;cursor:pointer">←</button>
+<div><div style="font-size:21px;font-weight:500;font-family:var(--font-heading)">Closing checklist</div><div style="font-size:13px;color:var(--color-neutral-600)">{{ checkDoneLabel }} · due 10:30 PM</div></div>
+</div>
+<div style="height:5px;border-radius:3px;background:var(--color-neutral-900);overflow:hidden"><div style="height:100%;width:{{ checkPct }};background:var(--color-accent);box-shadow:0 0 12px var(--color-accent);transition:width .5s cubic-bezier(.2,.8,.2,1)"></div></div>
+<div style="display:flex;flex-direction:column;gap:10px">
+<sc-for list="{{ checklist }}" as="c" hint-placeholder-count="6">
+<button onClick="{{ c.toggle }}" style="display:flex;align-items:center;gap:14px;width:100%;min-height:68px;padding:0 16px;border-radius:14px;border:1px solid {{ c.border }};background:{{ c.bg }};color:var(--color-text);font-family:var(--font-heading);font-size:18px;font-weight:500;cursor:pointer;text-align:left">
+<span style="width:30px;height:30px;flex:none;border-radius:9px;border:1.5px solid {{ c.mark }};color:var(--color-bg);background:{{ c.fill }};display:flex;align-items:center;justify-content:center;font-size:16px;transition:background .22s ease,border-color .22s ease">{{ c.tick }}</span>
+<span style="flex:1;opacity:{{ c.op }}">{{ c.label }}</span>
+<span style="font-size:12px;color:var(--color-neutral-600)">{{ c.meta }}</span>
+</button>
+</sc-for>
+</div>
+<button onClick="{{ goPhoto }}" disabled="{{ checkIncomplete }}" style="margin-top:auto;width:100%;min-height:70px;border-radius:16px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 14%, transparent);color:var(--color-text);font-family:var(--font-heading);font-size:19px;font-weight:500;cursor:pointer;opacity:{{ checkOpacity }}">{{ checkBtn }}</button>
+</div>
+</sc-if>
+
+<sc-if value="{{ isRecipe }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;padding:66px 18px 34px;gap:14px;animation:{{ screenAnim }}">
+<div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+<button onClick="{{ goStation }}" style="width:48px;height:48px;border-radius:13px;border:1px solid var(--color-divider);background:transparent;color:var(--color-text);font-size:20px;cursor:pointer">←</button>
+<button onClick="{{ toggleLang }}" style="min-width:56px;height:48px;border-radius:13px;border:1px solid var(--color-accent);background:transparent;color:var(--color-accent);font-size:15px;font-weight:500;cursor:pointer">{{ langLabel }}</button>
+</div>
+<div><div style="font-size:30px;line-height:1.1;font-weight:500;font-family:var(--font-heading);letter-spacing:-.02em">Classic Smash Burger</div><div style="display:flex;gap:8px;margin-top:8px"><span class="tag tag-neutral">6.0 oz beef</span><span class="tag tag-neutral">450°F</span><span class="tag tag-outline">90 sec</span></div></div>
+<div style="height:170px;border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm)"><image-slot id="ss-burger" shape="rounded" radius="14" placeholder="Approved finished burger"></image-slot></div>
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent)">{{ buildLabel }}</div>
+<div style="display:flex;flex-direction:column;gap:0">
+<sc-for list="{{ build }}" as="b" hint-placeholder-count="7">
+<div style="display:flex;align-items:center;gap:14px;min-height:52px;border-bottom:1px solid var(--color-neutral-900)">
+<span style="width:26px;font-size:13px;color:var(--color-neutral-600);text-align:right">{{ b.n }}</span>
+<span style="flex:1;font-size:19px;font-family:var(--font-heading);font-weight:500">{{ b.name }}</span>
+<span style="font-size:15px;color:var(--color-accent-300)">{{ b.amt }}</span>
+</div>
+</sc-for>
+</div>
+<div style="padding:14px 16px;border-radius:14px;background:var(--color-surface);box-shadow:var(--shadow-sm)">
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500);margin-bottom:6px">{{ mistakesLabel }}</div>
+<div style="font-size:15px;line-height:1.5;color:var(--color-neutral-300)">{{ mistakesText }}</div>
+</div>
+</div>
+</sc-if>
+
+</div>
+</x-import>
+</div>
+
+<div class="dv-opt" id="1b">
+<div class="dv-olabel"><a class="dv-oid" href="#1b">1b</a>Variation — same procedure as one scrolling list</div>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ frameDark }}" hint-size="440px,900px">
+<div style="min-height:874px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);animation:ss-inA .45s cubic-bezier(.2,.8,.2,1) both;padding:66px 18px 40px;display:flex;flex-direction:column;gap:14px">
+<div style="display:flex;align-items:center;justify-content:space-between">
+<div><div style="font-size:24px;font-weight:500;font-family:var(--font-heading)">Clean the grill</div><div style="font-size:13px;color:var(--color-neutral-600)">Nightly · 12 min · photo required</div></div>
+<button onClick="{{ toggleLang }}" style="min-width:56px;height:46px;border-radius:13px;border:1px solid var(--color-accent);background:transparent;color:var(--color-accent);font-size:15px;font-weight:500;cursor:pointer">{{ langLabel }}</button>
+</div>
+<div style="display:flex;gap:12px;padding:12px 14px;border-radius:14px;background:var(--color-accent-900);border:1px solid var(--color-accent-700)">
+<span style="font-size:17px;color:var(--color-accent-300)">▲</span><div style="font-size:15px;line-height:1.4;color:var(--color-accent-200)">{{ warnTop }}</div>
+</div>
+<div style="display:flex;flex-direction:column;gap:12px">
+<sc-for list="{{ listSteps }}" as="s" hint-placeholder-count="5">
+<button onClick="{{ s.toggle }}" style="display:flex;gap:14px;width:100%;padding:14px;border-radius:14px;border:1px solid {{ s.border }};background:{{ s.bg }};color:var(--color-text);cursor:pointer;text-align:left">
+<span style="width:34px;height:34px;flex:none;border-radius:10px;border:1.5px solid {{ s.mark }};background:{{ s.fill }};color:{{ s.numColor }};display:flex;align-items:center;justify-content:center;font-family:var(--font-heading);font-size:16px;font-weight:500">{{ s.numLabel }}</span>
+<span style="flex:1;display:flex;flex-direction:column;gap:6px">
+<span style="font-size:19px;line-height:1.3;font-family:var(--font-heading);font-weight:500;opacity:{{ s.op }}">{{ s.text }}</span>
+<span style="font-size:13px;color:var(--color-neutral-500)">{{ s.meta }}</span>
+</span>
+</button>
+</sc-for>
+</div>
+<div style="display:flex;align-items:center;gap:12px;padding:14px;border-radius:14px;background:var(--color-surface);box-shadow:var(--shadow-sm)">
+<div style="flex:1"><div style="font-size:13px;color:var(--color-neutral-500)">{{ timerLabel }}</div><div style="font-family:var(--font-heading);font-size:28px;font-weight:500;color:{{ timerColor }}">{{ timerText }}</div></div>
+<button onClick="{{ toggleTimer }}" style="min-width:104px;height:52px;border-radius:14px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 12%, transparent);color:var(--color-accent);font-size:15px;font-weight:500;cursor:pointer">{{ timerBtn }}</button>
+</div>
+<div style="height:150px;border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm)"><image-slot id="ss-ref-list" shape="rounded" radius="14" placeholder="Approved clean grill"></image-slot></div>
+<button style="width:100%;min-height:70px;border-radius:16px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 14%, transparent);color:var(--color-text);font-family:var(--font-heading);font-size:19px;font-weight:500;cursor:pointer">{{ listCtaLabel }}</button>
+<div style="font-size:13px;color:var(--color-neutral-600);text-align:center">Scroll layout: faster for people who know the task. One-at-a-time (<a href="#1a">1a</a>) is better for training.</div>
+</div>
+</x-import>
+</div>
+
+<div class="dv-opt" id="1c">
+<div class="dv-olabel"><a class="dv-oid" href="#1c">1c</a>Manager — dashboard, review, record → AI steps → publish</div>
+<x-import component-from-global-scope="IOSDevice" from="./ios-frame.jsx" dark="{{ frameDark }}" hint-size="440px,900px">
+<div style="min-height:874px;background:var(--color-bg);color:var(--color-text);font-family:var(--font-body);animation:ss-inA .45s cubic-bezier(.2,.8,.2,1) both;display:flex;flex-direction:column">
+
+<sc-if value="{{ mgrDash }}" hint-placeholder-val="{{ true }}">
+<div style="flex:1;display:flex;flex-direction:column;padding:70px 18px 34px;gap:16px;animation:{{ mgrAnim }}">
+<div><div style="font-size:13px;color:var(--color-neutral-600)">Riverside · Monday</div><div style="font-size:30px;font-weight:500;font-family:var(--font-heading);letter-spacing:-.02em">Today</div></div>
+<div style="display:flex;gap:10px">
+<div style="flex:1;padding:14px;border-radius:14px;background:var(--color-surface);box-shadow:var(--shadow-sm)"><div style="font-size:30px;font-family:var(--font-heading);font-weight:500">18</div><div style="font-size:12px;color:var(--color-neutral-500)">Completed</div></div>
+<div style="flex:1;padding:14px;border-radius:14px;background:var(--color-surface);box-shadow:var(--shadow-sm)"><div style="font-size:30px;font-family:var(--font-heading);font-weight:500;color:var(--color-accent)">2</div><div style="font-size:12px;color:var(--color-neutral-500)">Need approval</div></div>
+<div style="flex:1;padding:14px;border-radius:14px;background:var(--color-surface);box-shadow:var(--shadow-sm)"><div style="font-size:30px;font-family:var(--font-heading);font-weight:500">1</div><div style="font-size:12px;color:var(--color-neutral-500)">Overdue</div></div>
+</div>
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent)">Needs approval</div>
+<button onClick="{{ goReview }}" style="display:flex;gap:14px;width:100%;padding:14px;border-radius:16px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 10%, transparent);color:var(--color-text);cursor:pointer;text-align:left" style-hover="background:color-mix(in srgb, var(--color-accent) 18%, transparent)">
+<span style="width:74px;height:74px;flex:none;border-radius:12px;overflow:hidden"><image-slot id="ss-sub-1" shape="rounded" radius="12" placeholder="Photo"></image-slot></span>
+<span style="flex:1"><span style="display:block;font-size:19px;font-family:var(--font-heading);font-weight:500">Clean the grill</span><span style="display:block;font-size:14px;color:var(--color-neutral-400);margin-top:3px">Marisol R. · 10:14 PM</span><span style="display:inline-flex;margin-top:7px" class="tag tag-accent">{{ reviewStatus }}</span></span>
+</button>
+<button onClick="{{ goReview }}" style="display:flex;gap:14px;width:100%;padding:14px;border-radius:16px;border:1px solid var(--color-divider);background:var(--color-surface);color:var(--color-text);cursor:pointer;text-align:left" style-hover="background:var(--color-neutral-800)">
+<span style="width:74px;height:74px;flex:none;border-radius:12px;overflow:hidden"><image-slot id="ss-sub-2" shape="rounded" radius="12" placeholder="Photo"></image-slot></span>
+<span style="flex:1"><span style="display:block;font-size:19px;font-family:var(--font-heading);font-weight:500">Fry station closed</span><span style="display:block;font-size:14px;color:var(--color-neutral-400);margin-top:3px">Andre T. · 10:02 PM</span><span style="display:inline-flex;margin-top:7px" class="tag tag-outline">Needs review</span></span>
+</button>
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-600);margin-top:6px">Recent</div>
+<div style="display:flex;flex-direction:column">
+<div style="display:flex;justify-content:space-between;min-height:48px;align-items:center;border-bottom:1px solid var(--color-neutral-900);font-size:16px">Opening checklist<span style="font-size:13px;color:var(--color-neutral-600)">6:04 AM ✓</span></div>
+<div style="display:flex;justify-content:space-between;min-height:48px;align-items:center;border-bottom:1px solid var(--color-neutral-900);font-size:16px">Fryer filtered<span style="font-size:13px;color:var(--color-neutral-600)">9:41 PM ✓</span></div>
+<div style="display:flex;justify-content:space-between;min-height:48px;align-items:center;border-bottom:1px solid var(--color-neutral-900);font-size:16px">Walk-in cooler stocked<span style="font-size:13px;color:var(--color-neutral-600)">8:20 PM ✓</span></div>
+</div>
+<button onClick="{{ goRecord }}" style="margin-top:auto;width:100%;min-height:68px;border-radius:16px;border:1px solid var(--color-accent);background:transparent;color:var(--color-accent);font-family:var(--font-heading);font-size:18px;font-weight:500;cursor:pointer" style-hover="background:color-mix(in srgb, var(--color-accent) 12%, transparent)">＋ Record a procedure</button>
+</div>
+</sc-if>
+
+<sc-if value="{{ mgrReview }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;padding:66px 18px 34px;gap:14px;animation:{{ screenAnim }}">
+<button onClick="{{ goDash }}" style="width:48px;height:48px;border-radius:13px;border:1px solid var(--color-divider);background:transparent;color:var(--color-text);font-size:20px;cursor:pointer">←</button>
+<div><div style="font-size:26px;font-weight:500;font-family:var(--font-heading)">Clean the grill</div><div style="font-size:14px;color:var(--color-neutral-500);margin-top:4px">Marisol R. · Grill · 10:14 PM · Riverside</div></div>
+<div style="display:flex;gap:10px">
+<div style="flex:1;min-width:0"><div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-accent);margin-bottom:6px">Approved</div><div style="width:100%;height:150px;border-radius:12px;overflow:hidden"><image-slot id="ss-rev-ref" shape="rounded" radius="12" placeholder="Reference"></image-slot></div></div>
+<div style="flex:1;min-width:0"><div style="font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--color-neutral-500);margin-bottom:6px">Submitted</div><div style="width:100%;height:150px;border-radius:12px;overflow:hidden"><image-slot id="ss-rev-sub" shape="rounded" radius="12" placeholder="Submission"></image-slot></div></div>
+</div>
+<div style="display:flex;align-items:center;gap:10px;padding:12px 14px;border-radius:14px;background:var(--color-surface);box-shadow:var(--shadow-sm)"><span style="color:var(--color-accent);font-size:16px">◎</span><div style="font-size:15px;color:var(--color-neutral-300)">Auto-check: <span style="color:var(--color-accent-200)">looks correct</span> — no obvious differences.</div></div>
+<sc-if value="{{ showNote }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:8px">
+<div style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-neutral-500)">What needs fixing</div>
+<div style="display:flex;flex-wrap:wrap;gap:8px">
+<sc-for list="{{ reasons }}" as="r" hint-placeholder-count="4">
+<button onClick="{{ r.pick }}" style="min-height:44px;padding:0 14px;border-radius:12px;border:1px solid {{ r.border }};background:{{ r.bg }};color:{{ r.color }};font-size:14px;cursor:pointer">{{ r.label }}</button>
+</sc-for>
+</div>
+<textarea class="input" rows="3" placeholder="Add a note for Marisol…" style="min-height:76px;font-size:15px"></textarea>
+</div>
+</sc-if>
+<div style="margin-top:auto;display:flex;flex-direction:column;gap:10px">
+<button onClick="{{ approve }}" style="width:100%;min-height:70px;border-radius:16px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 14%, transparent);color:var(--color-text);font-family:var(--font-heading);font-size:19px;font-weight:500;cursor:pointer">{{ approveLabel }}</button>
+<button onClick="{{ requestFix }}" style="width:100%;min-height:60px;border-radius:16px;border:1px solid var(--color-divider);background:transparent;color:var(--color-text);font-family:var(--font-heading);font-size:17px;font-weight:500;cursor:pointer" style-hover="background:var(--color-neutral-900)">{{ fixLabel }}</button>
+</div>
+</div>
+</sc-if>
+
+<sc-if value="{{ mgrRecord }}" hint-placeholder-val="{{ false }}">
+<div style="flex:1;display:flex;flex-direction:column;padding:66px 18px 34px;gap:14px;animation:{{ screenAnim }}">
+<button onClick="{{ goDash }}" style="width:48px;height:48px;border-radius:13px;border:1px solid var(--color-divider);background:transparent;color:var(--color-text);font-size:20px;cursor:pointer">←</button>
+<div style="font-size:26px;font-weight:500;font-family:var(--font-heading)">{{ recordTitle }}</div>
+<div style="height:180px;border-radius:14px;overflow:hidden;box-shadow:var(--shadow-sm)"><image-slot id="ss-video" shape="rounded" radius="14" placeholder="Video of the task"></image-slot></div>
+<sc-if value="{{ recIdle }}" hint-placeholder-val="{{ true }}">
+<div style="display:flex;flex-direction:column;gap:12px">
+<div style="font-size:15px;line-height:1.5;color:var(--color-neutral-400)">Demonstrate the task once. StationSnap writes the steps, warnings, materials and timers — you edit before anything publishes.</div>
+<div style="display:flex;gap:10px"><span class="tag tag-neutral">Grill station</span><span class="tag tag-neutral">Riverside</span><span class="tag tag-outline">Nightly</span></div>
+</div>
+</sc-if>
+<sc-if value="{{ recAnalyzing }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;align-items:center;gap:12px;padding:16px;border-radius:14px;background:var(--color-surface);box-shadow:var(--shadow-sm)">
+<span style="width:12px;height:12px;border-radius:50%;background:var(--color-accent);animation:{{ analyzeAnim }}"></span>
+<div style="font-size:16px;color:var(--color-neutral-300)">Reading the video — 2:41…</div>
+</div>
+</sc-if>
+<sc-if value="{{ recReady }}" hint-placeholder-val="{{ false }}">
+<div style="display:flex;flex-direction:column;gap:10px;animation:{{ recAnim }}">
+<div style="display:flex;align-items:center;justify-content:space-between"><span style="font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--color-accent)">Draft · not published</span><span style="font-size:13px;color:var(--color-neutral-600)">5 steps · 12 min</span></div>
+<sc-for list="{{ aiSteps }}" as="a" hint-placeholder-count="5">
+<div style="display:flex;gap:12px;align-items:flex-start;padding:12px 14px;border-radius:12px;background:var(--color-surface);box-shadow:var(--shadow-sm)">
+<span style="font-size:13px;color:var(--color-neutral-600);width:14px">{{ a.n }}</span>
+<span style="flex:1;font-size:16px;line-height:1.35">{{ a.text }}</span>
+<button onClick="{{ a.edit }}" style="width:40px;height:40px;flex:none;border-radius:10px;border:1px solid var(--color-divider);background:transparent;color:var(--color-accent);font-size:14px;cursor:pointer">✎</button>
+</div>
+</sc-for>
+<div style="font-size:13px;color:var(--color-neutral-600);padding-left:2px">{{ editHint }}</div>
+</div>
+</sc-if>
+<button onClick="{{ recordAction }}" style="margin-top:auto;width:100%;min-height:72px;border-radius:16px;border:1px solid var(--color-accent);background:color-mix(in srgb, var(--color-accent) 14%, transparent);color:var(--color-text);font-family:var(--font-heading);font-size:19px;font-weight:500;cursor:pointer">{{ recordBtn }}</button>
+</div>
+</sc-if>
+
+</div>
+</x-import>
+</div>
+
+</div>
+<p class="dv-next">Try next: "push <a class="dv-oid" href="#1a">1a</a> to bigger type and fewer words per step" · "add the QR print sheet and station setup screens" · "new directions for the manager dashboard"</p>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1500,&quot;height&quot;:1050}}">
+const STEPS = [
+  {en:'Power off. Wait until the surface reads under 300°F.', es:'Apague. Espere a que la superficie baje de 300°F.',
+   warn:{en:'Hot surface. Never scrape a live grill.', es:'Superficie caliente. Nunca raspe la plancha encendida.'}, meta:{en:'Before you start', es:'Antes de empezar'}},
+  {en:'Scrape the surface with the grill brick. Front to back.', es:'Raspe la superficie con el ladrillo. De adelante hacia atrás.', meta:{en:'~3 min', es:'~3 min'}},
+  {en:'Apply 4 oz degreaser. Spread even.', es:'Aplique 4 oz de desengrasante. Extienda parejo.',
+   timer:60, timerLabel:{en:'Contact time', es:'Tiempo de contacto'}, meta:{en:'4 oz · 60 sec contact', es:'4 oz · 60 seg de contacto'}},
+  {en:'Wipe with a blue towel. Discard the towel.', es:'Limpie con toalla azul. Deseche la toalla.', meta:{en:'One towel per pass', es:'Una toalla por pasada'}},
+  {en:'Wipe with the sanitizer cloth. Let it air dry.', es:'Pase el paño sanitizante. Deje secar al aire.', meta:{en:'~2 min', es:'~2 min'}}
+];
+const CHECK = [
+  {en:'Clean the grill', es:'Limpiar la plancha', meta:'Grill'},
+  {en:'Filter the fryers', es:'Filtrar las freidoras', meta:'Fry'},
+  {en:'Empty all trash', es:'Vaciar la basura', meta:'Floor'},
+  {en:'Restock stations', es:'Reabastecer estaciones', meta:'All'},
+  {en:'Lock the coolers', es:'Cerrar los enfriadores', meta:'Walk-in'},
+  {en:'Submit closing photos', es:'Enviar fotos de cierre', meta:'Photo'}
+];
+const BUILD = [
+  {en:'Bottom bun', es:'Pan inferior', amt:'toasted'},
+  {en:'House sauce', es:'Salsa de la casa', amt:'1 oz'},
+  {en:'Pickles', es:'Pepinillos', amt:'4 slices'},
+  {en:'Smash patties', es:'Carnes prensadas', amt:'2 × 3 oz'},
+  {en:'American cheese', es:'Queso americano', amt:'2 slices'},
+  {en:'Grilled onions', es:'Cebolla a la plancha', amt:'1 oz'},
+  {en:'Top bun', es:'Pan superior', amt:'—'}
+];
+const AI = [
+  'Power off and cool the grill below 300°F.',
+  'Scrape front to back with the grill brick.',
+  'Apply 4 oz degreaser, 60 second contact time.',
+  'Wipe with a blue towel and discard it.',
+  'Sanitize and air dry. Photo required.'
+];
+const T = (o, lang) => (typeof o === 'string' ? o : o[lang]);
+
+// Deterministic pseudo-QR: finder patterns + a stable hashed field. Placeholder art, not a real code.
+const QR = (() => {
+  const N = 21, cells = [];
+  const finder = (r, c) => {
+    const inBox = (r0, c0) => r >= r0 && r < r0 + 7 && c >= c0 && c < c0 + 7;
+    for (const [r0, c0] of [[0, 0], [0, N - 7], [N - 7, 0]]) {
+      if (inBox(r0, c0)) {
+        const dr = Math.abs(r - (r0 + 3)), dc = Math.abs(c - (c0 + 3));
+        const d = Math.max(dr, dc);
+        return { hit: true, on: d !== 2 };
+      }
+    }
+    return { hit: false };
+  };
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+    const f = finder(r, c);
+    let on;
+    if (f.hit) on = f.on;
+    else if (r === 6 || c === 6) on = (r + c) % 2 === 0;
+    else on = ((r * 31 + c * 17 + ((r * c) % 7)) % 5) < 2;
+    cells.push(on);
+  }
+  return cells;
+})();
+
+const TRAIN = [
+  { text: 'Power off the grill. Confirm the surface reads under 300°F.',
+    warn: 'Hot surface. Never scrape a live grill.',
+    setting: 'Grill dial → OFF', require: 'confirm', confirmLabel: 'Grill is off and under 300°F' },
+  { text: 'Scrape front to back with the grill brick.',
+    setting: 'Brick grade: medium', require: 'confirm', confirmLabel: 'Surface scraped end to end' },
+  { text: 'Apply degreaser and spread it even.',
+    amount: '4.0 oz', setting: 'Contact time 60 sec', require: 'timer' },
+  { text: 'Wipe with a blue towel. Discard the towel.',
+    require: 'confirm', confirmLabel: 'Wiped and towel discarded' },
+  { text: 'Sanitize, air dry, and photograph the finished grill.',
+    setting: 'Sanitizer 200 ppm', require: 'photo' }
+];
+
+const TEST = [
+  { q: 'What temperature must the grill be under before cleaning?', a: ['300°F', '450°F', 'Any temperature'], c: 0 },
+  { q: 'How much degreaser does this SOP call for?', a: ['2 oz', '4 oz', '8 oz'], c: 1 },
+  { q: 'Sanitizer concentration for the final wipe?', a: ['100 ppm', '200 ppm', '400 ppm'], c: 1 },
+  { q: 'You may scrape the grill while it is still on.', a: ['True', 'False'], c: 1 },
+  { q: 'Who reviews the completion photo?', a: ['Nobody', 'The manager', 'Another employee'], c: 1 }
+];
+
+const TR_HUB = [
+  { name: 'Clean the grill', kind: 'Guided + Test', state: 'In progress', meta: 'Step 3 of 5 · due tonight', tone: 'live' },
+  { name: 'Filter the fryer', kind: 'Guided', state: 'Overdue', meta: 'Due yesterday · required', tone: 'warn' },
+  { name: 'Classic Smash Burger', kind: 'Demonstration', state: 'Assigned', meta: 'Due Fri · manager verifies', tone: 'idle' },
+  { name: 'Sanitizer buckets', kind: 'Learn', state: 'Updated', meta: 'v3 — 2 steps changed', tone: 'live' },
+  { name: 'Open the front counter', kind: 'Guided + Test', state: 'Completed', meta: 'Passed 100% · Jul 28', tone: 'done' }
+];
+
+const PATH = [
+  { name: 'Clean the grill', kind: 'Guided + Test', done: true },
+  { name: 'Grill temperatures', kind: 'Learn', done: true },
+  { name: 'Classic Smash Burger', kind: 'Demonstration', done: false },
+  { name: 'Grill closing', kind: 'Guided', done: false }
+];
+
+const TR_DASH = [
+  { who: 'Marisol R.', path: 'Grill Training', pct: 75, status: '3 of 4 · demo pending', tone: 'warn' },
+  { who: 'Andre T.', path: 'Fry Training', pct: 100, status: 'Qualified · Jul 30', tone: 'ok' },
+  { who: 'Kev L.', path: 'Grill Training', pct: 25, status: 'Overdue 2 days', tone: 'warn' },
+  { who: 'Sam K.', path: 'Front Counter', pct: 50, status: 'Test failed 2 of 3 attempts', tone: 'fix' }
+];
+
+const QUIZ = [
+  { q: 'What temperature must the grill be under before you clean it?', a: ['300°F', '450°F', 'Any temperature'], c: 0 },
+  { q: 'How much degreaser does the grill clean use?', a: ['2 oz', '4 oz', '8 oz'], c: 1 },
+  { q: 'You can scrape the grill while it is still on.', a: ['True', 'False'], c: 1 }
+];
+
+const NOTIFS = [
+  { t: 'Correction requested', b: 'Dev O. asked Marisol R. to redo the grill clean.', time: '10:26 PM' },
+  { t: 'Closing checklist submitted', b: 'Riverside · 6 of 6 · Marisol R.', time: '9:58 PM' },
+  { t: 'Task overdue', b: 'Fryer filter · Fry station · due 9:30 PM', time: '9:31 PM' },
+  { t: 'Procedure updated', b: 'Clean the grill is now v4. QR unchanged.', time: 'Aug 1' }
+];
+
+const HISTORY = [
+  { day: 'Today · Monday', rows: [
+    { task: 'Clean the grill', who: 'Marisol R.', st: 'Grill', t: '10:14 PM', status: 'Approved', tone: 'ok' },
+    { task: 'Fry station closed', who: 'Andre T.', st: 'Fry', t: '10:02 PM', status: 'Needs review', tone: 'warn' },
+    { task: 'Closing checklist', who: 'Marisol R.', st: 'All', t: '9:58 PM', status: '6 of 6', tone: 'ok' },
+    { task: 'Walk-in stocked', who: 'Kev L.', st: 'Walk-in', t: '8:20 PM', status: 'Approved', tone: 'ok' } ] },
+  { day: 'Sunday', rows: [
+    { task: 'Opening checklist', who: 'Dev O.', st: 'All', t: '6:04 AM', status: 'Approved', tone: 'ok' },
+    { task: 'Clean the grill', who: 'Andre T.', st: 'Grill', t: '10:31 PM', status: 'Corrected', tone: 'fix' } ] }
+];
+
+const LIGHT = {
+  '--color-bg': '#f3f5fe', '--color-surface': '#ffffff', '--color-text': '#292b31',
+  '--color-accent': '#5d5294', '--color-accent-2': '#6d6499',
+  '--color-divider': 'color-mix(in srgb, #292b31 14%, transparent)',
+  '--color-neutral-100': '#292b31', '--color-neutral-200': '#3f424d', '--color-neutral-300': '#595d6c',
+  '--color-neutral-400': '#4b4f5c', '--color-neutral-500': '#565a68', '--color-neutral-600': '#565a68',
+  '--color-neutral-700': '#cfd3e5', '--color-neutral-800': '#e4e7f5', '--color-neutral-900': '#eceefb',
+  '--color-accent-100': '#2b2741', '--color-accent-200': '#423a6a', '--color-accent-300': '#5d5294',
+  '--color-accent-400': '#796cbf', '--color-accent-500': '#796cbf', '--color-accent-600': '#968ae0',
+  '--color-accent-700': '#c7c1f3', '--color-accent-800': '#e7e5fe', '--color-accent-900': '#f0eeff',
+  '--shadow-sm': '0 1px 2px rgba(41,43,49,.08)',
+  '--shadow-md': '0 2px 8px rgba(41,43,49,.10)',
+  '--shadow-lg': '0 8px 28px rgba(41,43,49,.14)'
+};
+
+class Component extends DCLogic {
+  state = {
+    emp: 'scan', step: 0, lang: 'en',
+    left: 60, running: false,
+    photo: false, verdict: false,
+    checked: [], pin: '', listDone: [],
+    mgr: 'dash', note: false, reason: null, approved: false, rec: 'idle',
+    corr: 'note', corrPhoto: false, histWhen: 'Today', histWho: 'Everyone',
+    setup: 0, stations: ['Grill', 'Fry station', 'Prep table', 'Front counter'],
+    roster: [
+      { name: 'Marisol R.', st: 'Grill', pin: '4182' },
+      { name: 'Andre T.', st: 'Fry station', pin: '9037' },
+      { name: 'Kev L.', st: 'Prep table', pin: '2265' }
+    ],
+    adding: false, newPin: '7714',
+    assignWho: 'Grill station', assignWhen: 'Today · 10:30 PM', reqPhoto: true, reqApproval: false, assigned: false,
+    esApproved: [], quizMode: 'build', qIndex: 0, qPick: null,
+    notifRead: [],
+    trFilter: 'All', trMode: 'guided',
+    tStep: 0, tConfirm: [], tPhoto: false, tLeft: 60, tRun: false, tTimerDone: false, tFinished: false,
+    tqIndex: 0, tqPick: null, tqRight: 0, tqAttempt: 1, tqResult: null,
+    demo: 'idle',
+    setRequired: true, setOrder: true, setApproval: true, setQuiz: true,
+    setPass: '80%', setAttempts: '3', setRetrain: '6 months', setAudience: 'Station',
+    pathPick: ['Clean the grill', 'Grill temperatures', 'Classic Smash Burger'],
+    ver: 'watch', verFlags: [], updAck: false,
+    light: false
+  };
+  componentDidMount() {
+    let saved = null;
+    try { saved = localStorage.getItem('stationsnap-theme'); } catch (e) {}
+    this.applyTheme(saved === 'light');
+    this.setState({ light: saved === 'light' });
+  }
+  applyTheme(light) {
+    const r = document.documentElement;
+    Object.keys(LIGHT).forEach(k => light ? r.style.setProperty(k, LIGHT[k]) : r.style.removeProperty(k));
+    if (document.body) document.body.style.background = light ? '#e8ebf7' : '#0e0f18';
+  }
+  toggleTheme = () => {
+    const light = !this.state.light;
+    this.applyTheme(light);
+    try { localStorage.setItem('stationsnap-theme', light ? 'light' : 'dark'); } catch (e) {}
+    this.setState({ light });
+  };
+  componentWillUnmount() { clearInterval(this.iv); clearInterval(this.iv2); }
+  tick = () => this.setState(s => {
+    if (s.left <= 1) { clearInterval(this.iv); return { left: 0, running: false }; }
+    return { left: s.left - 1 };
+  });
+  set = (p) => this.setState(p);
+  renderVals() {
+    const s = this.state, L = s.lang, es = L === 'es';
+    const st = STEPS[s.step] || STEPS[0];
+    const mm = String(Math.floor(s.left / 60)).padStart(1, '0') + ':' + String(s.left % 60).padStart(2, '0');
+    const doneCount = s.checked.length;
+    return {
+      isScan: s.emp === 'scan', isStation: s.emp === 'station', isProc: s.emp === 'proc',
+      isPhoto: s.emp === 'photo', isPin: s.emp === 'pin', isDone: s.emp === 'done',
+      isChecklist: s.emp === 'checklist', isRecipe: s.emp === 'recipe',
+      goScan: () => this.set({ emp: 'scan' }), goStation: () => this.set({ emp: 'station' }),
+      goProc: () => this.set({ emp: 'proc', step: 0 }), goRecipe: () => this.set({ emp: 'recipe' }),
+      goChecklist: () => this.set({ emp: 'checklist' }), goPhoto: () => this.set({ emp: 'photo' }),
+      goPin: () => this.set({ emp: 'pin' }),
+      toggleLang: () => this.set({ lang: es ? 'en' : 'es' }),
+      langLabel: es ? 'EN' : 'ES',
+
+      procTitle: es ? 'Limpiar la plancha' : 'Clean the grill',
+      stepNum: s.step + 1,
+      stepCounter: (es ? 'Paso ' : 'Step ') + (s.step + 1) + ' / 6',
+      stepText: T(st, L),
+      hasWarn: !!st.warn, warnText: st.warn ? T(st.warn, L) : '',
+      hasTimer: !!st.timer, timerLabel: st.timer ? T(st.timerLabel, L) : '',
+      timerText: mm, timerColor: s.left === 0 ? 'var(--color-accent)' : 'var(--color-text)',
+      timerBtn: s.left === 0 ? (es ? 'Listo' : 'Done') : s.running ? (es ? 'Pausa' : 'Pause') : (es ? 'Iniciar' : 'Start'),
+      toggleTimer: () => {
+        clearInterval(this.iv);
+        if (this.state.running || this.state.left === 0) { this.setState({ running: false, left: this.state.left === 0 ? 60 : this.state.left }); return; }
+        this.iv = setInterval(this.tick, 1000);
+        this.setState({ running: true });
+      },
+      dots: STEPS.concat([{}]).map((_, i) => ({ bg: i <= s.step ? 'var(--color-accent)' : 'var(--color-neutral-800)' })),
+      nextLabel: s.step >= STEPS.length - 1 ? (es ? 'Siguiente: foto →' : 'Next: photo proof →') : (es ? 'Hecho · siguiente →' : 'Done · next →'),
+      next: () => this.state.step >= STEPS.length - 1 ? this.set({ emp: 'photo' }) : this.set({ step: this.state.step + 1 }),
+      prev: () => this.state.step === 0 ? this.set({ emp: 'station' }) : this.set({ step: this.state.step - 1 }),
+
+      photoPrompt: es ? 'Tome una foto de la plancha limpia.' : 'Take a photo of the clean grill.',
+      photoTaken: s.photo, noPhoto: !s.photo, verdictShown: s.verdict,
+      photoBtn: s.photo ? (es ? 'Tomar de nuevo' : 'Retake photo') : (es ? '◉ Tomar foto' : '◉ Take photo'),
+      takePhoto: () => { this.set({ photo: true, verdict: false }); setTimeout(() => this.set({ verdict: true }), 700); },
+
+      pinDots: [0, 1, 2, 3].map(i => ({ bg: i < s.pin.length ? 'var(--color-accent)' : 'transparent' })),
+      keys: ['1','2','3','4','5','6','7','8','9','','0','⌫'].map(k => ({
+        label: k, bg: k === '' ? 'transparent' : 'var(--color-surface)',
+        press: () => {
+          if (k === '') return;
+          if (k === '⌫') return this.set({ pin: this.state.pin.slice(0, -1) });
+          if (this.state.pin.length < 4) this.set({ pin: this.state.pin + k });
+        }
+      })),
+      pinIncomplete: s.pin.length < 4, submitOpacity: s.pin.length < 4 ? 0.45 : 1,
+      submit: () => s.pin.length === 4 && this.set({ emp: 'done' }),
+
+      checkDoneLabel: doneCount + (es ? ' de 6 listas' : ' of 6 done'),
+      checkPct: Math.round((doneCount / CHECK.length) * 100) + '%',
+      checkIncomplete: doneCount < CHECK.length,
+      checkOpacity: doneCount < CHECK.length ? 0.45 : 1,
+      checkBtn: doneCount < CHECK.length ? (es ? 'Marque todo para enviar' : 'Check everything to submit') : (es ? 'Enviar cierre' : 'Submit closing'),
+      checklist: CHECK.map((c, i) => {
+        const on = s.checked.includes(i);
+        return {
+          label: T(c, L), meta: c.meta, tick: on ? '✓' : '',
+          border: on ? 'var(--color-accent-700)' : 'var(--color-divider)',
+          bg: on ? 'color-mix(in srgb, var(--color-accent) 10%, transparent)' : 'var(--color-surface)',
+          mark: on ? 'var(--color-accent)' : 'var(--color-neutral-600)',
+          fill: on ? 'var(--color-accent)' : 'transparent',
+          op: on ? 0.6 : 1,
+          toggle: () => this.setState(p => ({ checked: p.checked.includes(i) ? p.checked.filter(x => x !== i) : p.checked.concat(i) }))
+        };
+      }),
+
+      buildLabel: es ? 'Orden de armado' : 'Build order',
+      build: BUILD.map((b, i) => ({ n: i + 1, name: T(b, L), amt: b.amt })),
+      mistakesLabel: es ? 'Errores comunes' : 'Common mistakes',
+      mistakesText: es ? 'Prensar dos veces. Salsa de más. Queso sin derretir.' : 'Smashing twice. Over-saucing. Cheese not melted.',
+
+      warnTop: es ? 'Superficie caliente. Nunca raspe la plancha encendida.' : 'Hot surface. Never scrape a live grill.',
+      listCtaLabel: es ? 'Foto de prueba →' : 'Photo proof →',
+      listSteps: STEPS.map((x, i) => {
+        const on = s.listDone.includes(i);
+        return {
+          text: T(x, L), meta: T(x.meta, L), numLabel: on ? '✓' : String(i + 1),
+          border: on ? 'var(--color-accent-700)' : 'var(--color-divider)',
+          bg: on ? 'color-mix(in srgb, var(--color-accent) 8%, transparent)' : 'var(--color-surface)',
+          mark: on ? 'var(--color-accent)' : 'var(--color-neutral-600)',
+          fill: on ? 'var(--color-accent)' : 'transparent',
+          numColor: on ? 'var(--color-bg)' : 'var(--color-neutral-300)',
+          op: on ? 0.55 : 1,
+          toggle: () => this.setState(p => ({ listDone: p.listDone.includes(i) ? p.listDone.filter(y => y !== i) : p.listDone.concat(i) }))
+        };
+      }),
+
+      mgrDash: s.mgr === 'dash', mgrReview: s.mgr === 'review', mgrRecord: s.mgr === 'record',
+      goDash: () => this.set({ mgr: 'dash' }), goReview: () => this.set({ mgr: 'review' }),
+      goRecord: () => this.set({ mgr: 'record' }),
+      reviewStatus: s.approved ? 'Approved' : 'Looks correct',
+      showNote: s.note,
+      reasons: ['Grease at back edge', 'Grates not replaced', 'Photo too dark', 'Redo and resubmit'].map(r => ({
+        label: r,
+        border: s.reason === r ? 'var(--color-accent)' : 'var(--color-divider)',
+        bg: s.reason === r ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',
+        color: s.reason === r ? 'var(--color-accent)' : 'var(--color-neutral-300)',
+        pick: () => this.set({ reason: r })
+      })),
+      approveLabel: s.approved ? '✓ Approved — back to today' : 'Approve',
+      approve: () => this.state.approved ? this.set({ mgr: 'dash' }) : this.set({ approved: true, note: false }),
+      fixLabel: s.note ? 'Send correction to Marisol' : 'Request correction',
+      requestFix: () => this.state.note ? this.set({ mgr: 'dash', note: false }) : this.set({ note: true, approved: false }),
+
+      stepAnim: (s.step % 2 ? 'ss-slideB' : 'ss-slideA') + ' .34s cubic-bezier(.2,.8,.2,1) both',
+      screenAnim: (s.emp.length % 2 ? 'ss-inB' : 'ss-inA') + ' .3s cubic-bezier(.2,.8,.2,1) both',
+      tStepAnim: (s.tStep % 2 ? 'ss-slideB' : 'ss-slideA') + ' .34s cubic-bezier(.2,.8,.2,1) both',
+      tqAnim: (s.tqIndex % 2 ? 'ss-slideB' : 'ss-slideA') + ' .32s cubic-bezier(.2,.8,.2,1) both',
+      modeAnim: (s.trMode.length % 2 ? 'ss-inB' : 'ss-inA') + ' .3s cubic-bezier(.2,.8,.2,1) both',
+      mgrAnim: (s.mgr.length % 2 ? 'ss-inB' : 'ss-inA') + ' .3s cubic-bezier(.2,.8,.2,1) both',
+      corrAnim: (s.corr.length % 2 ? 'ss-inB' : 'ss-inA') + ' .3s cubic-bezier(.2,.8,.2,1) both',
+      setupAnim: (s.setup % 2 ? 'ss-slideB' : 'ss-slideA') + ' .32s cubic-bezier(.2,.8,.2,1) both',
+      verAnim: (s.ver.length % 2 ? 'ss-inB' : 'ss-inA') + ' .3s cubic-bezier(.2,.8,.2,1) both',
+      recAnim: (s.rec.length % 2 ? 'ss-inB' : 'ss-inA') + ' .3s cubic-bezier(.2,.8,.2,1) both',
+      timerAnim: s.running ? 'ss-pulse 1s ease-in-out infinite' : 'none',
+      tTimerAnim: s.tRun ? 'ss-pulse 1s ease-in-out infinite' : 'none',
+      analyzeAnim: 'ss-glow 1.4s ease-in-out infinite',
+      popAnim: 'ss-pop .34s cubic-bezier(.2,.8,.2,1) both',
+
+      isLight: s.light, frameDark: !s.light,
+      toggleTheme: this.toggleTheme,
+      themeLabel: s.light ? 'Light' : 'Dark',
+      themeKnob: s.light ? 'flex-end' : 'flex-start',
+      themeTrack: s.light ? 'color-mix(in srgb, var(--color-accent) 40%, transparent)' : 'var(--color-neutral-800)',
+
+      verWatch: s.ver === 'watch', verFail: s.ver === 'fail', verDone: s.ver === 'done',
+      verChecks: ['Grill cooled before scraping', 'Correct degreaser amount', 'Full 60-second contact', 'Sanitized and air dried'].map((c, i) => {
+        const on = s.verFlags.includes(i);
+        return {
+          label: c, tick: on ? '✓' : '',
+          border: on ? 'var(--color-accent-700)' : 'var(--color-divider)',
+          bg: on ? 'color-mix(in srgb, var(--color-accent) 10%, transparent)' : 'var(--color-surface)',
+          fill: on ? 'var(--color-accent)' : 'transparent',
+          toggle: () => this.setState(p => ({ verFlags: p.verFlags.includes(i) ? p.verFlags.filter(x => x !== i) : p.verFlags.concat(i) }))
+        };
+      }),
+      verCount: s.verFlags.length + ' of 4 confirmed',
+      verPassDisabled: s.verFlags.length < 4,
+      verPassOpacity: s.verFlags.length < 4 ? 0.45 : 1,
+      verPassLabel: s.verFlags.length < 4 ? 'Confirm all four to pass' : 'Pass · mark qualified for Grill',
+      verPass: () => this.state.verFlags.length === 4 && this.set({ ver: 'done' }),
+      verReject: () => this.set({ ver: this.state.ver === 'fail' ? 'watch' : 'fail' }),
+      verRejectLabel: s.ver === 'fail' ? 'Send retry request' : 'Needs another attempt',
+      verReset: () => this.set({ ver: 'watch', verFlags: [] }),
+
+      updAck: s.updAck, updPending: !s.updAck,
+      ackUpdate: () => this.set({ updAck: !this.state.updAck }),
+      updBtn: s.updAck ? 'Resume at step 1 →' : 'Review the 2 changes',
+      updNote: s.updAck
+        ? 'Your progress reset to step 1 because a required step changed. Qualification is on hold until you finish v4.'
+        : 'This SOP changed while you were on step 3. Two steps are different — review them before continuing.',
+
+      trFilters: ['All', 'Assigned', 'In progress', 'Overdue', 'Completed'].map(f => ({
+        label: f,
+        border: s.trFilter === f ? 'var(--color-accent)' : 'var(--color-divider)',
+        bg: s.trFilter === f ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',
+        color: s.trFilter === f ? 'var(--color-accent)' : 'var(--color-neutral-400)',
+        pick: () => this.set({ trFilter: f })
+      })),
+      trList: TR_HUB.filter(t => s.trFilter === 'All' || t.state === s.trFilter).map(t => ({
+        name: t.name, kind: t.kind, state: t.state, meta: t.meta,
+        border: t.tone === 'warn' ? 'var(--color-accent)' : 'var(--color-divider)',
+        bg: t.tone === 'done' ? 'transparent' : 'var(--color-surface)',
+        chipColor: t.tone === 'warn' ? 'var(--color-accent)' : t.tone === 'done' ? 'var(--color-neutral-500)' : 'var(--color-accent-300)',
+        op: t.tone === 'done' ? 0.6 : 1
+      })),
+      trEmpty: TR_HUB.filter(t => s.trFilter === 'All' || t.state === s.trFilter).length === 0,
+      trCount: TR_HUB.filter(t => s.trFilter === 'All' || t.state === s.trFilter).length + ' of ' + TR_HUB.length + ' shown',
+
+      pathRows: PATH.map(p => ({
+        name: p.name, kind: p.kind, tick: p.done ? '✓' : '',
+        mark: p.done ? 'var(--color-accent)' : 'var(--color-neutral-600)',
+        fill: p.done ? 'var(--color-accent)' : 'transparent',
+        color: p.done ? 'var(--color-bg)' : 'transparent',
+        op: p.done ? 0.65 : 1
+      })),
+      pathPct: Math.round((PATH.filter(p => p.done).length / PATH.length) * 100) + '%',
+      pathLabel: PATH.filter(p => p.done).length + ' of ' + PATH.length + ' complete',
+
+      modeChips: [['learn', 'Learn'], ['guided', 'Guided'], ['test', 'Test'], ['demo', 'Demo']].map(m => ({
+        label: m[1],
+        bg: s.trMode === m[0] ? 'color-mix(in srgb, var(--color-accent) 16%, transparent)' : 'transparent',
+        color: s.trMode === m[0] ? 'var(--color-accent)' : 'var(--color-neutral-500)',
+        pick: () => this.set({ trMode: m[0], tqIndex: 0, tqPick: null, tqRight: 0, tqResult: null })
+      })),
+      modeLearn: s.trMode === 'learn', modeGuided: s.trMode === 'guided',
+      modeTest: s.trMode === 'test', modeDemo: s.trMode === 'demo',
+      learnSteps: TRAIN.map((t, i) => ({ n: i + 1, text: t.text, meta: t.setting || t.amount || '' })),
+
+      tStepNum: s.tStep + 1, tStepTotal: TRAIN.length,
+      tStepCounter: 'Step ' + (s.tStep + 1) + ' of ' + TRAIN.length,
+      tBars: TRAIN.map((_, i) => ({ bg: i < s.tStep ? 'var(--color-accent)' : i === s.tStep ? 'var(--color-accent-600)' : 'var(--color-neutral-800)' })),
+      tText: TRAIN[s.tStep].text,
+      tHasWarn: !!TRAIN[s.tStep].warn, tWarn: TRAIN[s.tStep].warn || '',
+      tHasSetting: !!TRAIN[s.tStep].setting, tSetting: TRAIN[s.tStep].setting || '',
+      tHasAmount: !!TRAIN[s.tStep].amount, tAmount: TRAIN[s.tStep].amount || '',
+      tNeedsConfirm: TRAIN[s.tStep].require === 'confirm',
+      tNeedsTimer: TRAIN[s.tStep].require === 'timer',
+      tNeedsPhoto: TRAIN[s.tStep].require === 'photo',
+      tConfirmLabel: TRAIN[s.tStep].confirmLabel || '',
+      tConfirmed: s.tConfirm.includes(s.tStep),
+      tConfirmTick: s.tConfirm.includes(s.tStep) ? '✓' : '',
+      tConfirmBg: s.tConfirm.includes(s.tStep) ? 'var(--color-accent)' : 'transparent',
+      tConfirmBorder: s.tConfirm.includes(s.tStep) ? 'var(--color-accent-700)' : 'var(--color-divider)',
+      tConfirmFill: s.tConfirm.includes(s.tStep) ? 'color-mix(in srgb, var(--color-accent) 10%, transparent)' : 'var(--color-surface)',
+      toggleConfirm: () => this.setState(p => ({ tConfirm: p.tConfirm.includes(p.tStep) ? p.tConfirm.filter(x => x !== p.tStep) : p.tConfirm.concat(p.tStep) })),
+      tTimerText: String(Math.floor(s.tLeft / 60)) + ':' + String(s.tLeft % 60).padStart(2, '0'),
+      tTimerColor: s.tTimerDone ? 'var(--color-accent)' : 'var(--color-text)',
+      tTimerBtn: s.tTimerDone ? 'Complete' : s.tRun ? 'Running…' : 'Start 60 sec',
+      startTrainTimer: () => {
+        if (this.state.tRun || this.state.tTimerDone) return;
+        clearInterval(this.iv2);
+        this.iv2 = setInterval(() => this.setState(p => {
+          if (p.tLeft <= 1) { clearInterval(this.iv2); return { tLeft: 0, tRun: false, tTimerDone: true }; }
+          return { tLeft: p.tLeft - 1 };
+        }), 1000);
+        this.setState({ tRun: true });
+      },
+      tPhotoTaken: s.tPhoto, tNoPhoto: !s.tPhoto,
+      takeTrainPhoto: () => this.set({ tPhoto: true }),
+      tMet: TRAIN[s.tStep].require === 'confirm' ? s.tConfirm.includes(s.tStep)
+        : TRAIN[s.tStep].require === 'timer' ? s.tTimerDone : s.tPhoto,
+      tBlockedNote: TRAIN[s.tStep].require === 'confirm' ? 'Confirm the step to continue — required steps cannot be skipped.'
+        : TRAIN[s.tStep].require === 'timer' ? 'The 60-second contact timer must finish before you continue.'
+        : 'A completion photo is required for this step.',
+      tNextOpacity: (TRAIN[s.tStep].require === 'confirm' ? s.tConfirm.includes(s.tStep)
+        : TRAIN[s.tStep].require === 'timer' ? s.tTimerDone : s.tPhoto) ? 1 : 0.45,
+      tNextDisabled: !(TRAIN[s.tStep].require === 'confirm' ? s.tConfirm.includes(s.tStep)
+        : TRAIN[s.tStep].require === 'timer' ? s.tTimerDone : s.tPhoto),
+      tNextLabel: s.tStep >= TRAIN.length - 1 ? 'Finish · go to test →' : 'Next step →',
+      tFinished: s.tFinished,
+      trainNext: () => {
+        const met = TRAIN[this.state.tStep].require === 'confirm' ? this.state.tConfirm.includes(this.state.tStep)
+          : TRAIN[this.state.tStep].require === 'timer' ? this.state.tTimerDone : this.state.tPhoto;
+        if (!met) return;
+        if (this.state.tStep >= TRAIN.length - 1) { this.set({ trMode: 'test', tqIndex: 0, tqPick: null, tqRight: 0, tqResult: null }); return; }
+        clearInterval(this.iv2);
+        this.setState(p => ({ tStep: p.tStep + 1, tPhoto: false, tLeft: 60, tRun: false, tTimerDone: false }));
+      },
+      trainPrev: () => { clearInterval(this.iv2); this.setState(p => ({ tStep: Math.max(0, p.tStep - 1), tRun: false })); },
+      trainRestart: () => { clearInterval(this.iv2); this.set({ tStep: 0, tConfirm: [], tPhoto: false, tLeft: 60, tRun: false, tTimerDone: false }); },
+
+      tqOpen: s.tqResult === null, tqClosed: s.tqResult !== null,
+      tqCounter: 'Question ' + (s.tqIndex + 1) + ' of ' + TEST.length + ' · attempt ' + s.tqAttempt + ' of ' + s.setAttempts,
+      tqQ: TEST[s.tqIndex].q,
+      tqOptions: TEST[s.tqIndex].a.map((o, i) => {
+        const picked = s.tqPick === i;
+        return {
+          label: o,
+          border: picked ? 'var(--color-accent)' : 'var(--color-divider)',
+          bg: picked ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'var(--color-surface)',
+          pick: () => this.set({ tqPick: i })
+        };
+      }),
+      tqNextDisabled: s.tqPick === null, tqNextOpacity: s.tqPick === null ? 0.45 : 1,
+      tqNextLabel: s.tqIndex >= TEST.length - 1 ? 'Submit test' : 'Next →',
+      tqNext: () => {
+        if (this.state.tqPick === null) return;
+        const right = this.state.tqRight + (this.state.tqPick === TEST[this.state.tqIndex].c ? 1 : 0);
+        if (this.state.tqIndex >= TEST.length - 1) {
+          const pct = Math.round((right / TEST.length) * 100);
+          this.set({ tqRight: right, tqResult: pct >= parseInt(this.state.setPass, 10) ? 'pass' : 'fail' });
+        } else this.setState({ tqIndex: this.state.tqIndex + 1, tqPick: null, tqRight: right });
+      },
+      tqScoreLabel: Math.round((s.tqRight / TEST.length) * 100) + '%',
+      tqPassed: s.tqResult === 'pass', tqFailed: s.tqResult === 'fail',
+      tqVerdict: s.tqResult === 'pass' ? 'Passed' : 'Not passed',
+      tqSub: s.tqResult === 'pass'
+        ? 'Above the ' + s.setPass + ' passing score. Demonstration is the last step for Grill Training.'
+        : 'Below the ' + s.setPass + ' passing score. Review the SOP, then try again.',
+      tqRetryLabel: s.tqResult === 'pass' ? 'Go to demonstration →' : 'Review SOP and retry (attempt ' + (s.tqAttempt + 1) + ' of ' + s.setAttempts + ')',
+      tqRetry: () => this.state.tqResult === 'pass'
+        ? this.set({ trMode: 'demo' })
+        : this.setState(p => ({ trMode: 'learn', tqIndex: 0, tqPick: null, tqRight: 0, tqResult: null, tqAttempt: p.tqAttempt + 1 })),
+
+      demoIdle: s.demo === 'idle', demoRecorded: s.demo === 'recorded', demoSent: s.demo === 'sent',
+      demoBtn: s.demo === 'idle' ? '◉ Record your demonstration' : s.demo === 'recorded' ? 'Submit for manager verification' : 'Back to training',
+      demoAction: () => this.set({ demo: this.state.demo === 'idle' ? 'recorded' : this.state.demo === 'recorded' ? 'sent' : 'idle' }),
+
+      setRequiredOn: s.setRequired, setOrderOn: s.setOrder, setApprovalOn: s.setApproval, setQuizOn: s.setQuiz,
+      reqTrack: s.setRequired ? 'color-mix(in srgb, var(--color-accent) 40%, transparent)' : 'var(--color-neutral-800)',
+      reqKnob: s.setRequired ? 'flex-end' : 'flex-start',
+      ordTrack: s.setOrder ? 'color-mix(in srgb, var(--color-accent) 40%, transparent)' : 'var(--color-neutral-800)',
+      ordKnob: s.setOrder ? 'flex-end' : 'flex-start',
+      appTrack: s.setApproval ? 'color-mix(in srgb, var(--color-accent) 40%, transparent)' : 'var(--color-neutral-800)',
+      appKnob: s.setApproval ? 'flex-end' : 'flex-start',
+      quizTrack: s.setQuiz ? 'color-mix(in srgb, var(--color-accent) 40%, transparent)' : 'var(--color-neutral-800)',
+      quizKnob: s.setQuiz ? 'flex-end' : 'flex-start',
+      toggleReq: () => this.setState(p => ({ setRequired: !p.setRequired })),
+      toggleOrd: () => this.setState(p => ({ setOrder: !p.setOrder })),
+      toggleApp: () => this.setState(p => ({ setApproval: !p.setApproval })),
+      toggleQuizOn: () => this.setState(p => ({ setQuiz: !p.setQuiz })),
+      audienceChips: ['Employee', 'Role', 'Station', 'Location', 'Team'].map(a => ({
+        label: a,
+        border: s.setAudience === a ? 'var(--color-accent)' : 'var(--color-divider)',
+        bg: s.setAudience === a ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',
+        color: s.setAudience === a ? 'var(--color-accent)' : 'var(--color-neutral-400)',
+        pick: () => this.set({ setAudience: a })
+      })),
+      passChips: ['70%', '80%', '90%', '100%'].map(p2 => ({
+        label: p2,
+        border: s.setPass === p2 ? 'var(--color-accent)' : 'var(--color-divider)',
+        bg: s.setPass === p2 ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',
+        color: s.setPass === p2 ? 'var(--color-accent)' : 'var(--color-neutral-400)',
+        pick: () => this.set({ setPass: p2 })
+      })),
+      attemptChips: ['1', '2', '3', 'Unlimited'].map(a => ({
+        label: a,
+        border: s.setAttempts === a ? 'var(--color-accent)' : 'var(--color-divider)',
+        bg: s.setAttempts === a ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',
+        color: s.setAttempts === a ? 'var(--color-accent)' : 'var(--color-neutral-400)',
+        pick: () => this.set({ setAttempts: a })
+      })),
+      retrainChips: ['Never', '90 days', '6 months', 'Annually'].map(r => ({
+        label: r,
+        border: s.setRetrain === r ? 'var(--color-accent)' : 'var(--color-divider)',
+        bg: s.setRetrain === r ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',
+        color: s.setRetrain === r ? 'var(--color-accent)' : 'var(--color-neutral-400)',
+        pick: () => this.set({ setRetrain: r })
+      })),
+      settingsSummary: (s.setRequired ? 'Required' : 'Optional') + ' · by ' + s.setAudience.toLowerCase()
+        + (s.setOrder ? ' · in order' : ' · any order')
+        + (s.setQuiz ? ' · test at ' + s.setPass : ' · no test')
+        + (s.setApproval ? ' · manager approves' : '')
+        + (s.setRetrain === 'Never' ? '' : ' · retrain every ' + s.setRetrain),
+
+      pathOptions: ['Clean the grill', 'Grill temperatures', 'Classic Smash Burger', 'Grill closing', 'Fryer filter', 'Sanitizer buckets'].map(o => {
+        const on = s.pathPick.includes(o);
+        return {
+          label: o, tick: on ? '✓' : '＋',
+          border: on ? 'var(--color-accent)' : 'var(--color-divider)',
+          bg: on ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : 'transparent',
+          color: on ? 'var(--color-accent)' : 'var(--color-neutral-300)',
+          toggle: () => this.setState(p => ({ pathPick: p.pathPick.includes(o) ? p.pathPick.filter(x => x !== o) : p.pathPick.concat(o) }))
+        };
+      }),
+      pathPickCount: s.pathPick.length + ' SOPs in this path',
+
+      trDash: TR_DASH.map(r => ({
+        who: r.who, path: r.path, status: r.status, pct: r.pct + '%',
+        bar: r.tone === 'ok' ? 'var(--color-accent)' : r.tone === 'fix' ? 'var(--color-neutral-500)' : 'var(--color-accent-600)',
+        statusColor: r.tone === 'ok' ? 'var(--color-accent-300)' : r.tone === 'warn' ? 'var(--color-accent)' : 'var(--color-neutral-400)'
+      })),
+
+      setupIdx: s.setup,
+      setupBiz: s.setup === 0, setupLoc: s.setup === 1, setupSt: s.setup === 2, setupDone: s.setup === 3,
+      setupBar: [0, 1, 2, 3].map(i => ({ bg: i <= s.setup ? 'var(--color-accent)' : 'var(--color-neutral-800)' })),
+      setupNext: () => this.set({ setup: Math.min(3, this.state.setup + 1) }),
+      setupBack: () => this.set({ setup: Math.max(0, this.state.setup - 1) }),
+      setupRestart: () => this.set({ setup: 0 }),
+      setupBtn: ['Add your first location →', 'Choose stations →', 'Create 4 stations →', 'Replay setup'][s.setup],
+      stationOptions: ['Grill', 'Fry station', 'Prep table', 'Front counter', 'Drive-thru', 'Dish area', 'Walk-in cooler', 'Dining room'].map(o => {
+        const on = s.stations.includes(o);
+        return {
+          label: o, tick: on ? '✓' : '＋',
+          border: on ? 'var(--color-accent)' : 'var(--color-divider)',
+          bg: on ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : 'transparent',
+          color: on ? 'var(--color-accent)' : 'var(--color-neutral-300)',
+          toggle: () => this.setState(p => ({ stations: p.stations.includes(o) ? p.stations.filter(x => x !== o) : p.stations.concat(o) }))
+        };
+      }),
+      stationCount: s.stations.length + ' selected',
+
+      roster: s.roster.map((e, i) => ({
+        name: e.name, st: e.st, pin: e.pin,
+        initials: e.name.split(' ').map(w => w[0]).join('')
+      })),
+      rosterCount: s.roster.length + ' people · ' + s.stations.length + ' stations',
+      adding: s.adding, notAdding: !s.adding,
+      newPin: s.newPin,
+      startAdd: () => this.set({ adding: true, newPin: String(1000 + Math.floor(Math.random() * 8999)) }),
+      rollPin: () => this.set({ newPin: String(1000 + Math.floor(Math.random() * 8999)) }),
+      saveEmp: () => this.setState(p => ({ adding: false, roster: p.roster.concat({ name: 'Sam K.', st: 'Front counter', pin: p.newPin }) })),
+      cancelAdd: () => this.set({ adding: false }),
+
+      assignTargets: ['Grill station', 'Marisol R.', 'Closing shift', 'All of Riverside'].map(t => ({
+        label: t,
+        border: s.assignWho === t ? 'var(--color-accent)' : 'var(--color-divider)',
+        bg: s.assignWho === t ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : 'transparent',
+        color: s.assignWho === t ? 'var(--color-accent)' : 'var(--color-neutral-300)',
+        pick: () => this.set({ assignWho: t, assigned: false })
+      })),
+      assignWhens: ['Today · 10:30 PM', 'Every close', 'Weekly · Sunday'].map(t => ({
+        label: t,
+        border: s.assignWhen === t ? 'var(--color-accent)' : 'var(--color-divider)',
+        bg: s.assignWhen === t ? 'color-mix(in srgb, var(--color-accent) 12%, transparent)' : 'transparent',
+        color: s.assignWhen === t ? 'var(--color-accent)' : 'var(--color-neutral-300)',
+        pick: () => this.set({ assignWhen: t, assigned: false })
+      })),
+      reqPhotoOn: s.reqPhoto, reqApprovalOn: s.reqApproval,
+      photoKnob: s.reqPhoto ? 'flex-end' : 'flex-start',
+      photoTrack: s.reqPhoto ? 'color-mix(in srgb, var(--color-accent) 40%, transparent)' : 'var(--color-neutral-800)',
+      approvalKnob: s.reqApproval ? 'flex-end' : 'flex-start',
+      approvalTrack: s.reqApproval ? 'color-mix(in srgb, var(--color-accent) 40%, transparent)' : 'var(--color-neutral-800)',
+      togglePhotoReq: () => this.setState(p => ({ reqPhoto: !p.reqPhoto, assigned: false })),
+      toggleApprovalReq: () => this.setState(p => ({ reqApproval: !p.reqApproval, assigned: false })),
+      assignSummary: 'Clean the grill → ' + s.assignWho + ' · ' + s.assignWhen,
+      assignBtn: s.assigned ? '✓ Assigned — 3 people notified' : 'Assign task',
+      doAssign: () => this.set({ assigned: !this.state.assigned }),
+
+      esRows: STEPS.map((x, i) => {
+        const ok = s.esApproved.includes(i);
+        return {
+          n: i + 1, en: x.en, es: x.es,
+          tick: ok ? '✓ Approved' : 'Approve',
+          border: ok ? 'var(--color-accent-700)' : 'var(--color-divider)',
+          bg: ok ? 'color-mix(in srgb, var(--color-accent) 8%, transparent)' : 'var(--color-surface)',
+          color: ok ? 'var(--color-accent)' : 'var(--color-neutral-400)',
+          approve: () => this.setState(p => ({ esApproved: p.esApproved.includes(i) ? p.esApproved.filter(y => y !== i) : p.esApproved.concat(i) }))
+        };
+      }),
+      esCount: s.esApproved.length + ' of 5 reviewed',
+      esPct: Math.round((s.esApproved.length / STEPS.length) * 100) + '%',
+      esDisabled: s.esApproved.length < STEPS.length,
+      esOpacity: s.esApproved.length < STEPS.length ? 0.45 : 1,
+      esBtn: s.esApproved.length < STEPS.length ? 'Review every line to publish' : 'Publish Spanish version',
+
+      quizBuild: s.quizMode === 'build', quizAnswer: s.quizMode === 'answer',
+      buildTabBg: s.quizMode === 'build' ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',
+      buildTabColor: s.quizMode === 'build' ? 'var(--color-accent)' : 'var(--color-neutral-500)',
+      answerTabBg: s.quizMode === 'answer' ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',
+      answerTabColor: s.quizMode === 'answer' ? 'var(--color-accent)' : 'var(--color-neutral-500)',
+      setBuild: () => this.set({ quizMode: 'build' }),
+      setAnswer: () => this.set({ quizMode: 'answer', qIndex: 0, qPick: null }),
+      quizQ: QUIZ[s.qIndex].q,
+      quizCounter: 'Question ' + (s.qIndex + 1) + ' of ' + QUIZ.length,
+      quizOptions: QUIZ[s.qIndex].a.map((o, i) => {
+        const picked = s.qPick === i, right = QUIZ[s.qIndex].c === i, show = s.qPick !== null;
+        return {
+          label: o,
+          border: show && right ? 'var(--color-accent)' : picked ? 'var(--color-neutral-500)' : 'var(--color-divider)',
+          bg: show && right ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : picked ? 'var(--color-neutral-900)' : 'var(--color-surface)',
+          mark: show ? (right ? '✓' : picked ? '×' : '') : '',
+          pick: () => this.state.qPick === null && this.set({ qPick: i })
+        };
+      }),
+      quizFeedback: s.qPick === null ? '' : s.qPick === QUIZ[s.qIndex].c ? 'Correct.' : 'Not quite — the guide says ' + QUIZ[s.qIndex].a[QUIZ[s.qIndex].c] + '.',
+      quizNextDisabled: s.qPick === null, quizNextOpacity: s.qPick === null ? 0.45 : 1,
+      quizNextLabel: s.qIndex >= QUIZ.length - 1 ? 'Finish · back to station' : 'Next question →',
+      quizNext: () => this.state.qIndex >= QUIZ.length - 1
+        ? this.set({ quizMode: 'build', qIndex: 0, qPick: null })
+        : this.setState(p => ({ qIndex: p.qIndex + 1, qPick: null })),
+      quizDraft: QUIZ.map((q, i) => ({ n: i + 1, q: q.q, kind: q.a.length === 2 ? 'True / false' : 'Multiple choice', answer: q.a[q.c] })),
+
+      notifs: NOTIFS.map((n, i) => {
+        const read = s.notifRead.includes(i);
+        return {
+          title: n.t, body: n.b, time: n.time,
+          dotBg: read ? 'transparent' : 'var(--color-accent)',
+          bg: read ? 'transparent' : 'var(--color-surface)',
+          border: read ? 'var(--color-divider)' : 'var(--color-accent-800)',
+          op: read ? 0.55 : 1,
+          open: () => this.setState(p => ({ notifRead: p.notifRead.includes(i) ? p.notifRead : p.notifRead.concat(i) }))
+        };
+      }),
+      unreadLabel: (NOTIFS.length - s.notifRead.length) + ' unread',
+      markAll: () => this.set({ notifRead: this.state.notifRead.length === NOTIFS.length ? [] : NOTIFS.map((_, i) => i) }),
+      markAllLabel: s.notifRead.length === NOTIFS.length ? 'Mark all unread' : 'Mark all read',
+
+      qrCells: QR.map(on => ({ bg: on ? '#292b31' : 'transparent' })),
+      sheetSteps: STEPS.map((x, i) => ({ n: i + 1, text: x.en, meta: T(x.meta, 'en') })),
+
+      corrNote: s.corr === 'note', corrRedo: s.corr === 'redo', corrSent: s.corr === 'sent',
+      corrPhoto: s.corrPhoto, corrNoPhoto: !s.corrPhoto,
+      startRedo: () => this.set({ corr: 'redo' }),
+      retake: () => this.set({ corrPhoto: true }),
+      resubmit: () => this.state.corrPhoto && this.set({ corr: 'sent' }),
+      resubmitOpacity: s.corrPhoto ? 1 : 0.45,
+      resubmitDisabled: !s.corrPhoto,
+      corrBackToNote: () => this.set({ corr: 'note', corrPhoto: false }),
+      corrRestart: () => this.set({ corr: 'note', corrPhoto: false }),
+
+      whenChips: ['Today', 'This week', 'Month'].map(w => ({
+        label: w,
+        border: s.histWhen === w ? 'var(--color-accent)' : 'var(--color-divider)',
+        bg: s.histWhen === w ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',
+        color: s.histWhen === w ? 'var(--color-accent)' : 'var(--color-neutral-400)',
+        pick: () => this.set({ histWhen: w })
+      })),
+      whoChips: ['Everyone', 'Marisol R.', 'Andre T.', 'Kev L.'].map(w => ({
+        label: w,
+        border: s.histWho === w ? 'var(--color-accent)' : 'var(--color-divider)',
+        bg: s.histWho === w ? 'color-mix(in srgb, var(--color-accent) 14%, transparent)' : 'transparent',
+        color: s.histWho === w ? 'var(--color-accent)' : 'var(--color-neutral-400)',
+        pick: () => this.set({ histWho: w })
+      })),
+      history: HISTORY.reduce((out, g) => {
+        if (s.histWhen === 'Today' && g.day.indexOf('Today') !== 0) return out;
+        const rows = g.rows.filter(r => s.histWho === 'Everyone' || r.who === s.histWho);
+        if (!rows.length) return out;
+        out.push({ isDay: true, isRow: false, day: g.day, task: '', who: '', st: '', t: '', status: '', statusColor: '', statusBorder: '' });
+        rows.forEach(r => out.push(Object.assign({ isDay: false, isRow: true, day: '' }, r, {
+          statusColor: r.tone === 'ok' ? 'var(--color-accent-300)' : r.tone === 'warn' ? 'var(--color-accent)' : 'var(--color-neutral-400)',
+          statusBorder: r.tone === 'warn' ? 'var(--color-accent)' : 'var(--color-divider)'
+        })));
+        return out;
+      }, []),
+      histCount: HISTORY.reduce((n, g) => n + g.rows.filter(r => (s.histWho === 'Everyone' || r.who === s.histWho) && (s.histWhen !== 'Today' || g.day.indexOf('Today') === 0)).length, 0) + ' completions',
+
+      recIdle: s.rec === 'idle', recAnalyzing: s.rec === 'analyzing', recReady: s.rec === 'ready' || s.rec === 'published',
+      recordTitle: s.rec === 'published' ? 'Published to Grill Station' : s.rec === 'ready' ? 'Review the draft' : 'Record a procedure',
+      recordBtn: s.rec === 'idle' ? '● Record / upload video' : s.rec === 'analyzing' ? 'Analyzing…' : s.rec === 'ready' ? 'Publish · QR stays the same' : '✓ Live — print the QR sheet',
+      editHint: s.rec === 'published' ? 'Published 10:22 PM. Employees see this version on the next scan.' : 'Tap ✎ to edit any step. Nothing publishes on its own.',
+      aiSteps: AI.map((t, i) => ({ n: i + 1, text: t, edit: () => {} })),
+      recordAction: () => {
+        const r = this.state.rec;
+        if (r === 'idle') { this.set({ rec: 'analyzing' }); setTimeout(() => this.set({ rec: 'ready' }), 1400); }
+        else if (r === 'ready') this.set({ rec: 'published' });
+        else if (r === 'published') this.set({ mgr: 'dash', rec: 'idle' });
+      }
+    };
+  }
+}
+</script>
+</body>
+</html>
