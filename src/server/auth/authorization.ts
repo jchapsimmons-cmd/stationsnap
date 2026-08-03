@@ -91,6 +91,41 @@ export async function managerCanAccessLocation(
   return Boolean(grant);
 }
 
+export async function managerCanManageLocation(
+  session: ManagerSessionContext,
+  locationId: string,
+): Promise<boolean> {
+  const [location] = await getDb()
+    .select({ id: locations.id })
+    .from(locations)
+    .where(and(eq(locations.id, locationId), eq(locations.organizationId, session.organizationId)))
+    .limit(1);
+  if (!location) return false;
+  if (session.role === "owner") return true;
+  const [grant] = await getDb()
+    .select({ locationId: managerLocationAccess.locationId })
+    .from(managerLocationAccess)
+    .where(
+      and(
+        eq(managerLocationAccess.organizationId, session.organizationId),
+        eq(managerLocationAccess.membershipId, session.membershipId),
+        eq(managerLocationAccess.locationId, locationId),
+      ),
+    )
+    .limit(1);
+  return Boolean(grant);
+}
+
+export async function requireManagerManagedLocation(
+  session: ManagerSessionContext,
+  locationId: string,
+  requestId?: string,
+): Promise<void> {
+  if (await managerCanManageLocation(session, locationId)) return;
+  await auditUnauthorized(session, "location", locationId, requestId);
+  throw new AppError("FORBIDDEN", "You do not have access to this location.");
+}
+
 export async function requireManagerLocation(
   session: ManagerSessionContext,
   locationId: string,

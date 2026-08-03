@@ -22,6 +22,13 @@
       "when": 1785716920403,
       "tag": "0002_lumpy_arachne",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1785717955722,
+      "tag": "0003_curvy_vampiro",
+      "breakpoints": true
     }
   ]
 }

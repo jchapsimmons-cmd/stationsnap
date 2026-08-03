@@ -13,7 +13,17 @@ export type AuditAction =
   | "access.unauthorized"
   | "manager.password_reset_requested"
   | "manager.password_reset_completed"
-  | "session.logout";
+  | "session.logout"
+  | "organization.updated"
+  | "location.created"
+  | "location.updated"
+  | "location.disabled"
+  | "station.created"
+  | "station.updated"
+  | "station.archived"
+  | "employee.created"
+  | "employee.updated"
+  | "manager.locations_updated";
 
 export interface AuditEventInput {
   organizationId?: string;

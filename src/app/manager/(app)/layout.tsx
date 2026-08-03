@@ -6,11 +6,19 @@ export const dynamic = "force-dynamic";
 
 export default async function ManagerLayout({ children }: { children: ReactNode }) {
   const session = await requireManagerPage("/manager");
+  const navItems = [
+    { href: "/manager", label: "Overview" },
+    { href: "/manager/settings/locations", label: "Locations" },
+    { href: "/manager/settings/stations", label: "Stations" },
+    { href: "/manager/employees", label: "Employees" },
+    { href: "/manager/settings/organization", label: "Organization" },
+    ...(session.role === "owner" ? [{ href: "/manager/managers", label: "Manager access" }] : []),
+  ];
   return (
     <AppShell
       variant="manager"
       userLabel={`${session.displayName} · ${session.role}`}
-      navItems={[{ href: "/manager", label: "Foundation" }]}
+      navItems={navItems}
     >
       {children}
     </AppShell>

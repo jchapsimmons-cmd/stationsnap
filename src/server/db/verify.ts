@@ -32,6 +32,16 @@ import {
 } from "@/server/db/schema";
 import { runSeed } from "@/server/db/seed";
 import { employeeSeed, managerSeed, seedIds } from "@/server/db/seed-data";
+import {
+  createEmployee,
+  createLocation,
+  createStation,
+  listEmployees,
+  setManagerLocationAssignments,
+  updateEmployee,
+  updateLocation,
+  updateOrganization,
+} from "@/server/management/service";
 
 const port = 55_439;
 const database = "stationsnap_verify";
@@ -69,6 +79,7 @@ async function verifyUpgradeMigration(): Promise<void> {
       await readFile(path.resolve("drizzle", "0001_hard_squadron_supreme.sql"), "utf8"),
     );
     await pool.query(await readFile(path.resolve("drizzle", "0002_lumpy_arachne.sql"), "utf8"));
+    await pool.query(await readFile(path.resolve("drizzle", "0003_curvy_vampiro.sql"), "utf8"));
     const result = await pool.query<{ organization_slug: string; location_slug: string }>(
       `select o.access_slug as organization_slug, l.access_slug as location_slug from organizations o join locations l on l.organization_id = o.id`,
     );
@@ -193,6 +204,156 @@ async function verifyDatabase(): Promise<void> {
   }
   if (!unauthorizedLocationRejected) throw new Error("Unauthorized location access was accepted");
 
+  let managerOrganizationWriteRejected = false;
+  try {
+    await updateOrganization(scopedManagerContext, {
+      name: "Unauthorized rename",
+      logoUrl: null,
+      defaultLanguage: "en",
+      timezone: "America/Chicago",
+      status: "active",
+    });
+  } catch {
+    managerOrganizationWriteRejected = true;
+  }
+  if (!managerOrganizationWriteRejected) throw new Error("Manager changed organization settings");
+
+  const phaseThreeLocation = await createLocation(managerContext, {
+    name: "Airport",
+    accessSlug: "airport",
+    timezone: "America/Chicago",
+    status: "active",
+  });
+  await updateOrganization(managerContext, {
+    name: "StationSnap Demo Kitchen",
+    logoUrl: "https://example.com/stationsnap-logo.png",
+    defaultLanguage: "es",
+    timezone: "America/Chicago",
+    status: "active",
+  });
+  let managerLocationCreateRejected = false;
+  try {
+    await createLocation(scopedManagerContext, {
+      name: "Unauthorized",
+      accessSlug: "unauthorized",
+      timezone: "America/Chicago",
+      status: "active",
+    });
+  } catch {
+    managerLocationCreateRejected = true;
+  }
+  if (!managerLocationCreateRejected) throw new Error("Manager created an organization location");
+
+  const phaseThreeStation = await createStation(scopedManagerContext, {
+    locationId: seedIds.locations.downtown,
+    name: "Dish Area",
+    description: "Dishwashing and sanitation procedures",
+    imageUrl: "https://example.com/dish-area.png",
+    displayOrder: 3,
+    status: "active",
+  });
+  let scopedStationWriteRejected = false;
+  try {
+    await createStation(scopedManagerContext, {
+      locationId: seedIds.locations.riverside,
+      name: "Unauthorized Station",
+      description: "",
+      imageUrl: null,
+      displayOrder: 3,
+      status: "active",
+    });
+  } catch {
+    scopedStationWriteRejected = true;
+  }
+  if (!scopedStationWriteRejected) throw new Error("Manager created a station outside their scope");
+
+  const phaseThreePin = "8642";
+  const phaseThreeEmployee = await createEmployee(scopedManagerContext, {
+    primaryLocationId: seedIds.locations.downtown,
+    employeeNumber: "1099",
+    displayName: "Jamie Phase Three",
+    jobRole: "Dishwasher",
+    language: "en",
+    pin: phaseThreePin,
+    status: "active",
+  });
+  const [phaseThreeCredential] = await getDb()
+    .select({ pinHash: employees.pinHash })
+    .from(employees)
+    .where(eq(employees.id, phaseThreeEmployee.id));
+  if (
+    !phaseThreeCredential?.pinHash ||
+    phaseThreeCredential.pinHash === phaseThreePin ||
+    !(await verifySecret(phaseThreePin, phaseThreeCredential.pinHash))
+  ) {
+    throw new Error("Phase 3 employee PIN was not securely hashed");
+  }
+  const employeeSearch = await listEmployees(scopedManagerContext, {
+    search: "Jamie Phase",
+    locationId: seedIds.locations.downtown,
+    status: "active",
+  });
+  if (employeeSearch.length !== 1 || employeeSearch[0]?.id !== phaseThreeEmployee.id) {
+    throw new Error("Employee search and filters failed");
+  }
+  let scopedEmployeeMoveRejected = false;
+  try {
+    await updateEmployee(scopedManagerContext, phaseThreeEmployee.id, {
+      primaryLocationId: seedIds.locations.riverside,
+      employeeNumber: phaseThreeEmployee.employeeNumber,
+      displayName: phaseThreeEmployee.displayName,
+      jobRole: phaseThreeEmployee.jobRole,
+      language: phaseThreeEmployee.language,
+      status: phaseThreeEmployee.status,
+    });
+  } catch {
+    scopedEmployeeMoveRejected = true;
+  }
+  if (!scopedEmployeeMoveRejected) throw new Error("Manager moved an employee outside their scope");
+  await updateEmployee(scopedManagerContext, phaseThreeEmployee.id, {
+    primaryLocationId: seedIds.locations.downtown,
+    employeeNumber: phaseThreeEmployee.employeeNumber,
+    displayName: phaseThreeEmployee.displayName,
+    jobRole: phaseThreeEmployee.jobRole,
+    language: phaseThreeEmployee.language,
+    status: "disabled",
+  });
+  let disabledPhaseThreeLoginRejected = false;
+  try {
+    await loginEmployee(
+      {
+        organizationSlug: "stationsnap-demo",
+        locationSlug: "downtown",
+        employeeNumber: phaseThreeEmployee.employeeNumber,
+        pin: phaseThreePin,
+      },
+      { ipHash: "verify-phase-three-disabled", requestId: "verify-phase-three-disabled" },
+    );
+  } catch {
+    disabledPhaseThreeLoginRejected = true;
+  }
+  if (!disabledPhaseThreeLoginRejected) throw new Error("Disabled Phase 3 employee logged in");
+  await updateLocation(managerContext, phaseThreeLocation.id, {
+    name: phaseThreeLocation.name,
+    accessSlug: phaseThreeLocation.accessSlug,
+    timezone: phaseThreeLocation.timezone,
+    status: "disabled",
+  });
+  await setManagerLocationAssignments(managerContext, seedIds.memberships.downtown, [
+    seedIds.locations.downtown,
+    seedIds.locations.riverside,
+  ]);
+  if (!(await managerCanAccessLocation(scopedManagerContext, seedIds.locations.riverside))) {
+    throw new Error("Manager location assignment did not take effect");
+  }
+  await setManagerLocationAssignments(managerContext, seedIds.memberships.downtown, [
+    seedIds.locations.downtown,
+  ]);
+  if (await managerCanAccessLocation(scopedManagerContext, seedIds.locations.riverside)) {
+    throw new Error("Removed manager location assignment remained active");
+  }
+  if (!phaseThreeStation.id) throw new Error("Phase 3 station creation failed");
+
   await changeManagerRole(
     managerContext,
     { membershipId: seedIds.memberships.downtown, role: "owner" },
@@ -314,6 +475,15 @@ async function verifyDatabase(): Promise<void> {
     name: "Other Location",
     timezone: "America/New_York",
   });
+  let crossTenantAssignmentRejected = false;
+  try {
+    await setManagerLocationAssignments(managerContext, seedIds.memberships.downtown, [
+      otherLocationId,
+    ]);
+  } catch {
+    crossTenantAssignmentRejected = true;
+  }
+  if (!crossTenantAssignmentRejected) throw new Error("Cross-tenant manager assignment succeeded");
   if (await managerCanAccessLocation(managerContext, otherLocationId)) {
     throw new Error("Cross-organization owner access was incorrectly allowed");
   }
@@ -395,6 +565,12 @@ async function verifyDatabase(): Promise<void> {
     "account.disabled",
     "access.unauthorized",
     "manager.password_reset_completed",
+    "organization.updated",
+    "location.created",
+    "location.disabled",
+    "station.created",
+    "employee.created",
+    "manager.locations_updated",
   ];
   if (requiredAuditActions.some((action) => !actions.has(action))) {
     throw new Error(
@@ -405,7 +581,7 @@ async function verifyDatabase(): Promise<void> {
   await verifyUpgradeMigration();
 
   process.stdout.write(
-    `Database and authentication verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true })}\n`,
+    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true })}\n`,
   );
 }
 

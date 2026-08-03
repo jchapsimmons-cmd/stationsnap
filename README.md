@@ -4,7 +4,7 @@ StationSnap is a mobile-first restaurant SOP, training, qualification, and check
 
 ## Repository status
 
-Phases 0 through 2 are complete. The repository now includes the project foundation plus secure manager and employee authentication, separate expiring sessions, role/location authorization, password recovery, employee PIN access, rate limiting, lockouts, and audit history.
+Phases 0 through 3 are complete. The repository now includes the project foundation, secure manager and employee authentication, and tenant-safe manager tools for organization settings, locations, stations, manager location assignments, and employees.
 
 Approved visual designs are still required before visual fidelity can be evaluated; see `docs/design-component-map.md` for the provisional functional mapping.
 
@@ -33,6 +33,8 @@ Approved visual designs are still required before visual fidelity can be evaluat
 6. Start the application with `npm run dev`.
 
 Manager password reset requires all `SMTP_*` settings. The application uses generic reset responses, single-use 30-minute tokens, and revokes existing manager sessions after a successful reset.
+
+Manager setup routes begin at `/manager`. Owners can update organization settings, create locations, and assign managers to locations. Managers can update permitted locations and manage stations and employees only within those locations. Organization logos and station images currently use validated HTTPS URLs; private object uploads are introduced with the later media phases.
 
 The demo employee access codes are `stationsnap-demo` and either `downtown` or `riverside`. Manager emails and employee numbers are defined in `src/server/db/seed-data.ts`; their secrets come only from the local seed environment.
 
