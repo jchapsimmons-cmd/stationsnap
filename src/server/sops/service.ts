@@ -3,12 +3,13 @@ import { and, asc, desc, eq, ilike, inArray, lt, or, sql, type SQL } from "drizz
 import { AppError } from "@/lib/errors";
 import { writeAuditEvent } from "@/server/audit";
 import { requireManagerManagedLocation } from "@/server/auth/authorization";
-import type { ManagerSessionContext } from "@/server/auth/sessions";
+import type { EmployeeSessionContext, ManagerSessionContext } from "@/server/auth/sessions";
 import { getDb } from "@/server/db/client";
 import {
   files,
   locations,
   sopMaterials,
+  sopRecentViews,
   sopRetrainingRuleLocations,
   sopRetrainingRuleRoles,
   sopRetrainingRules,
@@ -20,6 +21,7 @@ import {
 } from "@/server/db/schema";
 import { getManagedLocationIds, requireActiveManagedLocation } from "@/server/management/service";
 import type {
+  EmployeeSopQuery,
   RetrainingRuleInput,
   SopCreateInput,
   SopDraftUpdateInput,
@@ -366,7 +368,7 @@ interface SopDetailBase {
   stationName: string | null;
 }
 
-async function buildSopDetail(actor: ManagerSessionContext, detail: SopDetailBase) {
+async function buildSopDetail(actor: { organizationId: string }, detail: SopDetailBase) {
   const [steps, materials, warnings] = await Promise.all([
     getDb()
       .select()
@@ -1350,4 +1352,150 @@ export async function compareSopVersions(
     materialDiffs: diffByPosition(fromMaterials, toMaterials, ["kind", "name", "quantity", "unit"]),
     warningDiffs: diffByPosition(fromWarnings, toWarnings, ["text"]),
   };
+}
+
+async function requireEmployeeSop(session: EmployeeSessionContext, sopId: string) {
+  const detail = await loadSopDetail(session.organizationId, sopId);
+  if (
+    !detail ||
+    detail.sop.locationId !== session.locationId ||
+    detail.sop.status !== "published"
+  ) {
+    throw new AppError("NOT_FOUND", "That SOP is not available.");
+  }
+  return detail;
+}
+
+/** The current published version of an SOP, scoped to the employee's authenticated location. */
+export async function getPublishedSopForEmployee(session: EmployeeSessionContext, sopId: string) {
+  const base = await requireEmployeeSop(session, sopId);
+  const detail = await buildSopDetail({ organizationId: session.organizationId }, base);
+  await getDb()
+    .insert(sopRecentViews)
+    .values({
+      id: randomUUID(),
+      employeeId: session.employeeId,
+      organizationId: session.organizationId,
+      sopId,
+    })
+    .onConflictDoUpdate({
+      target: [sopRecentViews.employeeId, sopRecentViews.sopId],
+      set: { lastViewedAt: new Date() },
+    });
+  await writeAuditEvent({
+    organizationId: session.organizationId,
+    locationId: session.locationId,
+    actorKind: "employee",
+    actorId: session.employeeId,
+    action: "sop.viewed",
+    targetType: "sop",
+    targetId: sopId,
+  });
+  return detail;
+}
+
+export async function listPublishedSopsForEmployee(
+  session: EmployeeSessionContext,
+  query: EmployeeSopQuery,
+) {
+  const conditions: SQL[] = [
+    eq(sops.organizationId, session.organizationId),
+    eq(sops.locationId, session.locationId),
+    eq(sops.status, "published"),
+  ];
+  if (query.category) conditions.push(eq(sops.category, query.category));
+  if (query.stationId) conditions.push(eq(sops.stationId, query.stationId));
+  if (query.search) {
+    const pattern = `%${query.search}%`;
+    conditions.push(
+      or(ilike(sopVersions.title, pattern), ilike(sopVersions.description, pattern))!,
+    );
+  }
+  const cursor = query.cursor ? decodeCursor(query.cursor) : null;
+  if (cursor) {
+    conditions.push(
+      or(
+        lt(sops.updatedAt, cursor.updatedAt),
+        and(eq(sops.updatedAt, cursor.updatedAt), lt(sops.id, cursor.id)),
+      )!,
+    );
+  }
+
+  const rows = await getDb()
+    .select({
+      id: sops.id,
+      title: sopVersions.title,
+      description: sopVersions.description,
+      category: sops.category,
+      difficulty: sopVersions.difficulty,
+      estimatedMinutes: sopVersions.estimatedMinutes,
+      stationId: sops.stationId,
+      stationName: stations.name,
+      coverImageFileId: sopVersions.coverImageFileId,
+      updatedAt: sops.updatedAt,
+    })
+    .from(sops)
+    .innerJoin(
+      sopVersions,
+      and(
+        eq(sopVersions.id, sops.currentVersionId),
+        eq(sopVersions.organizationId, sops.organizationId),
+      ),
+    )
+    .leftJoin(
+      stations,
+      and(eq(stations.id, sops.stationId), eq(stations.organizationId, sops.organizationId)),
+    )
+    .where(and(...conditions))
+    .orderBy(desc(sops.updatedAt), desc(sops.id))
+    .limit(query.limit + 1);
+
+  const hasMore = rows.length > query.limit;
+  const page = hasMore ? rows.slice(0, query.limit) : rows;
+  const last = page.at(-1);
+  return {
+    items: page,
+    nextCursor: hasMore && last ? encodeCursor(last.updatedAt, last.id) : null,
+  };
+}
+
+export async function listRecentSopsForEmployee(session: EmployeeSessionContext, limit = 12) {
+  return getDb()
+    .select({
+      id: sops.id,
+      title: sopVersions.title,
+      category: sops.category,
+      stationId: sops.stationId,
+      stationName: stations.name,
+      lastViewedAt: sopRecentViews.lastViewedAt,
+    })
+    .from(sopRecentViews)
+    .innerJoin(
+      sops,
+      and(
+        eq(sops.id, sopRecentViews.sopId),
+        eq(sops.organizationId, sopRecentViews.organizationId),
+      ),
+    )
+    .innerJoin(
+      sopVersions,
+      and(
+        eq(sopVersions.id, sops.currentVersionId),
+        eq(sopVersions.organizationId, sops.organizationId),
+      ),
+    )
+    .leftJoin(
+      stations,
+      and(eq(stations.id, sops.stationId), eq(stations.organizationId, sops.organizationId)),
+    )
+    .where(
+      and(
+        eq(sopRecentViews.employeeId, session.employeeId),
+        eq(sops.organizationId, session.organizationId),
+        eq(sops.locationId, session.locationId),
+        eq(sops.status, "published"),
+      ),
+    )
+    .orderBy(desc(sopRecentViews.lastViewedAt))
+    .limit(limit);
 }

@@ -10,7 +10,15 @@ export default async function EmployeeLayout({ children }: { children: ReactNode
     <AppShell
       variant="employee"
       userLabel={session.displayName}
-      navItems={[{ href: "/employee", label: "Home" }]}
+      navItems={[
+        { href: "/employee", label: "Home" },
+        { href: "/employee/stations", label: "Stations" },
+        { href: "/employee/recent", label: "Recent" },
+        { href: "/employee/recipes", label: "Recipes" },
+        { href: "/employee/cleaning", label: "Cleaning" },
+        { href: "/employee/opening", label: "Opening" },
+        { href: "/employee/closing", label: "Closing" },
+      ]}
     >
       {children}
     </AppShell>

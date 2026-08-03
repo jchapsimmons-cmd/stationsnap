@@ -32,7 +32,12 @@ export type AuditAction =
   | "sop.published"
   | "sop.draft_created"
   | "sop.version_restored"
-  | "media.uploaded";
+  | "sop.viewed"
+  | "media.uploaded"
+  | "qr.created"
+  | "qr.revoked"
+  | "qr.rotated"
+  | "qr.scanned";
 
 export interface AuditEventInput {
   organizationId?: string;

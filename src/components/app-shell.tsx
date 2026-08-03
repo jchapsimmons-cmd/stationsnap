@@ -1,12 +1,18 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import {
+  BookOpen,
+  Broom,
   Buildings,
   ClipboardText,
+  ClockCounterClockwise,
   CookingPot,
   Gear,
   House,
   MapPin,
+  MoonStars,
+  QrCode,
+  SunHorizon,
   UserGear,
   Users,
 } from "@phosphor-icons/react/ssr";
@@ -21,6 +27,12 @@ interface NavItem {
 function NavIcon({ href }: { href: string }) {
   const props = { size: 19, weight: "regular" as const, "aria-hidden": true };
   if (href === "/manager" || href === "/employee") return <House {...props} />;
+  if (href.includes("recent")) return <ClockCounterClockwise {...props} />;
+  if (href.includes("recipes")) return <BookOpen {...props} />;
+  if (href.includes("cleaning")) return <Broom {...props} />;
+  if (href.includes("opening")) return <SunHorizon {...props} />;
+  if (href.includes("closing")) return <MoonStars {...props} />;
+  if (href.includes("qr")) return <QrCode {...props} />;
   if (href.includes("sops")) return <ClipboardText {...props} />;
   if (href.includes("locations")) return <MapPin {...props} />;
   if (href.includes("stations")) return <CookingPot {...props} />;

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  employeeSopQuerySchema,
   retrainingRuleSchema,
   sopCreateSchema,
   sopDraftUpdateSchema,
@@ -121,5 +122,19 @@ describe("Phase 5 SOP version schemas", () => {
     const from = crypto.randomUUID();
     const to = crypto.randomUUID();
     expect(sopVersionCompareQuerySchema.parse({ from, to })).toEqual({ from, to });
+  });
+});
+
+describe("Phase 6 employee SOP library schema", () => {
+  it("defaults filters and bounds the page size", () => {
+    const query = employeeSopQuerySchema.parse({});
+    expect(query.category).toBe("");
+    expect(query.stationId).toBe("");
+    expect(query.limit).toBe(20);
+    expect(() => employeeSopQuerySchema.parse({ limit: 500 })).toThrow();
+  });
+
+  it("rejects an invalid category", () => {
+    expect(() => employeeSopQuerySchema.parse({ category: "not-a-category" })).toThrow();
   });
 });

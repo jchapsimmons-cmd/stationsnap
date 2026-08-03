@@ -37,13 +37,24 @@ import {
   createEmployee,
   createLocation,
   createStation,
+  getStationForEmployee,
   listEmployees,
+  listStationsForEmployee,
   setManagerLocationAssignments,
   updateEmployee,
   updateLocation,
   updateOrganization,
+  updateStation,
 } from "@/server/management/service";
-import { files as filesTable } from "@/server/db/schema";
+import { files as filesTable, qrScanEvents } from "@/server/db/schema";
+import {
+  createQrCode,
+  getQrCode,
+  listQrCodes,
+  resolveQrCode,
+  revokeQrCode,
+  rotateQrCode,
+} from "@/server/qr/service";
 import {
   archiveSop,
   autosaveSopDraft,
@@ -53,11 +64,14 @@ import {
   createStep,
   deleteStep,
   duplicateStep,
+  getPublishedSopForEmployee,
   getPublishReadiness,
   getSop,
   getSopDraft,
   getSopVersionDetail,
   hasDraftVersion,
+  listPublishedSopsForEmployee,
+  listRecentSopsForEmployee,
   listSops,
   listSopVersions,
   previewSop,
@@ -66,7 +80,7 @@ import {
   restoreSopVersion,
   updateStep,
 } from "@/server/sops/service";
-import { uploadMedia } from "@/server/storage/media-service";
+import { getMediaFileForEmployee, uploadMedia } from "@/server/storage/media-service";
 
 const port = 55_439;
 const database = "stationsnap_verify";
@@ -1479,6 +1493,324 @@ async function verifyDatabase(): Promise<void> {
     throw new Error("Publishing a draft on an archived SOP was accepted");
   }
 
+  // --- Phase 6: employee reader and QR indirection ---
+
+  const riversideEmployeeLogin = await loginEmployee(
+    {
+      organizationSlug: "stationsnap-demo",
+      locationSlug: "riverside",
+      employeeNumber: employeeSeed[3].employeeNumber,
+      pin: employeePin,
+    },
+    { ipHash: "verify-ip-employee-riverside", requestId: "verify-employee-riverside-login" },
+  );
+  const riversideEmployeeContext = await getEmployeeSession(riversideEmployeeLogin.token);
+  if (
+    !riversideEmployeeContext ||
+    riversideEmployeeContext.locationId !== seedIds.locations.riverside
+  ) {
+    throw new Error("Riverside employee session verification failed");
+  }
+
+  const qrCover = await uploadTestImage(managerContext);
+  const qrSopDraft = await createSop(
+    managerContext,
+    {
+      title: "Grill safety briefing",
+      description: "Daily safety checks before service.",
+      category: "safety",
+      locationId: seedIds.locations.downtown,
+      stationId: seedIds.stations.grill,
+      estimatedMinutes: 10,
+      difficulty: "beginner",
+      coverImageFileId: qrCover.id,
+      sourceVideoFileId: null,
+      materials: [],
+      warnings: [],
+    },
+    "verify-phase6-sop-create",
+  );
+  const qrSopStep = await createStep(
+    managerContext,
+    qrSopDraft.id,
+    {
+      title: "Check the fire suppression system",
+      instruction: "Confirm the hood suppression system is armed before service.",
+      imageFileId: qrCover.id,
+      videoFileId: null,
+      warning: "",
+      quantity: "",
+      unit: "",
+      equipmentSetting: "",
+      timerSeconds: null,
+      isRequired: true,
+      expectedRevision: qrSopDraft.version.revision,
+    },
+    "verify-phase6-sop-step",
+  );
+  const qrSop = await publishSop(
+    managerContext,
+    qrSopDraft.id,
+    {
+      expectedRevision: qrSopStep.version.revision,
+      changeSummary: "",
+      retrainingRule: { type: "none" },
+    },
+    "verify-phase6-sop-publish",
+  );
+
+  // Employee reader: stations, category libraries, the SOP itself, media, and recent views.
+  const employeeStations = await listStationsForEmployee(employeeContext);
+  if (!employeeStations.some((station) => station.id === seedIds.stations.grill)) {
+    throw new Error("Employee station listing did not include an active station at their location");
+  }
+  const employeeStation = await getStationForEmployee(employeeContext, seedIds.stations.grill);
+  if (employeeStation.id !== seedIds.stations.grill) {
+    throw new Error("Employee station detail did not resolve the requested station");
+  }
+  let riversideStationRejected = false;
+  try {
+    await getStationForEmployee(riversideEmployeeContext, seedIds.stations.grill);
+  } catch {
+    riversideStationRejected = true;
+  }
+  if (!riversideStationRejected) {
+    throw new Error("An employee read a station outside their authorized location");
+  }
+
+  const employeeSopDetail = await getPublishedSopForEmployee(employeeContext, qrSop.id);
+  if (
+    employeeSopDetail.version.title !== "Grill safety briefing" ||
+    employeeSopDetail.steps.length !== 1
+  ) {
+    throw new Error("Employee SOP reader did not return the published version content");
+  }
+  let riversideSopRejected = false;
+  try {
+    await getPublishedSopForEmployee(riversideEmployeeContext, qrSop.id);
+  } catch {
+    riversideSopRejected = true;
+  }
+  if (!riversideSopRejected) {
+    throw new Error("An employee read an SOP outside their authorized location");
+  }
+
+  const safetyLibrary = await listPublishedSopsForEmployee(employeeContext, {
+    search: "",
+    category: "safety",
+    stationId: "",
+    cursor: "",
+    limit: 20,
+  });
+  if (!safetyLibrary.items.some((item) => item.id === qrSop.id)) {
+    throw new Error("Employee category library did not include the published SOP");
+  }
+  const riversideSafetyLibrary = await listPublishedSopsForEmployee(riversideEmployeeContext, {
+    search: "",
+    category: "safety",
+    stationId: "",
+    cursor: "",
+    limit: 20,
+  });
+  if (riversideSafetyLibrary.items.some((item) => item.id === qrSop.id)) {
+    throw new Error("An employee's category library leaked an SOP outside their location");
+  }
+
+  const recentAfterView = await listRecentSopsForEmployee(employeeContext);
+  if (!recentAfterView.some((item) => item.id === qrSop.id)) {
+    throw new Error("Viewing a published SOP did not record a recent view");
+  }
+
+  const employeeMedia = await getMediaFileForEmployee(employeeContext, qrCover.id);
+  if (employeeMedia.buffer.byteLength === 0) {
+    throw new Error("An employee could not read media referenced by an authorized SOP");
+  }
+  let riversideMediaRejected = false;
+  try {
+    await getMediaFileForEmployee(riversideEmployeeContext, qrCover.id);
+  } catch {
+    riversideMediaRejected = true;
+  }
+  if (!riversideMediaRejected) {
+    throw new Error("An employee read media from an SOP outside their authorized location");
+  }
+
+  // QR indirection: creation, target validation, listing, revocation, and rotation.
+  let qrUnpublishedTargetRejected = false;
+  try {
+    await createQrCode(
+      managerContext,
+      {
+        locationId: seedIds.locations.downtown,
+        targetType: "sop",
+        targetId: secondDraft.id,
+        label: "",
+      },
+      "verify-phase6-qr-unpublished-rejected",
+    );
+  } catch {
+    qrUnpublishedTargetRejected = true;
+  }
+  if (!qrUnpublishedTargetRejected) {
+    throw new Error("A QR code was created for a target that is not published");
+  }
+
+  let qrCrossLocationCreateRejected = false;
+  try {
+    await createQrCode(
+      riversideManagerContext,
+      {
+        locationId: seedIds.locations.downtown,
+        targetType: "station",
+        targetId: seedIds.stations.grill,
+        label: "",
+      },
+      "verify-phase6-qr-cross-location-rejected",
+    );
+  } catch {
+    qrCrossLocationCreateRejected = true;
+  }
+  if (!qrCrossLocationCreateRejected) {
+    throw new Error("A location-restricted manager created a QR code outside their scope");
+  }
+
+  const stationQr = await createQrCode(
+    managerContext,
+    {
+      locationId: seedIds.locations.downtown,
+      targetType: "station",
+      targetId: seedIds.stations.grill,
+      label: "Grill station poster",
+    },
+    "verify-phase6-qr-station-create",
+  );
+  const sopQr = await createQrCode(
+    managerContext,
+    { locationId: seedIds.locations.downtown, targetType: "sop", targetId: qrSop.id, label: "" },
+    "verify-phase6-qr-sop-create",
+  );
+  const unavailableTargetQr = await createQrCode(
+    managerContext,
+    {
+      locationId: seedIds.locations.riverside,
+      targetType: "station",
+      targetId: seedIds.stations.frontCounter,
+      label: "",
+    },
+    "verify-phase6-qr-unavailable-target-create",
+  );
+
+  const qrList = await listQrCodes(managerContext, { locationId: "", status: "" });
+  if (
+    !qrList.some((row) => row.id === stationQr.id) ||
+    !qrList.some((row) => row.id === sopQr.id) ||
+    qrList.find((row) => row.id === stationQr.id)?.targetName !== "Grill"
+  ) {
+    throw new Error("QR listing did not return the created codes with their target names");
+  }
+
+  let riversideQrGetRejected = false;
+  try {
+    await getQrCode(riversideManagerContext, stationQr.id);
+  } catch {
+    riversideQrGetRejected = true;
+  }
+  if (!riversideQrGetRejected) {
+    throw new Error("A location-restricted manager read a QR code outside their scope");
+  }
+
+  const stationResolution = await resolveQrCode(stationQr.token, { ipHash: "verify-ip-qr-scan" });
+  if (
+    stationResolution.status !== "resolved" ||
+    stationResolution.destinationPath !== `/employee/stations/${seedIds.stations.grill}`
+  ) {
+    throw new Error("Resolving a valid station QR code did not return its destination");
+  }
+  const sopResolution = await resolveQrCode(sopQr.token, { ipHash: "verify-ip-qr-scan" });
+  if (
+    sopResolution.status !== "resolved" ||
+    sopResolution.destinationPath !== `/employee/sops/${qrSop.id}`
+  ) {
+    throw new Error("Resolving a valid SOP QR code did not return its destination");
+  }
+
+  await revokeQrCode(managerContext, stationQr.id, "verify-phase6-qr-revoke");
+  const revokedResolution = await resolveQrCode(stationQr.token, { ipHash: "verify-ip-qr-scan" });
+  if (revokedResolution.status !== "revoked") {
+    throw new Error("Resolving a revoked QR code did not report it as revoked");
+  }
+  let doubleRevokeRejected = false;
+  try {
+    await revokeQrCode(managerContext, stationQr.id, "verify-phase6-qr-double-revoke");
+  } catch {
+    doubleRevokeRejected = true;
+  }
+  if (!doubleRevokeRejected) throw new Error("An already-revoked QR code was revoked again");
+  let revokedRotateRejected = false;
+  try {
+    await rotateQrCode(managerContext, stationQr.id, "verify-phase6-qr-revoked-rotate");
+  } catch {
+    revokedRotateRejected = true;
+  }
+  if (!revokedRotateRejected)
+    throw new Error("A revoked QR code was allowed to reissue a new token");
+
+  const rotated = await rotateQrCode(managerContext, sopQr.id, "verify-phase6-qr-rotate");
+  const oldTokenResolution = await resolveQrCode(sopQr.token, { ipHash: "verify-ip-qr-scan" });
+  if (oldTokenResolution.status !== "invalid") {
+    throw new Error("Rotating a QR code did not invalidate its previous token");
+  }
+  const newTokenResolution = await resolveQrCode(rotated.token, { ipHash: "verify-ip-qr-scan" });
+  if (newTokenResolution.status !== "resolved") {
+    throw new Error("A newly rotated QR token did not resolve");
+  }
+
+  await updateStation(
+    managerContext,
+    seedIds.stations.frontCounter,
+    {
+      locationId: seedIds.locations.riverside,
+      name: "Front Counter",
+      description: "",
+      imageUrl: null,
+      displayOrder: 2,
+      status: "disabled",
+    },
+    "verify-phase6-station-disable",
+  );
+  const unavailableResolution = await resolveQrCode(unavailableTargetQr.token, {
+    ipHash: "verify-ip-qr-scan",
+  });
+  if (unavailableResolution.status !== "unavailable") {
+    throw new Error("Resolving a QR code whose target became unavailable did not report it");
+  }
+
+  const invalidRateKey = "verify-ip-qr-invalid";
+  for (let index = 0; index < 5; index += 1) {
+    const result = await resolveQrCode("not-a-real-token", { ipHash: invalidRateKey });
+    if (result.status !== "invalid")
+      throw new Error("An unknown QR token did not resolve as invalid");
+  }
+  const invalidScanCountBeforeLockout = (
+    await getDb()
+      .select({ id: qrScanEvents.id })
+      .from(qrScanEvents)
+      .where(eq(qrScanEvents.tokenHash, hashToken("not-a-real-token")))
+  ).length;
+  const lockedResolution = await resolveQrCode("not-a-real-token", { ipHash: invalidRateKey });
+  if (lockedResolution.status !== "invalid") {
+    throw new Error("A rate-limited invalid QR scan did not resolve as invalid");
+  }
+  const invalidScanCountAfterLockout = (
+    await getDb()
+      .select({ id: qrScanEvents.id })
+      .from(qrScanEvents)
+      .where(eq(qrScanEvents.tokenHash, hashToken("not-a-real-token")))
+  ).length;
+  if (invalidScanCountAfterLockout !== invalidScanCountBeforeLockout) {
+    throw new Error("QR token enumeration was not rate limited");
+  }
+
   const actions = new Set(
     (await getDb().select({ action: auditEvents.action }).from(auditEvents)).map(
       (event) => event.action,
@@ -1508,6 +1840,10 @@ async function verifyDatabase(): Promise<void> {
     "sop.draft_created",
     "sop.version_restored",
     "media.uploaded",
+    "sop.viewed",
+    "qr.created",
+    "qr.revoked",
+    "qr.rotated",
   ];
   if (requiredAuditActions.some((action) => !actions.has(action))) {
     throw new Error(
@@ -1518,7 +1854,7 @@ async function verifyDatabase(): Promise<void> {
   await verifyUpgradeMigration();
 
   process.stdout.write(
-    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true })}\n`,
+    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true, employeeStationReader: true, employeeSopReader: true, employeeCategoryLibrary: true, employeeRecentViews: true, employeeMediaAuthorization: true, qrCreationAndTargetValidation: true, qrLocationScoping: true, qrRevocation: true, qrRotation: true, qrScanResolution: true, qrUnavailableTarget: true, qrEnumerationRateLimit: true })}\n`,
   );
 }
 

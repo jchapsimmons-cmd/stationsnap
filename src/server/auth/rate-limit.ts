@@ -6,7 +6,7 @@ import { LOGIN_LOCKOUT_MS, LOGIN_WINDOW_MS, MAX_LOGIN_FAILURES } from "@/server/
 import { getDb } from "@/server/db/client";
 import { authRateLimits, loginAttempts } from "@/server/db/schema";
 
-export function createRateLimitKey(kind: "manager" | "employee", subject: string): string {
+export function createRateLimitKey(kind: "manager" | "employee" | "qr", subject: string): string {
   return hashToken(`${kind}:${subject.trim().toLowerCase()}`);
 }
 

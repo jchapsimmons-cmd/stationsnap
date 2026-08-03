@@ -5,7 +5,7 @@ import { writeAuditEvent, type AuditAction } from "@/server/audit";
 import { requireManagerManagedLocation, requireOwner } from "@/server/auth/authorization";
 import { hashSecret } from "@/server/auth/crypto";
 import { revokeEmployeeSessions } from "@/server/auth/service";
-import type { ManagerSessionContext } from "@/server/auth/sessions";
+import type { EmployeeSessionContext, ManagerSessionContext } from "@/server/auth/sessions";
 import { getDb } from "@/server/db/client";
 import {
   employees,
@@ -542,4 +542,46 @@ export async function setManagerLocationAssignments(
     requestId,
   );
   return getManagerAssignments(actor, membershipId);
+}
+
+export async function listStationsForEmployee(session: EmployeeSessionContext) {
+  return getDb()
+    .select({
+      id: stations.id,
+      name: stations.name,
+      description: stations.description,
+      imageUrl: stations.imageUrl,
+      displayOrder: stations.displayOrder,
+    })
+    .from(stations)
+    .where(
+      and(
+        eq(stations.organizationId, session.organizationId),
+        eq(stations.locationId, session.locationId),
+        eq(stations.status, "active"),
+      ),
+    )
+    .orderBy(asc(stations.displayOrder), asc(stations.name));
+}
+
+export async function getStationForEmployee(session: EmployeeSessionContext, stationId: string) {
+  const [row] = await getDb()
+    .select({
+      id: stations.id,
+      name: stations.name,
+      description: stations.description,
+      imageUrl: stations.imageUrl,
+    })
+    .from(stations)
+    .where(
+      and(
+        eq(stations.id, stationId),
+        eq(stations.organizationId, session.organizationId),
+        eq(stations.locationId, session.locationId),
+        eq(stations.status, "active"),
+      ),
+    )
+    .limit(1);
+  if (!row) throw new AppError("NOT_FOUND", "That station is not available.");
+  return row;
 }
