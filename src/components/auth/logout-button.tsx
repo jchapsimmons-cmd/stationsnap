@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { SignOut } from "@phosphor-icons/react";
 import { Button } from "@/components/ui/primitives";
 
 export function LogoutButton({ kind }: { kind: "manager" | "employee" }) {
@@ -22,6 +23,7 @@ export function LogoutButton({ kind }: { kind: "manager" | "employee" }) {
 
   return (
     <Button className="app-bar__logout" variant="ghost" onClick={logout} disabled={pending}>
+      <SignOut size={18} aria-hidden="true" />
       {pending ? "Signing out…" : "Sign out"}
     </Button>
   );

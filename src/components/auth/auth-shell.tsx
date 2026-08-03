@@ -1,5 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 export function AuthShell({
   eyebrow,
@@ -17,9 +18,12 @@ export function AuthShell({
   return (
     <main className="auth-page" id="main-content">
       <section className="auth-card">
-        <Link className="brand auth-card__brand" href="/">
-          Station<span>Snap</span>
-        </Link>
+        <div className="auth-card__top">
+          <Link className="brand auth-card__brand" href="/">
+            Station<span>Snap</span>
+          </Link>
+          <ThemeToggle />
+        </div>
         <p className="eyebrow">{eyebrow}</p>
         <h1>{title}</h1>
         <p className="auth-card__description">{description}</p>

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { CookingPot, Plus } from "@phosphor-icons/react/ssr";
 import { EmptyState, PageHeader, StatusBadge } from "@/components/ui";
 import { requireManagerPage } from "@/server/auth/authorization";
 import { stationQuerySchema } from "@/server/management/schemas";
@@ -26,6 +27,7 @@ export default async function StationsPage({
         description="Organize procedures by the place work happens."
         actions={
           <Link className="button button--primary" href="/manager/settings/stations/new">
+            <Plus size={19} aria-hidden="true" />
             Add station
           </Link>
         }
@@ -67,7 +69,10 @@ export default async function StationsPage({
               href={`/manager/settings/stations/${row.id}`}
               key={row.id}
             >
-              <span>
+              <span className="record-avatar" aria-hidden="true">
+                <CookingPot size={20} />
+              </span>
+              <span className="record-card__body">
                 <strong>{row.name}</strong>
                 <small>
                   {row.locationName} · order {row.displayOrder}

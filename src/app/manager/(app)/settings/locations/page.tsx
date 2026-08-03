@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { MapPin, Plus } from "@phosphor-icons/react/ssr";
 import { EmptyState, PageHeader, StatusBadge } from "@/components/ui";
 import { requireManagerPage } from "@/server/auth/authorization";
 import { listLocations } from "@/server/management/service";
@@ -14,6 +15,7 @@ export default async function LocationsPage() {
         actions={
           session.role === "owner" ? (
             <Link className="button button--primary" href="/manager/settings/locations/new">
+              <Plus size={19} aria-hidden="true" />
               Add location
             </Link>
           ) : undefined
@@ -32,7 +34,10 @@ export default async function LocationsPage() {
               href={`/manager/settings/locations/${row.id}`}
               key={row.id}
             >
-              <span>
+              <span className="record-avatar" aria-hidden="true">
+                <MapPin size={20} />
+              </span>
+              <span className="record-card__body">
                 <strong>{row.name}</strong>
                 <small>
                   {row.timezone} · {row.accessSlug}

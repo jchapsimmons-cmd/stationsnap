@@ -8,6 +8,8 @@ Phases 0 through 3 are complete. The repository now includes the project foundat
 
 The approved 20-screen mobile workflow handoff and Nocturne design system are stored in `design/stationsnap-mobile-workflows/`. New and revised screens must use that package as their visual and interaction source of truth.
 
+The Phase 1–3 application shells, authentication screens, shared controls, setup views, and people-management views use the approved Nocturne dark/light tokens and Phosphor icon system.
+
 ## Add source materials
 
 - Put product requirements and coding plans in `product/`.

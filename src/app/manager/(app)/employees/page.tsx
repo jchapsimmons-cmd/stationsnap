@@ -1,8 +1,17 @@
 import Link from "next/link";
+import { Plus } from "@phosphor-icons/react/ssr";
 import { EmptyState, PageHeader, StatusBadge } from "@/components/ui";
 import { requireManagerPage } from "@/server/auth/authorization";
 import { employeeQuerySchema } from "@/server/management/schemas";
 import { listEmployees, listLocations } from "@/server/management/service";
+
+function initials(name: string): string {
+  return name
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
+}
 
 export default async function EmployeesPage({
   searchParams,
@@ -23,10 +32,11 @@ export default async function EmployeesPage({
   return (
     <div className="page-stack">
       <PageHeader
-        title="Employees"
-        description="Manage employee access and restaurant assignments without HR or payroll data."
+        title="People"
+        description={`${rows.length} ${rows.length === 1 ? "employee" : "employees"} across your permitted locations.`}
         actions={
           <Link className="button button--primary" href="/manager/employees/new">
+            <Plus size={19} aria-hidden="true" />
             Add employee
           </Link>
         }
@@ -81,7 +91,10 @@ export default async function EmployeesPage({
         <div className="record-grid">
           {rows.map((row) => (
             <Link className="record-card" href={`/manager/employees/${row.id}`} key={row.id}>
-              <span>
+              <span className="record-avatar" aria-hidden="true">
+                {initials(row.displayName)}
+              </span>
+              <span className="record-card__body">
                 <strong>{row.displayName}</strong>
                 <small>
                   #{row.employeeNumber} · {row.jobRole} · {row.locationName}

@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { UserGear } from "@phosphor-icons/react/ssr";
 import { PageHeader, StatusBadge } from "@/components/ui";
 import { requireManagerPage } from "@/server/auth/authorization";
 import { listManagers } from "@/server/management/service";
@@ -18,7 +19,10 @@ export default async function ManagersPage() {
             href={`/manager/managers/${row.membershipId}`}
             key={row.membershipId}
           >
-            <span>
+            <span className="record-avatar" aria-hidden="true">
+              <UserGear size={20} />
+            </span>
+            <span className="record-card__body">
               <strong>{row.displayName}</strong>
               <small>
                 {row.email} · {row.role}
