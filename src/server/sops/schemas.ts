@@ -90,8 +90,39 @@ export const sopRevisionOnlySchema = z.object({
   expectedRevision: revision,
 });
 
+export const retrainingRuleTypeValues = [
+  "none",
+  "all_qualified",
+  "selected_roles",
+  "selected_locations",
+] as const;
+
+export const retrainingRuleSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("none") }),
+  z.object({ type: z.literal("all_qualified") }),
+  z.object({
+    type: z.literal("selected_roles"),
+    jobRoles: z.array(z.string().trim().min(1).max(80)).min(1).max(50),
+  }),
+  z.object({
+    type: z.literal("selected_locations"),
+    locationIds: z.array(z.uuid()).min(1).max(100),
+  }),
+]);
+
 export const sopPublishSchema = z.object({
   expectedRevision: revision.optional(),
+  changeSummary: z.string().trim().max(2_000).default(""),
+  retrainingRule: retrainingRuleSchema.default({ type: "none" }),
+});
+
+export const sopVersionIdParamSchema = z.object({
+  versionId: z.uuid(),
+});
+
+export const sopVersionCompareQuerySchema = z.object({
+  from: z.uuid(),
+  to: z.uuid(),
 });
 
 export type SopCreateInput = z.infer<typeof sopCreateSchema>;
@@ -102,3 +133,4 @@ export type SopStepUpdateInput = z.infer<typeof sopStepUpdateSchema>;
 export type SopStepReorderInput = z.infer<typeof sopStepReorderSchema>;
 export type SopRevisionOnlyInput = z.infer<typeof sopRevisionOnlySchema>;
 export type SopPublishInput = z.infer<typeof sopPublishSchema>;
+export type RetrainingRuleInput = z.infer<typeof retrainingRuleSchema>;

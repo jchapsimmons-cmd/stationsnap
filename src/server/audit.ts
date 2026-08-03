@@ -30,6 +30,8 @@ export type AuditAction =
   | "sop.archived"
   | "sop.previewed"
   | "sop.published"
+  | "sop.draft_created"
+  | "sop.version_restored"
   | "media.uploaded";
 
 export interface AuditEventInput {

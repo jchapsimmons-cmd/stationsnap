@@ -36,6 +36,12 @@ export const sopLifecycleStatus = pgEnum("sop_lifecycle_status", [
 ]);
 export const sopDifficulty = pgEnum("sop_difficulty", ["beginner", "intermediate", "advanced"]);
 export const sopMaterialKind = pgEnum("sop_material_kind", ["material", "ingredient"]);
+export const sopRetrainingRuleType = pgEnum("sop_retraining_rule_type", [
+  "none",
+  "all_qualified",
+  "selected_roles",
+  "selected_locations",
+]);
 export const fileMediaType = pgEnum("file_media_type", ["image", "video"]);
 export const fileStatus = pgEnum("file_status", ["processing", "ready", "failed"]);
 
@@ -442,6 +448,8 @@ export const sopVersions = pgTable(
     coverImageFileId: uuid("cover_image_file_id"),
     sourceVideoFileId: uuid("source_video_file_id"),
     revision: integer("revision").notNull().default(1),
+    changeSummary: text("change_summary").notNull().default(""),
+    sourceVersionId: uuid("source_version_id"),
     publishedAt: timestamp("published_at", { withTimezone: true }),
     publishedByManagerUserId: uuid("published_by_manager_user_id").references(
       () => managerUsers.id,
@@ -465,6 +473,11 @@ export const sopVersions = pgTable(
       foreignColumns: [files.id, files.organizationId],
       name: "sop_versions_source_file_org_fk",
     }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.sourceVersionId, table.sopId],
+      foreignColumns: [table.id, table.sopId],
+      name: "sop_versions_source_version_sop_fk",
+    }).onDelete("set null"),
     unique("sop_versions_sop_version_number_uidx").on(table.sopId, table.versionNumber),
     unique("sop_versions_id_sop_unique").on(table.id, table.sopId),
     unique("sop_versions_id_org_unique").on(table.id, table.organizationId),
@@ -555,5 +568,72 @@ export const sopSteps = pgTable(
       name: "sop_steps_video_file_org_fk",
     }).onDelete("restrict"),
     index("sop_steps_version_order_idx").on(table.sopVersionId, table.displayOrder),
+  ],
+);
+
+export const sopRetrainingRules = pgTable(
+  "sop_retraining_rules",
+  {
+    id: uuid("id").primaryKey(),
+    sopVersionId: uuid("sop_version_id").notNull(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    ruleType: sopRetrainingRuleType("rule_type").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.sopVersionId, table.organizationId],
+      foreignColumns: [sopVersions.id, sopVersions.organizationId],
+      name: "sop_retraining_rules_version_org_fk",
+    }).onDelete("cascade"),
+    unique("sop_retraining_rules_version_uidx").on(table.sopVersionId),
+    unique("sop_retraining_rules_id_org_unique").on(table.id, table.organizationId),
+  ],
+);
+
+export const sopRetrainingRuleRoles = pgTable(
+  "sop_retraining_rule_roles",
+  {
+    id: uuid("id").primaryKey(),
+    ruleId: uuid("rule_id").notNull(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    jobRole: text("job_role").notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.ruleId, table.organizationId],
+      foreignColumns: [sopRetrainingRules.id, sopRetrainingRules.organizationId],
+      name: "sop_retraining_rule_roles_rule_org_fk",
+    }).onDelete("cascade"),
+    unique("sop_retraining_rule_roles_rule_role_uidx").on(table.ruleId, table.jobRole),
+  ],
+);
+
+export const sopRetrainingRuleLocations = pgTable(
+  "sop_retraining_rule_locations",
+  {
+    id: uuid("id").primaryKey(),
+    ruleId: uuid("rule_id").notNull(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    locationId: uuid("location_id").notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.ruleId, table.organizationId],
+      foreignColumns: [sopRetrainingRules.id, sopRetrainingRules.organizationId],
+      name: "sop_retraining_rule_locations_rule_org_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.locationId, table.organizationId],
+      foreignColumns: [locations.id, locations.organizationId],
+      name: "sop_retraining_rule_locations_location_org_fk",
+    }).onDelete("cascade"),
+    unique("sop_retraining_rule_locations_rule_location_uidx").on(table.ruleId, table.locationId),
   ],
 );

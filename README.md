@@ -4,7 +4,9 @@ StationSnap is a mobile-first restaurant SOP, training, qualification, and check
 
 ## Repository status
 
-Phases 0 through 3 are complete. The repository now includes the project foundation, secure manager and employee authentication, and tenant-safe manager tools for organization settings, locations, stations, manager location assignments, and employees.
+Phases 0 through 5 are complete. The repository now includes the project foundation, secure manager and employee authentication, tenant-safe manager tools for organization settings, locations, stations, manager location assignments, and employees, a manual SOP draft builder, and immutable SOP publication with version history, restoration, comparison, and retraining rules.
+
+Publishing an SOP freezes an immutable version. Editing a published SOP always starts a new draft cloned from the current (or any historical) version; publishing that draft creates the next version and never mutates prior published records. Publishing an update requires a change summary and an explicit retraining rule (none, all currently qualified employees, selected job roles, or selected locations), recorded against the newly published version for later training phases to act on.
 
 The approved 20-screen mobile workflow handoff and Nocturne design system are stored in `design/stationsnap-mobile-workflows/`. New and revised screens must use that package as their visual and interaction source of truth.
 
