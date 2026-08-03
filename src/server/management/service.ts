@@ -63,7 +63,7 @@ async function auditMutation(
   });
 }
 
-async function requireActiveManagedLocation(
+export async function requireActiveManagedLocation(
   actor: ManagerSessionContext,
   locationId: string,
   requestId?: string,

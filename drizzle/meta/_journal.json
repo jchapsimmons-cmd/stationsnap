@@ -29,6 +29,13 @@
       "when": 1785717955722,
       "tag": "0003_curvy_vampiro",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1785721874352,
+      "tag": "0004_phase4_sop_builder",
+      "breakpoints": true
     }
   ]
 }

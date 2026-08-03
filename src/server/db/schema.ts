@@ -1,4 +1,5 @@
 import {
+  boolean,
   foreignKey,
   index,
   integer,
@@ -18,6 +19,25 @@ export const membershipRole = pgEnum("membership_role", ["owner", "manager"]);
 export const preferredLanguage = pgEnum("preferred_language", ["en", "es"]);
 export const actorType = pgEnum("actor_type", ["manager", "employee", "system", "anonymous"]);
 export const loginOutcome = pgEnum("login_outcome", ["success", "failure", "locked", "disabled"]);
+export const sopCategory = pgEnum("sop_category", [
+  "recipe",
+  "cleaning",
+  "opening",
+  "closing",
+  "safety",
+  "equipment",
+  "customer_service",
+  "general_procedure",
+]);
+export const sopLifecycleStatus = pgEnum("sop_lifecycle_status", [
+  "draft",
+  "published",
+  "archived",
+]);
+export const sopDifficulty = pgEnum("sop_difficulty", ["beginner", "intermediate", "advanced"]);
+export const sopMaterialKind = pgEnum("sop_material_kind", ["material", "ingredient"]);
+export const fileMediaType = pgEnum("file_media_type", ["image", "video"]);
+export const fileStatus = pgEnum("file_status", ["processing", "ready", "failed"]);
 
 const timestamps = {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -86,6 +106,7 @@ export const stations = pgTable(
     }).onDelete("restrict"),
     uniqueIndex("stations_location_name_uidx").on(table.locationId, table.name),
     uniqueIndex("stations_location_order_uidx").on(table.locationId, table.displayOrder),
+    unique("stations_id_org_location_unique").on(table.id, table.organizationId, table.locationId),
     index("stations_org_location_status_idx").on(
       table.organizationId,
       table.locationId,
@@ -331,5 +352,208 @@ export const auditEvents = pgTable(
     }).onDelete("restrict"),
     index("audit_events_org_created_idx").on(table.organizationId, table.createdAt),
     index("audit_events_action_created_idx").on(table.action, table.createdAt),
+  ],
+);
+
+export const files = pgTable(
+  "files",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    uploaderManagerUserId: uuid("uploader_manager_user_id")
+      .notNull()
+      .references(() => managerUsers.id, { onDelete: "restrict" }),
+    objectKey: text("object_key").notNull(),
+    originalName: text("original_name").notNull(),
+    mediaType: fileMediaType("media_type").notNull(),
+    mimeType: text("mime_type").notNull(),
+    byteSize: integer("byte_size").notNull(),
+    checksum: text("checksum").notNull(),
+    status: fileStatus("status").notNull().default("processing"),
+    width: integer("width"),
+    height: integer("height"),
+    durationSeconds: integer("duration_seconds"),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("files_object_key_uidx").on(table.objectKey),
+    unique("files_id_org_unique").on(table.id, table.organizationId),
+    index("files_org_status_idx").on(table.organizationId, table.status),
+  ],
+);
+
+export const sops = pgTable(
+  "sops",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    locationId: uuid("location_id").notNull(),
+    stationId: uuid("station_id"),
+    category: sopCategory("category").notNull(),
+    status: sopLifecycleStatus("status").notNull().default("draft"),
+    currentVersionId: uuid("current_version_id"),
+    createdByManagerUserId: uuid("created_by_manager_user_id")
+      .notNull()
+      .references(() => managerUsers.id, { onDelete: "restrict" }),
+    ...timestamps,
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.locationId, table.organizationId],
+      foreignColumns: [locations.id, locations.organizationId],
+      name: "sops_location_org_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.stationId, table.organizationId, table.locationId],
+      foreignColumns: [stations.id, stations.organizationId, stations.locationId],
+      name: "sops_station_org_location_fk",
+    }).onDelete("restrict"),
+    unique("sops_id_org_unique").on(table.id, table.organizationId),
+    index("sops_org_location_status_idx").on(
+      table.organizationId,
+      table.locationId,
+      table.status,
+      table.updatedAt,
+    ),
+    index("sops_org_category_idx").on(table.organizationId, table.category),
+    index("sops_org_station_idx").on(table.organizationId, table.stationId),
+  ],
+);
+
+export const sopVersions = pgTable(
+  "sop_versions",
+  {
+    id: uuid("id").primaryKey(),
+    sopId: uuid("sop_id").notNull(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    versionNumber: integer("version_number").notNull(),
+    status: sopLifecycleStatus("status").notNull().default("draft"),
+    title: text("title").notNull(),
+    description: text("description").notNull().default(""),
+    category: sopCategory("category").notNull(),
+    estimatedMinutes: integer("estimated_minutes"),
+    difficulty: sopDifficulty("difficulty").notNull().default("beginner"),
+    coverImageFileId: uuid("cover_image_file_id"),
+    sourceVideoFileId: uuid("source_video_file_id"),
+    revision: integer("revision").notNull().default(1),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    publishedByManagerUserId: uuid("published_by_manager_user_id").references(
+      () => managerUsers.id,
+      { onDelete: "restrict" },
+    ),
+    ...timestamps,
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.sopId, table.organizationId],
+      foreignColumns: [sops.id, sops.organizationId],
+      name: "sop_versions_sop_org_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.coverImageFileId, table.organizationId],
+      foreignColumns: [files.id, files.organizationId],
+      name: "sop_versions_cover_file_org_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.sourceVideoFileId, table.organizationId],
+      foreignColumns: [files.id, files.organizationId],
+      name: "sop_versions_source_file_org_fk",
+    }).onDelete("restrict"),
+    unique("sop_versions_sop_version_number_uidx").on(table.sopId, table.versionNumber),
+    unique("sop_versions_id_sop_unique").on(table.id, table.sopId),
+    unique("sop_versions_id_org_unique").on(table.id, table.organizationId),
+    index("sop_versions_org_status_idx").on(table.organizationId, table.status),
+  ],
+);
+
+export const sopMaterials = pgTable(
+  "sop_materials",
+  {
+    id: uuid("id").primaryKey(),
+    sopVersionId: uuid("sop_version_id").notNull(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    kind: sopMaterialKind("kind").notNull(),
+    name: text("name").notNull(),
+    quantity: text("quantity").notNull().default(""),
+    unit: text("unit").notNull().default(""),
+    displayOrder: integer("display_order").notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.sopVersionId, table.organizationId],
+      foreignColumns: [sopVersions.id, sopVersions.organizationId],
+      name: "sop_materials_version_org_fk",
+    }).onDelete("cascade"),
+    index("sop_materials_version_order_idx").on(table.sopVersionId, table.displayOrder),
+  ],
+);
+
+export const sopWarnings = pgTable(
+  "sop_warnings",
+  {
+    id: uuid("id").primaryKey(),
+    sopVersionId: uuid("sop_version_id").notNull(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    text: text("text").notNull(),
+    displayOrder: integer("display_order").notNull(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.sopVersionId, table.organizationId],
+      foreignColumns: [sopVersions.id, sopVersions.organizationId],
+      name: "sop_warnings_version_org_fk",
+    }).onDelete("cascade"),
+    index("sop_warnings_version_order_idx").on(table.sopVersionId, table.displayOrder),
+  ],
+);
+
+export const sopSteps = pgTable(
+  "sop_steps",
+  {
+    id: uuid("id").primaryKey(),
+    sopVersionId: uuid("sop_version_id").notNull(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    displayOrder: integer("display_order").notNull(),
+    title: text("title"),
+    instruction: text("instruction").notNull(),
+    imageFileId: uuid("image_file_id"),
+    videoFileId: uuid("video_file_id"),
+    warning: text("warning"),
+    quantity: text("quantity"),
+    unit: text("unit"),
+    equipmentSetting: text("equipment_setting"),
+    timerSeconds: integer("timer_seconds"),
+    isRequired: boolean("is_required").notNull().default(true),
+    ...timestamps,
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.sopVersionId, table.organizationId],
+      foreignColumns: [sopVersions.id, sopVersions.organizationId],
+      name: "sop_steps_version_org_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.imageFileId, table.organizationId],
+      foreignColumns: [files.id, files.organizationId],
+      name: "sop_steps_image_file_org_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.videoFileId, table.organizationId],
+      foreignColumns: [files.id, files.organizationId],
+      name: "sop_steps_video_file_org_fk",
+    }).onDelete("restrict"),
+    index("sop_steps_version_order_idx").on(table.sopVersionId, table.displayOrder),
   ],
 );

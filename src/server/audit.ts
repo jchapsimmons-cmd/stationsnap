@@ -23,7 +23,14 @@ export type AuditAction =
   | "station.archived"
   | "employee.created"
   | "employee.updated"
-  | "manager.locations_updated";
+  | "manager.locations_updated"
+  | "sop.created"
+  | "sop.updated"
+  | "sop.step_deleted"
+  | "sop.archived"
+  | "sop.previewed"
+  | "sop.published"
+  | "media.uploaded";
 
 export interface AuditEventInput {
   organizationId?: string;

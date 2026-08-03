@@ -8,6 +8,7 @@ export default async function ManagerLayout({ children }: { children: ReactNode 
   const session = await requireManagerPage("/manager");
   const navItems = [
     { href: "/manager", label: "Overview" },
+    { href: "/manager/sops", label: "SOPs" },
     { href: "/manager/settings/locations", label: "Locations" },
     { href: "/manager/settings/stations", label: "Stations" },
     { href: "/manager/employees", label: "Employees" },

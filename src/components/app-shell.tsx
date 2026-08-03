@@ -2,6 +2,7 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 import {
   Buildings,
+  ClipboardText,
   CookingPot,
   Gear,
   House,
@@ -20,6 +21,7 @@ interface NavItem {
 function NavIcon({ href }: { href: string }) {
   const props = { size: 19, weight: "regular" as const, "aria-hidden": true };
   if (href === "/manager" || href === "/employee") return <House {...props} />;
+  if (href.includes("sops")) return <ClipboardText {...props} />;
   if (href.includes("locations")) return <MapPin {...props} />;
   if (href.includes("stations")) return <CookingPot {...props} />;
   if (href.includes("employees")) return <Users {...props} />;

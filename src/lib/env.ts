@@ -20,6 +20,7 @@ const serverEnvSchema = z
     SMTP_USER: optionalNonEmpty,
     SMTP_PASSWORD: optionalNonEmpty,
     SMTP_FROM: optionalNonEmpty,
+    MEDIA_STORAGE_DIR: z.string().min(1).default("uploads"),
   })
   .superRefine((value, context) => {
     const smtpValues = [value.SMTP_HOST, value.SMTP_USER, value.SMTP_PASSWORD, value.SMTP_FROM];
