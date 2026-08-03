@@ -9,6 +9,9 @@ import {
   files,
   locations,
   sopMaterials,
+  sopRetrainingRuleLocations,
+  sopRetrainingRuleRoles,
+  sopRetrainingRules,
   sops,
   sopSteps,
   sopVersions,
@@ -17,8 +20,10 @@ import {
 } from "@/server/db/schema";
 import { getManagedLocationIds, requireActiveManagedLocation } from "@/server/management/service";
 import type {
+  RetrainingRuleInput,
   SopCreateInput,
   SopDraftUpdateInput,
+  SopPublishInput,
   SopQuery,
   SopStepCreateInput,
   SopStepUpdateInput,
@@ -34,7 +39,9 @@ async function auditSop(
     | "sop.step_deleted"
     | "sop.archived"
     | "sop.previewed"
-    | "sop.published",
+    | "sop.published"
+    | "sop.draft_created"
+    | "sop.version_restored",
   sopId: string,
   locationId?: string,
   requestId?: string,
@@ -119,15 +126,51 @@ async function requireManageableSop(actor: ManagerSessionContext, sopId: string)
   return detail;
 }
 
+async function findDraftVersion(organizationId: string, sopId: string) {
+  const [row] = await getDb()
+    .select()
+    .from(sopVersions)
+    .where(
+      and(
+        eq(sopVersions.sopId, sopId),
+        eq(sopVersions.organizationId, organizationId),
+        eq(sopVersions.status, "draft"),
+      ),
+    )
+    .limit(1);
+  return row ?? null;
+}
+
+async function findVersionById(organizationId: string, sopId: string, versionId: string) {
+  const [row] = await getDb()
+    .select()
+    .from(sopVersions)
+    .where(
+      and(
+        eq(sopVersions.id, versionId),
+        eq(sopVersions.sopId, sopId),
+        eq(sopVersions.organizationId, organizationId),
+      ),
+    )
+    .limit(1);
+  return row ?? null;
+}
+
 async function requireDraftForEdit(actor: ManagerSessionContext, sopId: string) {
-  const detail = await requireManageableSop(actor, sopId);
-  if (detail.version.status !== "draft") {
+  const base = await requireManageableSop(actor, sopId);
+  const draftVersion = await findDraftVersion(actor.organizationId, sopId);
+  if (!draftVersion) {
     throw new AppError(
       "CONFLICT",
-      "Published SOPs are read-only in this phase. Archive and create a new SOP to make changes.",
+      "This SOP does not have a draft in progress. Start a new draft to make changes.",
     );
   }
-  return detail;
+  return {
+    sop: base.sop,
+    version: draftVersion,
+    locationName: base.locationName,
+    stationName: base.stationName,
+  };
 }
 
 async function bumpRevision(
@@ -316,8 +359,14 @@ async function loadFileSummaries(organizationId: string, fileIds: readonly (stri
   return new Map(rows.map((row) => [row.id, row]));
 }
 
-export async function getSop(actor: ManagerSessionContext, sopId: string) {
-  const detail = await requireManageableSop(actor, sopId);
+interface SopDetailBase {
+  sop: typeof sops.$inferSelect;
+  version: typeof sopVersions.$inferSelect;
+  locationName: string;
+  stationName: string | null;
+}
+
+async function buildSopDetail(actor: ManagerSessionContext, detail: SopDetailBase) {
   const [steps, materials, warnings] = await Promise.all([
     getDb()
       .select()
@@ -349,6 +398,7 @@ export async function getSop(actor: ManagerSessionContext, sopId: string) {
     stationName: detail.stationName,
     category: detail.sop.category,
     status: detail.sop.status,
+    currentVersionId: detail.sop.currentVersionId,
     createdByManagerUserId: detail.sop.createdByManagerUserId,
     version: {
       ...detail.version,
@@ -367,6 +417,26 @@ export async function getSop(actor: ManagerSessionContext, sopId: string) {
     materials,
     warnings,
   };
+}
+
+export async function getSop(actor: ManagerSessionContext, sopId: string) {
+  const detail = await requireManageableSop(actor, sopId);
+  return buildSopDetail(actor, detail);
+}
+
+/** The in-progress draft version, distinct from the SOP's current published version. */
+export async function getSopDraft(actor: ManagerSessionContext, sopId: string) {
+  const detail = await requireDraftForEdit(actor, sopId);
+  return buildSopDetail(actor, detail);
+}
+
+/** Whether this SOP currently has a draft version, whatever the SOP's overall status. */
+export async function hasDraftVersion(
+  actor: ManagerSessionContext,
+  sopId: string,
+): Promise<boolean> {
+  await requireManageableSop(actor, sopId);
+  return Boolean(await findDraftVersion(actor.organizationId, sopId));
 }
 
 export async function createSop(
@@ -476,7 +546,7 @@ export async function autosaveSopDraft(
   });
 
   await auditSop(actor, "sop.updated", sopId, nextLocationId, requestId);
-  return getSop(actor, sopId);
+  return getSopDraft(actor, sopId);
 }
 
 export async function createStep(
@@ -515,7 +585,7 @@ export async function createStep(
   });
 
   await auditSop(actor, "sop.updated", sopId, detail.sop.locationId, requestId);
-  return getSop(actor, sopId);
+  return getSopDraft(actor, sopId);
 }
 
 export async function updateStep(
@@ -552,7 +622,7 @@ export async function updateStep(
   });
 
   await auditSop(actor, "sop.updated", sopId, detail.sop.locationId, requestId);
-  return getSop(actor, sopId);
+  return getSopDraft(actor, sopId);
 }
 
 export async function duplicateStep(
@@ -596,7 +666,7 @@ export async function duplicateStep(
   });
 
   await auditSop(actor, "sop.updated", sopId, detail.sop.locationId, requestId);
-  return getSop(actor, sopId);
+  return getSopDraft(actor, sopId);
 }
 
 export async function deleteStep(
@@ -631,7 +701,7 @@ export async function deleteStep(
   });
 
   await auditSop(actor, "sop.step_deleted", sopId, detail.sop.locationId, requestId);
-  return getSop(actor, sopId);
+  return getSopDraft(actor, sopId);
 }
 
 export async function reorderSteps(
@@ -665,11 +735,16 @@ export async function reorderSteps(
   });
 
   await auditSop(actor, "sop.updated", sopId, detail.sop.locationId, requestId);
-  return getSop(actor, sopId);
+  return getSopDraft(actor, sopId);
 }
 
+/** Previews the in-progress draft when one exists, otherwise the current published version. */
 export async function previewSop(actor: ManagerSessionContext, sopId: string, requestId?: string) {
-  const detail = await getSop(actor, sopId);
+  const base = await requireManageableSop(actor, sopId);
+  const draft = await findDraftVersion(actor.organizationId, sopId);
+  const detail = draft
+    ? await buildSopDetail(actor, { ...base, version: draft })
+    : await buildSopDetail(actor, base);
   await auditSop(actor, "sop.previewed", sopId, detail.locationId, requestId);
   return detail;
 }
@@ -681,11 +756,18 @@ export interface SopPublishIssue {
 
 async function evaluatePublishReadiness(
   organizationId: string,
-  detail: NonNullable<Awaited<ReturnType<typeof loadSopDetail>>>,
+  detail: SopDetailBase,
+  options: { requireChangeSummary: boolean; changeSummary: string },
 ): Promise<SopPublishIssue[]> {
   const issues: SopPublishIssue[] = [];
   if (!detail.version.title.trim()) {
     issues.push({ code: "title", message: "The SOP needs a title." });
+  }
+  if (options.requireChangeSummary && !options.changeSummary.trim()) {
+    issues.push({
+      code: "change_summary",
+      message: "Describe what changed in this version before publishing an update.",
+    });
   }
 
   const steps = await getDb()
@@ -727,37 +809,117 @@ async function evaluatePublishReadiness(
 }
 
 export async function getPublishReadiness(actor: ManagerSessionContext, sopId: string) {
-  const detail = await requireManageableSop(actor, sopId);
-  const issues =
-    detail.version.status === "draft"
-      ? await evaluatePublishReadiness(actor.organizationId, detail)
-      : [];
+  const base = await requireManageableSop(actor, sopId);
+  const draft = await findDraftVersion(actor.organizationId, sopId);
+  const isUpdate = base.sop.status === "published" || base.sop.status === "archived";
+  if (!draft) {
+    return {
+      sopId,
+      status: base.sop.status,
+      hasDraft: false,
+      isUpdate,
+      versionNumber: base.version.versionNumber,
+      revision: base.version.revision,
+      canPublish: false,
+      issues: [] as SopPublishIssue[],
+    };
+  }
+  const issues = await evaluatePublishReadiness(
+    actor.organizationId,
+    { ...base, version: draft },
+    { requireChangeSummary: isUpdate, changeSummary: draft.changeSummary },
+  );
+  // The change summary is filled in on the publish form itself, so it must not permanently
+  // disable the submit button before the manager has had a chance to type it in. The form
+  // enforces it client-side, and publishSop enforces it again server-side at submit time.
+  const structuralIssues = issues.filter((issue) => issue.code !== "change_summary");
   return {
     sopId,
-    status: detail.version.status,
-    revision: detail.version.revision,
-    canPublish: detail.version.status === "draft" && issues.length === 0,
+    status: draft.status,
+    hasDraft: true,
+    isUpdate,
+    versionNumber: draft.versionNumber,
+    revision: draft.revision,
+    canPublish: structuralIssues.length === 0,
     issues,
   };
+}
+
+async function persistRetrainingRule(
+  tx: Tx,
+  organizationId: string,
+  sopVersionId: string,
+  rule: RetrainingRuleInput,
+): Promise<void> {
+  if (rule.type === "none") return;
+  const ruleId = randomUUID();
+  await tx.insert(sopRetrainingRules).values({
+    id: ruleId,
+    sopVersionId,
+    organizationId,
+    ruleType: rule.type,
+  });
+  if (rule.type === "selected_roles") {
+    await tx.insert(sopRetrainingRuleRoles).values(
+      rule.jobRoles.map((jobRole) => ({
+        id: randomUUID(),
+        ruleId,
+        organizationId,
+        jobRole,
+      })),
+    );
+  }
+  if (rule.type === "selected_locations") {
+    await tx.insert(sopRetrainingRuleLocations).values(
+      rule.locationIds.map((locationId) => ({
+        id: randomUUID(),
+        ruleId,
+        organizationId,
+        locationId,
+      })),
+    );
+  }
 }
 
 export async function publishSop(
   actor: ManagerSessionContext,
   sopId: string,
-  expectedRevision: number | undefined,
+  input: SopPublishInput,
   requestId?: string,
 ) {
-  const detail = await requireManageableSop(actor, sopId);
-  if (detail.version.status !== "draft") {
-    throw new AppError("CONFLICT", "This SOP is not a draft.");
+  const base = await requireManageableSop(actor, sopId);
+  if (base.sop.status === "archived") {
+    throw new AppError("CONFLICT", "Archived SOPs cannot be published.");
   }
-  if (expectedRevision !== undefined && expectedRevision !== detail.version.revision) {
+  const draft = await findDraftVersion(actor.organizationId, sopId);
+  if (!draft) {
+    throw new AppError("CONFLICT", "This SOP does not have a draft to publish.");
+  }
+  if (input.expectedRevision !== undefined && input.expectedRevision !== draft.revision) {
     throw new AppError("CONFLICT", "This SOP draft changed elsewhere. Reload to continue.", {
-      details: { currentRevision: detail.version.revision },
+      details: { currentRevision: draft.revision },
     });
   }
 
-  const issues = await evaluatePublishReadiness(actor.organizationId, detail);
+  const isUpdate = base.sop.status === "published";
+  if (!isUpdate && input.retrainingRule.type !== "none") {
+    throw new AppError(
+      "BAD_REQUEST",
+      "A retraining rule only applies when publishing an update to a previously published SOP.",
+    );
+  }
+  if (input.retrainingRule.type === "selected_locations") {
+    const managedIds = new Set(await getManagedLocationIds(actor));
+    if (input.retrainingRule.locationIds.some((locationId) => !managedIds.has(locationId))) {
+      throw new AppError("FORBIDDEN", "You do not have access to one of the selected locations.");
+    }
+  }
+
+  const issues = await evaluatePublishReadiness(
+    actor.organizationId,
+    { ...base, version: draft },
+    { requireChangeSummary: isUpdate, changeSummary: input.changeSummary },
+  );
   if (issues.length > 0) {
     throw new AppError("VALIDATION_ERROR", "Fix the issues below before publishing.", {
       details: { issues },
@@ -771,14 +933,15 @@ export async function publishSop(
         status: "published",
         publishedAt: new Date(),
         publishedByManagerUserId: actor.managerUserId,
-        revision: detail.version.revision + 1,
+        changeSummary: input.changeSummary,
+        revision: draft.revision + 1,
         updatedAt: new Date(),
       })
       .where(
         and(
-          eq(sopVersions.id, detail.version.id),
+          eq(sopVersions.id, draft.id),
           eq(sopVersions.organizationId, actor.organizationId),
-          eq(sopVersions.revision, detail.version.revision),
+          eq(sopVersions.revision, draft.revision),
           eq(sopVersions.status, "draft"),
         ),
       )
@@ -788,11 +951,14 @@ export async function publishSop(
     }
     await tx
       .update(sops)
-      .set({ status: "published", updatedAt: new Date() })
+      .set({ status: "published", currentVersionId: draft.id, updatedAt: new Date() })
       .where(eq(sops.id, sopId));
+    if (isUpdate) {
+      await persistRetrainingRule(tx, actor.organizationId, draft.id, input.retrainingRule);
+    }
   });
 
-  await auditSop(actor, "sop.published", sopId, detail.sop.locationId, requestId);
+  await auditSop(actor, "sop.published", sopId, base.sop.locationId, requestId);
   return getSop(actor, sopId);
 }
 
@@ -801,6 +967,7 @@ export async function archiveSop(actor: ManagerSessionContext, sopId: string, re
   if (detail.sop.status === "archived") {
     throw new AppError("CONFLICT", "This SOP is already archived.");
   }
+  const draft = await findDraftVersion(actor.organizationId, sopId);
   await getDb().transaction(async (tx) => {
     await tx
       .update(sops)
@@ -810,7 +977,377 @@ export async function archiveSop(actor: ManagerSessionContext, sopId: string, re
       .update(sopVersions)
       .set({ status: "archived", updatedAt: new Date() })
       .where(eq(sopVersions.id, detail.version.id));
+    if (draft && draft.id !== detail.version.id) {
+      await tx
+        .update(sopVersions)
+        .set({ status: "archived", updatedAt: new Date() })
+        .where(eq(sopVersions.id, draft.id));
+    }
   });
   await auditSop(actor, "sop.archived", sopId, detail.sop.locationId, requestId);
   return getSop(actor, sopId);
+}
+
+async function cloneVersionIntoNewDraft(
+  tx: Tx,
+  organizationId: string,
+  sopId: string,
+  sourceVersion: typeof sopVersions.$inferSelect,
+  nextVersionNumber: number,
+): Promise<string> {
+  const versionId = randomUUID();
+  await tx.insert(sopVersions).values({
+    id: versionId,
+    sopId,
+    organizationId,
+    versionNumber: nextVersionNumber,
+    status: "draft",
+    title: sourceVersion.title,
+    description: sourceVersion.description,
+    category: sourceVersion.category,
+    estimatedMinutes: sourceVersion.estimatedMinutes,
+    difficulty: sourceVersion.difficulty,
+    coverImageFileId: sourceVersion.coverImageFileId,
+    sourceVideoFileId: sourceVersion.sourceVideoFileId,
+    sourceVersionId: sourceVersion.id,
+  });
+  const [materials, warnings, steps] = await Promise.all([
+    tx
+      .select()
+      .from(sopMaterials)
+      .where(eq(sopMaterials.sopVersionId, sourceVersion.id))
+      .orderBy(asc(sopMaterials.displayOrder)),
+    tx
+      .select()
+      .from(sopWarnings)
+      .where(eq(sopWarnings.sopVersionId, sourceVersion.id))
+      .orderBy(asc(sopWarnings.displayOrder)),
+    tx
+      .select()
+      .from(sopSteps)
+      .where(eq(sopSteps.sopVersionId, sourceVersion.id))
+      .orderBy(asc(sopSteps.displayOrder)),
+  ]);
+  if (materials.length > 0) {
+    await tx.insert(sopMaterials).values(
+      materials.map((material) => ({
+        id: randomUUID(),
+        sopVersionId: versionId,
+        organizationId,
+        kind: material.kind,
+        name: material.name,
+        quantity: material.quantity,
+        unit: material.unit,
+        displayOrder: material.displayOrder,
+      })),
+    );
+  }
+  if (warnings.length > 0) {
+    await tx.insert(sopWarnings).values(
+      warnings.map((warning) => ({
+        id: randomUUID(),
+        sopVersionId: versionId,
+        organizationId,
+        text: warning.text,
+        displayOrder: warning.displayOrder,
+      })),
+    );
+  }
+  if (steps.length > 0) {
+    await tx.insert(sopSteps).values(
+      steps.map((step) => ({
+        id: randomUUID(),
+        sopVersionId: versionId,
+        organizationId,
+        displayOrder: step.displayOrder,
+        title: step.title,
+        instruction: step.instruction,
+        imageFileId: step.imageFileId,
+        videoFileId: step.videoFileId,
+        warning: step.warning,
+        quantity: step.quantity,
+        unit: step.unit,
+        equipmentSetting: step.equipmentSetting,
+        timerSeconds: step.timerSeconds,
+        isRequired: step.isRequired,
+      })),
+    );
+  }
+  return versionId;
+}
+
+async function createDraftFromVersion(
+  actor: ManagerSessionContext,
+  sopId: string,
+  sourceVersionId: string,
+  requestId?: string,
+) {
+  const base = await requireManageableSop(actor, sopId);
+  if (base.sop.status === "archived") {
+    throw new AppError("CONFLICT", "Archived SOPs cannot start a new draft.");
+  }
+  const existingDraft = await findDraftVersion(actor.organizationId, sopId);
+  if (existingDraft) {
+    throw new AppError("CONFLICT", "This SOP already has a draft in progress.");
+  }
+  const sourceVersion = await findVersionById(actor.organizationId, sopId, sourceVersionId);
+  if (!sourceVersion) throw new AppError("NOT_FOUND", "Version not found.");
+  if (sourceVersion.status === "draft") {
+    throw new AppError("CONFLICT", "That version is already a draft.");
+  }
+
+  const [maxOrderRow] = await getDb()
+    .select({ maxVersion: sql<number>`coalesce(max(${sopVersions.versionNumber}), 0)` })
+    .from(sopVersions)
+    .where(eq(sopVersions.sopId, sopId));
+  const nextVersionNumber = (maxOrderRow?.maxVersion ?? 0) + 1;
+
+  await getDb().transaction((tx) =>
+    cloneVersionIntoNewDraft(tx, actor.organizationId, sopId, sourceVersion, nextVersionNumber),
+  );
+
+  const isRestoration = sourceVersionId !== base.sop.currentVersionId;
+  await auditSop(
+    actor,
+    isRestoration ? "sop.version_restored" : "sop.draft_created",
+    sopId,
+    base.sop.locationId,
+    requestId,
+  );
+  return getSopDraft(actor, sopId);
+}
+
+/** Starts a new editable draft cloned from the SOP's current published version. */
+export async function createDraftFromCurrentVersion(
+  actor: ManagerSessionContext,
+  sopId: string,
+  requestId?: string,
+) {
+  const base = await requireManageableSop(actor, sopId);
+  if (base.sop.status !== "published" || !base.sop.currentVersionId) {
+    throw new AppError("CONFLICT", "Only published SOPs can start a new draft this way.");
+  }
+  return createDraftFromVersion(actor, sopId, base.sop.currentVersionId, requestId);
+}
+
+/** Restores any historical version by cloning it into a new editable draft. */
+export async function restoreSopVersion(
+  actor: ManagerSessionContext,
+  sopId: string,
+  versionId: string,
+  requestId?: string,
+) {
+  return createDraftFromVersion(actor, sopId, versionId, requestId);
+}
+
+export async function listSopVersions(actor: ManagerSessionContext, sopId: string) {
+  const base = await requireManageableSop(actor, sopId);
+  const versions = await getDb()
+    .select({
+      id: sopVersions.id,
+      versionNumber: sopVersions.versionNumber,
+      status: sopVersions.status,
+      title: sopVersions.title,
+      changeSummary: sopVersions.changeSummary,
+      sourceVersionId: sopVersions.sourceVersionId,
+      revision: sopVersions.revision,
+      publishedAt: sopVersions.publishedAt,
+      createdAt: sopVersions.createdAt,
+      updatedAt: sopVersions.updatedAt,
+    })
+    .from(sopVersions)
+    .where(and(eq(sopVersions.sopId, sopId), eq(sopVersions.organizationId, actor.organizationId)))
+    .orderBy(desc(sopVersions.versionNumber));
+  return { sopId, currentVersionId: base.sop.currentVersionId, versions };
+}
+
+export async function getSopVersionDetail(
+  actor: ManagerSessionContext,
+  sopId: string,
+  versionId: string,
+) {
+  const base = await requireManageableSop(actor, sopId);
+  const version = await findVersionById(actor.organizationId, sopId, versionId);
+  if (!version) throw new AppError("NOT_FOUND", "Version not found.");
+  const detail = await buildSopDetail(actor, { ...base, version });
+  const retrainingRule = await loadRetrainingRule(actor.organizationId, version.id);
+  return { ...detail, isCurrent: version.id === base.sop.currentVersionId, retrainingRule };
+}
+
+async function loadRetrainingRule(organizationId: string, sopVersionId: string) {
+  const [rule] = await getDb()
+    .select({ id: sopRetrainingRules.id, ruleType: sopRetrainingRules.ruleType })
+    .from(sopRetrainingRules)
+    .where(
+      and(
+        eq(sopRetrainingRules.sopVersionId, sopVersionId),
+        eq(sopRetrainingRules.organizationId, organizationId),
+      ),
+    )
+    .limit(1);
+  if (!rule) return null;
+  const [jobRoles, locationRows] = await Promise.all([
+    rule.ruleType === "selected_roles"
+      ? getDb()
+          .select({ jobRole: sopRetrainingRuleRoles.jobRole })
+          .from(sopRetrainingRuleRoles)
+          .where(eq(sopRetrainingRuleRoles.ruleId, rule.id))
+      : Promise.resolve([] as { jobRole: string }[]),
+    rule.ruleType === "selected_locations"
+      ? getDb()
+          .select({
+            locationId: sopRetrainingRuleLocations.locationId,
+            locationName: locations.name,
+          })
+          .from(sopRetrainingRuleLocations)
+          .innerJoin(
+            locations,
+            and(
+              eq(locations.id, sopRetrainingRuleLocations.locationId),
+              eq(locations.organizationId, sopRetrainingRuleLocations.organizationId),
+            ),
+          )
+          .where(eq(sopRetrainingRuleLocations.ruleId, rule.id))
+      : Promise.resolve([] as { locationId: string; locationName: string }[]),
+  ]);
+  return {
+    ruleType: rule.ruleType,
+    jobRoles: jobRoles.map((row) => row.jobRole),
+    locations: locationRows,
+  };
+}
+
+export interface SopVersionFieldDiff {
+  field: string;
+  before: unknown;
+  after: unknown;
+}
+
+export interface SopVersionListDiffEntry<T> {
+  status: "unchanged" | "changed" | "added" | "removed";
+  before: T | null;
+  after: T | null;
+  changedFields: string[];
+}
+
+function diffByPosition<T extends Record<string, unknown>>(
+  before: readonly T[],
+  after: readonly T[],
+  fields: readonly (keyof T)[],
+): SopVersionListDiffEntry<T>[] {
+  const length = Math.max(before.length, after.length);
+  const entries: SopVersionListDiffEntry<T>[] = [];
+  for (let index = 0; index < length; index += 1) {
+    const beforeRow = before[index] ?? null;
+    const afterRow = after[index] ?? null;
+    if (beforeRow && !afterRow) {
+      entries.push({ status: "removed", before: beforeRow, after: null, changedFields: [] });
+      continue;
+    }
+    if (!beforeRow && afterRow) {
+      entries.push({ status: "added", before: null, after: afterRow, changedFields: [] });
+      continue;
+    }
+    if (beforeRow && afterRow) {
+      const changedFields = fields.filter((field) => beforeRow[field] !== afterRow[field]);
+      entries.push({
+        status: changedFields.length > 0 ? "changed" : "unchanged",
+        before: beforeRow,
+        after: afterRow,
+        changedFields: changedFields as string[],
+      });
+    }
+  }
+  return entries;
+}
+
+const VERSION_FIELD_DIFF_KEYS = [
+  "title",
+  "description",
+  "category",
+  "estimatedMinutes",
+  "difficulty",
+] as const;
+
+const STEP_DIFF_FIELDS = [
+  "title",
+  "instruction",
+  "warning",
+  "quantity",
+  "unit",
+  "equipmentSetting",
+  "timerSeconds",
+  "isRequired",
+  "imageFileId",
+  "videoFileId",
+] as const;
+
+export async function compareSopVersions(
+  actor: ManagerSessionContext,
+  sopId: string,
+  fromVersionId: string,
+  toVersionId: string,
+) {
+  await requireManageableSop(actor, sopId);
+  const [fromVersion, toVersion] = await Promise.all([
+    findVersionById(actor.organizationId, sopId, fromVersionId),
+    findVersionById(actor.organizationId, sopId, toVersionId),
+  ]);
+  if (!fromVersion || !toVersion) throw new AppError("NOT_FOUND", "Version not found.");
+
+  const [fromSteps, toSteps, fromMaterials, toMaterials, fromWarnings, toWarnings] =
+    await Promise.all([
+      getDb()
+        .select()
+        .from(sopSteps)
+        .where(eq(sopSteps.sopVersionId, fromVersion.id))
+        .orderBy(asc(sopSteps.displayOrder)),
+      getDb()
+        .select()
+        .from(sopSteps)
+        .where(eq(sopSteps.sopVersionId, toVersion.id))
+        .orderBy(asc(sopSteps.displayOrder)),
+      getDb()
+        .select()
+        .from(sopMaterials)
+        .where(eq(sopMaterials.sopVersionId, fromVersion.id))
+        .orderBy(asc(sopMaterials.displayOrder)),
+      getDb()
+        .select()
+        .from(sopMaterials)
+        .where(eq(sopMaterials.sopVersionId, toVersion.id))
+        .orderBy(asc(sopMaterials.displayOrder)),
+      getDb()
+        .select()
+        .from(sopWarnings)
+        .where(eq(sopWarnings.sopVersionId, fromVersion.id))
+        .orderBy(asc(sopWarnings.displayOrder)),
+      getDb()
+        .select()
+        .from(sopWarnings)
+        .where(eq(sopWarnings.sopVersionId, toVersion.id))
+        .orderBy(asc(sopWarnings.displayOrder)),
+    ]);
+
+  const fieldDiffs: SopVersionFieldDiff[] = VERSION_FIELD_DIFF_KEYS.filter(
+    (field) => fromVersion[field] !== toVersion[field],
+  ).map((field) => ({ field, before: fromVersion[field], after: toVersion[field] }));
+
+  return {
+    from: {
+      id: fromVersion.id,
+      versionNumber: fromVersion.versionNumber,
+      title: fromVersion.title,
+    },
+    to: {
+      id: toVersion.id,
+      versionNumber: toVersion.versionNumber,
+      title: toVersion.title,
+      changeSummary: toVersion.changeSummary,
+    },
+    fieldDiffs,
+    stepDiffs: diffByPosition(fromSteps, toSteps, STEP_DIFF_FIELDS),
+    materialDiffs: diffByPosition(fromMaterials, toMaterials, ["kind", "name", "quantity", "unit"]),
+    warningDiffs: diffByPosition(fromWarnings, toWarnings, ["text"]),
+  };
 }

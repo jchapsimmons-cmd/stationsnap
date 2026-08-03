@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  retrainingRuleSchema,
   sopCreateSchema,
   sopDraftUpdateSchema,
+  sopPublishSchema,
   sopQuerySchema,
   sopStepCreateSchema,
   sopStepReorderSchema,
+  sopVersionCompareQuerySchema,
 } from "@/server/sops/schemas";
 
 const baseCreate = {
@@ -81,5 +84,42 @@ describe("Phase 4 SOP schemas", () => {
 
   it("requires at least one step id when reordering", () => {
     expect(() => sopStepReorderSchema.parse({ orderedStepIds: [], expectedRevision: 1 })).toThrow();
+  });
+});
+
+describe("Phase 5 SOP version schemas", () => {
+  it("defaults the publish change summary and retraining rule", () => {
+    const parsed = sopPublishSchema.parse({});
+    expect(parsed.changeSummary).toBe("");
+    expect(parsed.retrainingRule).toEqual({ type: "none" });
+  });
+
+  it("accepts a selected-roles retraining rule with at least one role", () => {
+    const parsed = retrainingRuleSchema.parse({ type: "selected_roles", jobRoles: ["Cook"] });
+    expect(parsed).toEqual({ type: "selected_roles", jobRoles: ["Cook"] });
+    expect(() => retrainingRuleSchema.parse({ type: "selected_roles", jobRoles: [] })).toThrow();
+  });
+
+  it("accepts a selected-locations retraining rule with at least one location", () => {
+    const locationId = crypto.randomUUID();
+    const parsed = retrainingRuleSchema.parse({
+      type: "selected_locations",
+      locationIds: [locationId],
+    });
+    expect(parsed).toEqual({ type: "selected_locations", locationIds: [locationId] });
+    expect(() =>
+      retrainingRuleSchema.parse({ type: "selected_locations", locationIds: [] }),
+    ).toThrow();
+  });
+
+  it("rejects an unknown retraining rule type", () => {
+    expect(() => retrainingRuleSchema.parse({ type: "everyone" })).toThrow();
+  });
+
+  it("requires both version ids to compare", () => {
+    expect(() => sopVersionCompareQuerySchema.parse({ from: crypto.randomUUID() })).toThrow();
+    const from = crypto.randomUUID();
+    const to = crypto.randomUUID();
+    expect(sopVersionCompareQuerySchema.parse({ from, to })).toEqual({ from, to });
   });
 });

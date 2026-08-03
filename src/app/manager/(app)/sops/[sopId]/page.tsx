@@ -1,27 +1,34 @@
 import Link from "next/link";
 import { ArchiveButton } from "@/components/sops/archive-button";
+import { CreateDraftButton } from "@/components/sops/create-draft-button";
 import { categoryLabel, difficultyLabel } from "@/components/sops/options";
 import { Card, PageHeader, StatusBadge } from "@/components/ui";
 import { requireManagerPage } from "@/server/auth/authorization";
-import { getSop } from "@/server/sops/service";
+import { getSop, hasDraftVersion } from "@/server/sops/service";
 
 export default async function SopOverviewPage({ params }: { params: Promise<{ sopId: string }> }) {
   const { sopId } = await params;
   const session = await requireManagerPage(`/manager/sops/${sopId}`);
   const sop = await getSop(session, sopId);
-  const isDraft = sop.version.status === "draft";
+  const isPreFirstPublishDraft = sop.status === "draft";
+  const draftInProgress =
+    sop.status === "published" ? await hasDraftVersion(session, sopId) : false;
+  const canEdit = isPreFirstPublishDraft || draftInProgress;
 
   return (
     <div className="page-stack">
       <PageHeader
         title={sop.version.title}
-        description={`${categoryLabel(sop.category)} · ${sop.locationName}${sop.stationName ? ` · ${sop.stationName}` : ""}`}
+        description={`${categoryLabel(sop.category)} · ${sop.locationName}${sop.stationName ? ` · ${sop.stationName}` : ""} · Version ${sop.version.versionNumber}`}
         actions={
           <div className="action-row">
             <Link className="button button--secondary" href={`/manager/sops/${sop.id}/preview`}>
               Preview
             </Link>
-            {isDraft && (
+            <Link className="button button--secondary" href={`/manager/sops/${sop.id}/versions`}>
+              Versions
+            </Link>
+            {canEdit && (
               <>
                 <Link className="button button--secondary" href={`/manager/sops/${sop.id}/edit`}>
                   Edit details
@@ -71,6 +78,13 @@ export default async function SopOverviewPage({ params }: { params: Promise<{ so
         <Card>
           <h2>Description</h2>
           <p>{sop.version.description}</p>
+        </Card>
+      )}
+      {sop.status === "published" && !draftInProgress && (
+        <Card>
+          <h2>Update this SOP</h2>
+          <p>Start a new draft to change published content. The live version stays unaffected.</p>
+          <CreateDraftButton sopId={sop.id} redirectTo={`/manager/sops/${sop.id}/edit`} />
         </Card>
       )}
       {sop.status !== "archived" && (

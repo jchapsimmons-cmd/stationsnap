@@ -47,16 +47,23 @@ import { files as filesTable } from "@/server/db/schema";
 import {
   archiveSop,
   autosaveSopDraft,
+  compareSopVersions,
+  createDraftFromCurrentVersion,
   createSop,
   createStep,
   deleteStep,
   duplicateStep,
   getPublishReadiness,
   getSop,
+  getSopDraft,
+  getSopVersionDetail,
+  hasDraftVersion,
   listSops,
+  listSopVersions,
   previewSop,
   publishSop,
   reorderSteps,
+  restoreSopVersion,
   updateStep,
 } from "@/server/sops/service";
 import { uploadMedia } from "@/server/storage/media-service";
@@ -100,6 +107,9 @@ async function verifyUpgradeMigration(): Promise<void> {
     await pool.query(await readFile(path.resolve("drizzle", "0003_curvy_vampiro.sql"), "utf8"));
     await pool.query(
       await readFile(path.resolve("drizzle", "0004_phase4_sop_builder.sql"), "utf8"),
+    );
+    await pool.query(
+      await readFile(path.resolve("drizzle", "0005_phase5_versions_and_retraining.sql"), "utf8"),
     );
     const result = await pool.query<{ organization_slug: string; location_slug: string }>(
       `select o.access_slug as organization_slug, l.access_slug as location_slug from organizations o join locations l on l.organization_id = o.id`,
@@ -729,7 +739,12 @@ async function verifyDatabase(): Promise<void> {
 
   let publishWithoutStepsRejected = false;
   try {
-    await publishSop(managerContext, sopDraft.id, undefined, "verify-publish-no-steps");
+    await publishSop(
+      managerContext,
+      sopDraft.id,
+      { changeSummary: "", retrainingRule: { type: "none" } },
+      "verify-publish-no-steps",
+    );
   } catch {
     publishWithoutStepsRejected = true;
   }
@@ -847,7 +862,11 @@ async function verifyDatabase(): Promise<void> {
     await publishSop(
       managerContext,
       sopDraft.id,
-      finalStep.version.revision - 1,
+      {
+        expectedRevision: finalStep.version.revision - 1,
+        changeSummary: "",
+        retrainingRule: { type: "none" },
+      },
       "verify-publish-stale",
     );
   } catch {
@@ -860,7 +879,11 @@ async function verifyDatabase(): Promise<void> {
   const published = await publishSop(
     managerContext,
     sopDraft.id,
-    finalStep.version.revision,
+    {
+      expectedRevision: finalStep.version.revision,
+      changeSummary: "",
+      retrainingRule: { type: "none" },
+    },
     "verify-publish-success",
   );
   if (published.status !== "published" || published.version.status !== "published") {
@@ -1089,7 +1112,11 @@ async function verifyDatabase(): Promise<void> {
     await publishSop(
       managerContext,
       stalledDraft.id,
-      stalledDraft.version.revision + 1,
+      {
+        expectedRevision: stalledDraft.version.revision + 1,
+        changeSummary: "",
+        retrainingRule: { type: "none" },
+      },
       "verify-publish-stalled-media",
     );
   } catch {
@@ -1100,6 +1127,357 @@ async function verifyDatabase(): Promise<void> {
 
   const previewed = await previewSop(managerContext, secondDraft.id, "verify-sop-preview");
   if (previewed.id !== secondDraft.id) throw new Error("SOP preview did not return the SOP");
+
+  // --- Phase 5: immutable versions, restoration, comparison, and retraining rules ---
+
+  const versionedDraft = await createSop(
+    managerContext,
+    {
+      title: "Fryer oil change",
+      description: "Weekly fryer oil replacement",
+      category: "cleaning",
+      locationId: seedIds.locations.downtown,
+      stationId: seedIds.stations.fry,
+      estimatedMinutes: 20,
+      difficulty: "intermediate",
+      coverImageFileId: null,
+      sourceVideoFileId: null,
+      materials: [{ kind: "material", name: "Fresh oil", quantity: "5", unit: "gallon" }],
+      warnings: [{ text: "Oil may be hot" }],
+    },
+    "verify-phase5-create",
+  );
+  const versionedStep = await createStep(
+    managerContext,
+    versionedDraft.id,
+    {
+      title: "Drain the fryer",
+      instruction: "Drain and discard the used oil safely.",
+      imageFileId: null,
+      videoFileId: null,
+      warning: "",
+      quantity: "",
+      unit: "",
+      equipmentSetting: "",
+      timerSeconds: null,
+      isRequired: true,
+      expectedRevision: versionedDraft.version.revision,
+    },
+    "verify-phase5-step-create",
+  );
+
+  let firstPublishRetrainingRejected = false;
+  try {
+    await publishSop(
+      managerContext,
+      versionedDraft.id,
+      {
+        expectedRevision: versionedStep.version.revision,
+        changeSummary: "",
+        retrainingRule: { type: "all_qualified" },
+      },
+      "verify-phase5-first-publish-retraining-rejected",
+    );
+  } catch {
+    firstPublishRetrainingRejected = true;
+  }
+  if (!firstPublishRetrainingRejected) {
+    throw new Error("A retraining rule was accepted on a first publish");
+  }
+
+  const versionOne = await publishSop(
+    managerContext,
+    versionedDraft.id,
+    {
+      expectedRevision: versionedStep.version.revision,
+      changeSummary: "",
+      retrainingRule: { type: "none" },
+    },
+    "verify-phase5-publish-v1",
+  );
+  if (
+    versionOne.version.versionNumber !== 1 ||
+    versionOne.currentVersionId !== versionOne.version.id
+  ) {
+    throw new Error("Publishing the first version did not set stable current-version resolution");
+  }
+
+  let editWithoutDraftRejected = false;
+  try {
+    await autosaveSopDraft(
+      managerContext,
+      versionedDraft.id,
+      { title: "Should require a draft", expectedRevision: versionOne.version.revision },
+      "verify-phase5-edit-without-draft",
+    );
+  } catch {
+    editWithoutDraftRejected = true;
+  }
+  if (!editWithoutDraftRejected) {
+    throw new Error("A published SOP was edited without starting a new draft");
+  }
+
+  let riversideDraftCreateRejected = false;
+  try {
+    await createDraftFromCurrentVersion(
+      riversideManagerContext,
+      versionedDraft.id,
+      "verify-phase5-cross-location-draft",
+    );
+  } catch {
+    riversideDraftCreateRejected = true;
+  }
+  if (!riversideDraftCreateRejected) {
+    throw new Error("A location-restricted manager started a draft outside their scope");
+  }
+
+  const draftTwo = await createDraftFromCurrentVersion(
+    managerContext,
+    versionedDraft.id,
+    "verify-phase5-create-draft",
+  );
+  if (
+    draftTwo.version.versionNumber !== 2 ||
+    draftTwo.version.status !== "draft" ||
+    draftTwo.version.sourceVersionId !== versionOne.version.id ||
+    draftTwo.steps.length !== 1 ||
+    draftTwo.materials.length !== 1
+  ) {
+    throw new Error("Cloning a draft from the published version did not copy its content");
+  }
+
+  let secondDraftCreateRejected = false;
+  try {
+    await createDraftFromCurrentVersion(
+      managerContext,
+      versionedDraft.id,
+      "verify-phase5-duplicate-draft",
+    );
+  } catch {
+    secondDraftCreateRejected = true;
+  }
+  if (!secondDraftCreateRejected) {
+    throw new Error("A second concurrent draft was allowed on the same SOP");
+  }
+
+  const stillCurrent = await getSop(managerContext, versionedDraft.id);
+  if (stillCurrent.version.versionNumber !== 1 || stillCurrent.version.status !== "published") {
+    throw new Error("Current-version resolution moved while a new draft was still in progress");
+  }
+  if (!(await hasDraftVersion(managerContext, versionedDraft.id))) {
+    throw new Error("The in-progress draft was not detected");
+  }
+
+  const updatedDraft = await autosaveSopDraft(
+    managerContext,
+    versionedDraft.id,
+    { title: "Fryer oil change (updated)", expectedRevision: draftTwo.version.revision },
+    "verify-phase5-draft-autosave",
+  );
+  const draftWithSecondStep = await createStep(
+    managerContext,
+    versionedDraft.id,
+    {
+      title: "Replace and label the oil",
+      instruction: "Fill with fresh oil and label the change date.",
+      imageFileId: null,
+      videoFileId: null,
+      warning: "",
+      quantity: "",
+      unit: "",
+      equipmentSetting: "",
+      timerSeconds: null,
+      isRequired: true,
+      expectedRevision: updatedDraft.version.revision,
+    },
+    "verify-phase5-draft-step-create",
+  );
+
+  let publishUpdateWithoutSummaryRejected = false;
+  try {
+    await publishSop(
+      managerContext,
+      versionedDraft.id,
+      {
+        expectedRevision: draftWithSecondStep.version.revision,
+        changeSummary: "",
+        retrainingRule: { type: "none" },
+      },
+      "verify-phase5-publish-update-no-summary",
+    );
+  } catch {
+    publishUpdateWithoutSummaryRejected = true;
+  }
+  if (!publishUpdateWithoutSummaryRejected) {
+    throw new Error("Publishing an update without a change summary was accepted");
+  }
+
+  let scopedLocationRuleRejected = false;
+  try {
+    await publishSop(
+      scopedManagerContext,
+      versionedDraft.id,
+      {
+        expectedRevision: draftWithSecondStep.version.revision,
+        changeSummary: "Added the oil replacement step",
+        retrainingRule: {
+          type: "selected_locations",
+          locationIds: [seedIds.locations.riverside],
+        },
+      },
+      "verify-phase5-publish-unauthorized-location-rule",
+    );
+  } catch {
+    scopedLocationRuleRejected = true;
+  }
+  if (!scopedLocationRuleRejected) {
+    throw new Error("A retraining rule targeting an unmanaged location was accepted");
+  }
+
+  const versionTwo = await publishSop(
+    managerContext,
+    versionedDraft.id,
+    {
+      expectedRevision: draftWithSecondStep.version.revision,
+      changeSummary: "Added the oil replacement step",
+      retrainingRule: { type: "selected_roles", jobRoles: ["Cook"] },
+    },
+    "verify-phase5-publish-v2",
+  );
+  if (
+    versionTwo.version.versionNumber !== 2 ||
+    versionTwo.currentVersionId !== versionTwo.version.id ||
+    versionTwo.status !== "published"
+  ) {
+    throw new Error("Publishing the update did not move the current version forward");
+  }
+
+  const versionOneDetail = await getSopVersionDetail(
+    managerContext,
+    versionedDraft.id,
+    versionOne.version.id,
+  );
+  if (versionOneDetail.version.title !== "Fryer oil change" || versionOneDetail.isCurrent) {
+    throw new Error("Publishing an update mutated the immutable prior published version");
+  }
+
+  const versionTwoDetail = await getSopVersionDetail(
+    managerContext,
+    versionedDraft.id,
+    versionTwo.version.id,
+  );
+  if (
+    !versionTwoDetail.isCurrent ||
+    !versionTwoDetail.retrainingRule ||
+    versionTwoDetail.retrainingRule.ruleType !== "selected_roles" ||
+    versionTwoDetail.retrainingRule.jobRoles[0] !== "Cook"
+  ) {
+    throw new Error("The retraining rule was not persisted against the newly published version");
+  }
+
+  const versionList = await listSopVersions(managerContext, versionedDraft.id);
+  if (
+    versionList.versions.length !== 2 ||
+    versionList.currentVersionId !== versionTwo.version.id ||
+    versionList.versions[0]?.versionNumber !== 2
+  ) {
+    throw new Error("Version history did not list both immutable versions in order");
+  }
+
+  const comparison = await compareSopVersions(
+    managerContext,
+    versionedDraft.id,
+    versionOne.version.id,
+    versionTwo.version.id,
+  );
+  if (!comparison.fieldDiffs.some((diff) => diff.field === "title")) {
+    throw new Error("Version comparison did not detect the title change");
+  }
+  if (!comparison.stepDiffs.some((diff) => diff.status === "added")) {
+    throw new Error("Version comparison did not detect the added step");
+  }
+
+  let riversideRestoreRejected = false;
+  try {
+    await restoreSopVersion(
+      riversideManagerContext,
+      versionedDraft.id,
+      versionOne.version.id,
+      "verify-phase5-cross-location-restore",
+    );
+  } catch {
+    riversideRestoreRejected = true;
+  }
+  if (!riversideRestoreRejected) {
+    throw new Error("A location-restricted manager restored a version outside their scope");
+  }
+
+  const restoredDraft = await restoreSopVersion(
+    managerContext,
+    versionedDraft.id,
+    versionOne.version.id,
+    "verify-phase5-restore",
+  );
+  if (
+    restoredDraft.version.title !== "Fryer oil change" ||
+    restoredDraft.version.versionNumber !== 3 ||
+    restoredDraft.version.sourceVersionId !== versionOne.version.id ||
+    restoredDraft.steps.length !== 1
+  ) {
+    throw new Error("Restoring a historical version did not clone its original content");
+  }
+  const draftViaGetSopDraft = await getSopDraft(managerContext, versionedDraft.id);
+  if (draftViaGetSopDraft.version.id !== restoredDraft.version.id) {
+    throw new Error("getSopDraft did not resolve the in-progress restored draft");
+  }
+
+  let restoreOverExistingDraftRejected = false;
+  try {
+    await restoreSopVersion(
+      managerContext,
+      versionedDraft.id,
+      versionTwo.version.id,
+      "verify-phase5-restore-duplicate",
+    );
+  } catch {
+    restoreOverExistingDraftRejected = true;
+  }
+  if (!restoreOverExistingDraftRejected) {
+    throw new Error("A restoration was allowed while a draft was already in progress");
+  }
+
+  await archiveSop(managerContext, versionedDraft.id, "verify-phase5-archive");
+  let archivedDraftCreateRejected = false;
+  try {
+    await createDraftFromCurrentVersion(
+      managerContext,
+      versionedDraft.id,
+      "verify-phase5-archived-draft-rejected",
+    );
+  } catch {
+    archivedDraftCreateRejected = true;
+  }
+  if (!archivedDraftCreateRejected) {
+    throw new Error("An archived SOP was allowed to start a new draft");
+  }
+  let archivedPublishRejected = false;
+  try {
+    await publishSop(
+      managerContext,
+      versionedDraft.id,
+      {
+        expectedRevision: restoredDraft.version.revision,
+        changeSummary: "Should not publish",
+        retrainingRule: { type: "none" },
+      },
+      "verify-phase5-archived-publish-rejected",
+    );
+  } catch {
+    archivedPublishRejected = true;
+  }
+  if (!archivedPublishRejected) {
+    throw new Error("Publishing a draft on an archived SOP was accepted");
+  }
 
   const actions = new Set(
     (await getDb().select({ action: auditEvents.action }).from(auditEvents)).map(
@@ -1127,6 +1505,8 @@ async function verifyDatabase(): Promise<void> {
     "sop.archived",
     "sop.previewed",
     "sop.published",
+    "sop.draft_created",
+    "sop.version_restored",
     "media.uploaded",
   ];
   if (requiredAuditActions.some((action) => !actions.has(action))) {
@@ -1138,7 +1518,7 @@ async function verifyDatabase(): Promise<void> {
   await verifyUpgradeMigration();
 
   process.stdout.write(
-    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true })}\n`,
+    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true })}\n`,
   );
 }
 
