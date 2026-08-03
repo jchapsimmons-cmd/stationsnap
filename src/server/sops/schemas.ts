@@ -133,6 +133,122 @@ export const sopVersionCompareQuerySchema = z.object({
   to: z.uuid(),
 });
 
+export const trainingRequirementStateValues = ["disabled", "optional", "required"] as const;
+export const trainingModeValues = ["learn", "guided", "test", "demonstration"] as const;
+export const trainingQuestionTypeValues = [
+  "single_choice",
+  "multiple_choice",
+  "true_false",
+] as const;
+export const trainingQuestionPlacementValues = ["before_step", "after_step", "final"] as const;
+export const trainingExplanationPolicyValues = ["never", "on_incorrect", "always"] as const;
+
+const trainingRequirementState = z.enum(trainingRequirementStateValues);
+const trainingMode = z.enum(trainingModeValues);
+const trainingQuestionType = z.enum(trainingQuestionTypeValues);
+const trainingQuestionPlacement = z.enum(trainingQuestionPlacementValues);
+const trainingExplanationPolicy = z.enum(trainingExplanationPolicyValues);
+
+const optionalBoundedInt = (min: number, max: number) =>
+  z
+    .union([z.literal(""), z.coerce.number().int().min(min).max(max)])
+    .default("")
+    .transform((value) => (value === "" ? null : value));
+
+export const trainingConfigUpdateSchema = z
+  .object({
+    requirementState: trainingRequirementState.default("disabled"),
+    defaultMode: trainingMode.default("learn"),
+    allowBacktracking: z.coerce.boolean().default(true),
+    requireSequentialProgress: z.coerce.boolean().default(true),
+    requireFullVideoWatch: z.coerce.boolean().default(false),
+    requireEvidenceApproval: z.coerce.boolean().default(true),
+    passingScorePercent: z.coerce.number().int().min(0).max(100).default(80),
+    maxAttempts: z.coerce.number().int().min(1).max(20).default(3),
+    qualificationValidityDays: optionalBoundedInt(1, 3_650),
+    retrainingGraceDays: optionalBoundedInt(0, 365),
+    expectedRevision: revision,
+  })
+  .refine(
+    (value) =>
+      value.requirementState !== "disabled" ||
+      (value.qualificationValidityDays === null && value.retrainingGraceDays === null),
+    {
+      message:
+        "Qualification validity and retraining grace only apply when training is optional or required.",
+      path: ["requirementState"],
+    },
+  );
+
+export const stepTrainingRequirementsSchema = z
+  .object({
+    requireFullVideo: z.coerce.boolean().default(false),
+    requireConfirmation: z.coerce.boolean().default(false),
+    requireTimer: z.coerce.boolean().default(false),
+    requireQuestion: z.coerce.boolean().default(false),
+    requirePhoto: z.coerce.boolean().default(false),
+    requireVideo: z.coerce.boolean().default(false),
+    requireApproval: z.coerce.boolean().default(false),
+    expectedRevision: revision,
+  })
+  .refine(
+    (value) =>
+      !value.requireApproval ||
+      value.requireConfirmation ||
+      value.requireQuestion ||
+      value.requirePhoto ||
+      value.requireVideo,
+    {
+      message:
+        "Approval requires at least one submitted requirement: confirmation, question, photo, or video.",
+      path: ["requireApproval"],
+    },
+  );
+
+const trainingQuestionChoiceSchema = z.object({
+  text: z.string().trim().min(1).max(300),
+  isCorrect: z.coerce.boolean().default(false),
+});
+
+export const trainingQuestionCreateSchema = z
+  .object({
+    stepId: optionalUuid,
+    type: trainingQuestionType,
+    text: z.string().trim().min(1).max(1_000),
+    explanation: z.string().trim().max(2_000).default(""),
+    points: z.coerce.number().int().min(1).max(100).default(1),
+    placement: trainingQuestionPlacement,
+    explanationPolicy: trainingExplanationPolicy.default("on_incorrect"),
+    choices: z.array(trainingQuestionChoiceSchema).min(2).max(8),
+    expectedRevision: revision,
+  })
+  .refine((value) => (value.stepId ? value.placement !== "final" : value.placement === "final"), {
+    message:
+      "Step questions must use the before/after-step placement; final questions must use the final placement.",
+    path: ["placement"],
+  })
+  .refine(
+    (value) => {
+      const correctCount = value.choices.filter((choice) => choice.isCorrect).length;
+      if (value.type === "true_false") return value.choices.length === 2 && correctCount === 1;
+      if (value.type === "single_choice") return correctCount === 1;
+      return correctCount >= 1;
+    },
+    {
+      message:
+        "True/false questions need exactly two choices with one correct; single-choice questions need exactly one correct choice; multiple-choice questions need at least one correct choice.",
+      path: ["choices"],
+    },
+  );
+
+export const trainingQuestionUpdateSchema = trainingQuestionCreateSchema;
+
+export const trainingQuestionReorderSchema = z.object({
+  stepId: optionalUuid.optional().default(null),
+  orderedQuestionIds: z.array(z.uuid()).min(1).max(200),
+  expectedRevision: revision,
+});
+
 export type SopCreateInput = z.infer<typeof sopCreateSchema>;
 export type SopDraftUpdateInput = z.infer<typeof sopDraftUpdateSchema>;
 export type SopQuery = z.infer<typeof sopQuerySchema>;
@@ -143,3 +259,8 @@ export type SopRevisionOnlyInput = z.infer<typeof sopRevisionOnlySchema>;
 export type SopPublishInput = z.infer<typeof sopPublishSchema>;
 export type RetrainingRuleInput = z.infer<typeof retrainingRuleSchema>;
 export type EmployeeSopQuery = z.infer<typeof employeeSopQuerySchema>;
+export type TrainingConfigUpdateInput = z.infer<typeof trainingConfigUpdateSchema>;
+export type StepTrainingRequirementsInput = z.infer<typeof stepTrainingRequirementsSchema>;
+export type TrainingQuestionCreateInput = z.infer<typeof trainingQuestionCreateSchema>;
+export type TrainingQuestionUpdateInput = z.infer<typeof trainingQuestionUpdateSchema>;
+export type TrainingQuestionReorderInput = z.infer<typeof trainingQuestionReorderSchema>;
