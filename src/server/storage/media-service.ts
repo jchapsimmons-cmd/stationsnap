@@ -6,11 +6,7 @@ import type { EmployeeSessionContext, ManagerSessionContext } from "@/server/aut
 import { getDb } from "@/server/db/client";
 import { files, sops, sopSteps, sopVersions } from "@/server/db/schema";
 import { maxBytesForMediaType, mediaTypeForMime } from "@/server/storage/constants";
-import {
-  createObjectKey,
-  readStoredObject,
-  writeStoredObject,
-} from "@/server/storage/local-driver";
+import { createObjectKey, readStoredObject, writeStoredObject } from "@/server/storage/driver";
 
 function sanitizeFileName(name: string): string {
   const cleaned = name.replace(/[\r\n"]/g, "").trim();

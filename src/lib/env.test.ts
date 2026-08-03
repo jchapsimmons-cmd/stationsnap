@@ -35,6 +35,30 @@ describe("parseServerEnv", () => {
     ).toThrow(/must be configured together/);
   });
 
+  it("defaults to local storage and requires a token for vercel-blob", () => {
+    expect(
+      parseServerEnv({
+        NODE_ENV: "test",
+        DATABASE_URL: "postgresql://user:password@localhost/stationsnap",
+      }),
+    ).toMatchObject({ STORAGE_DRIVER: "local" });
+    expect(() =>
+      parseServerEnv({
+        NODE_ENV: "test",
+        DATABASE_URL: "postgresql://user:password@localhost/stationsnap",
+        STORAGE_DRIVER: "vercel-blob",
+      }),
+    ).toThrow(/BLOB_READ_WRITE_TOKEN is required/);
+    expect(
+      parseServerEnv({
+        NODE_ENV: "test",
+        DATABASE_URL: "postgresql://user:password@localhost/stationsnap",
+        STORAGE_DRIVER: "vercel-blob",
+        BLOB_READ_WRITE_TOKEN: "vercel_blob_rw_test_token",
+      }),
+    ).toMatchObject({ STORAGE_DRIVER: "vercel-blob" });
+  });
+
   it("allows seed credentials only outside production", () => {
     expect(
       parseSeedEnv({

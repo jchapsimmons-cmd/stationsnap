@@ -21,6 +21,8 @@ const serverEnvSchema = z
     SMTP_PASSWORD: optionalNonEmpty,
     SMTP_FROM: optionalNonEmpty,
     MEDIA_STORAGE_DIR: z.string().min(1).default("uploads"),
+    STORAGE_DRIVER: z.enum(["local", "vercel-blob"]).default("local"),
+    BLOB_READ_WRITE_TOKEN: optionalNonEmpty,
   })
   .superRefine((value, context) => {
     const smtpValues = [value.SMTP_HOST, value.SMTP_USER, value.SMTP_PASSWORD, value.SMTP_FROM];
@@ -30,6 +32,13 @@ const serverEnvSchema = z
         code: "custom",
         path: ["SMTP_HOST"],
         message: "SMTP_HOST, SMTP_USER, SMTP_PASSWORD, and SMTP_FROM must be configured together",
+      });
+    }
+    if (value.STORAGE_DRIVER === "vercel-blob" && !value.BLOB_READ_WRITE_TOKEN) {
+      context.addIssue({
+        code: "custom",
+        path: ["BLOB_READ_WRITE_TOKEN"],
+        message: "BLOB_READ_WRITE_TOKEN is required when STORAGE_DRIVER is vercel-blob",
       });
     }
   });

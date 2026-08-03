@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { getServerEnv } from "@/lib/env";
@@ -15,10 +14,6 @@ function resolveObjectPath(objectKey: string): string {
     throw new Error("Refusing to resolve a malformed storage object key.");
   }
   return path.join(storageRoot(), objectKey);
-}
-
-export function createObjectKey(organizationId: string): string {
-  return `${organizationId}/${randomUUID()}`;
 }
 
 export async function writeStoredObject(objectKey: string, data: Buffer): Promise<void> {
