@@ -3,6 +3,7 @@ CREATE TYPE "public"."training_mode" AS ENUM('learn', 'guided', 'test', 'demonst
 CREATE TYPE "public"."training_question_placement" AS ENUM('before_step', 'after_step', 'final');--> statement-breakpoint
 CREATE TYPE "public"."training_question_type" AS ENUM('single_choice', 'multiple_choice', 'true_false');--> statement-breakpoint
 CREATE TYPE "public"."training_requirement_state" AS ENUM('disabled', 'optional', 'required');--> statement-breakpoint
+ALTER TABLE "sop_steps" ADD CONSTRAINT "sop_steps_id_org_unique" UNIQUE("id","organization_id");--> statement-breakpoint
 CREATE TABLE "step_training_requirements" (
 	"id" uuid PRIMARY KEY NOT NULL,
 	"step_id" uuid NOT NULL,
@@ -76,5 +77,4 @@ ALTER TABLE "training_questions" ADD CONSTRAINT "training_questions_organization
 ALTER TABLE "training_questions" ADD CONSTRAINT "training_questions_version_org_fk" FOREIGN KEY ("sop_version_id","organization_id") REFERENCES "public"."sop_versions"("id","organization_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "training_questions" ADD CONSTRAINT "training_questions_step_org_fk" FOREIGN KEY ("step_id","organization_id") REFERENCES "public"."sop_steps"("id","organization_id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "training_question_choices_question_order_idx" ON "training_question_choices" USING btree ("question_id","display_order");--> statement-breakpoint
-CREATE INDEX "training_questions_version_step_order_idx" ON "training_questions" USING btree ("sop_version_id","step_id","display_order");--> statement-breakpoint
-ALTER TABLE "sop_steps" ADD CONSTRAINT "sop_steps_id_org_unique" UNIQUE("id","organization_id");
+CREATE INDEX "training_questions_version_step_order_idx" ON "training_questions" USING btree ("sop_version_id","step_id","display_order");
