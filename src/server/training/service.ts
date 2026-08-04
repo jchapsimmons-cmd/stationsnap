@@ -36,7 +36,7 @@ import type {
 } from "@/server/training/schemas";
 import { uploadEmployeeMedia } from "@/server/storage/media-service";
 
-type Tx = Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0];
+export type Tx = Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0];
 type StepRequirements = ReturnType<typeof defaultStepRequirementValues>;
 type TrainingAssignmentRow = typeof trainingAssignments.$inferSelect;
 
@@ -77,7 +77,7 @@ async function loadVersionSteps(organizationId: string, sopVersionId: string) {
   }));
 }
 
-interface SessionComputation {
+export interface SessionComputation {
   session: typeof trainingSessions.$inferSelect;
   assignment: typeof trainingAssignments.$inferSelect;
   config: Awaited<ReturnType<typeof loadTrainingConfig>>;
@@ -105,7 +105,7 @@ async function requireOwnedAssignment(session: EmployeeSessionContext, assignmen
   return row;
 }
 
-async function loadSessionComputation(
+export async function loadSessionComputation(
   organizationId: string,
   sessionId: string,
 ): Promise<SessionComputation> {
@@ -260,7 +260,7 @@ function requireSessionInProgress(computation: SessionComputation): void {
   }
 }
 
-async function bumpSessionRevision(
+export async function bumpSessionRevision(
   tx: Tx,
   organizationId: string,
   sessionId: string,

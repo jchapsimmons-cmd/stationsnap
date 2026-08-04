@@ -102,6 +102,51 @@ export const trainingSessionSubmitSchema = z.object({
   expectedRevision: revision,
 });
 
+export const approvalSubmissionStatusValues = [
+  "pending",
+  "approved",
+  "rejected",
+  "needs_correction",
+] as const;
+
+export const approvalDecisionValues = ["approved", "rejected", "needs_correction"] as const;
+
+/**
+ * Manager approval queue filters. Mirrors `trainingAssignmentQuerySchema`, except the status
+ * default is `pending`: the queue's purpose is undecided work, and the decided statuses are
+ * history views a manager opts into.
+ */
+export const approvalQueueQuerySchema = z.object({
+  status: z.union([z.literal(""), z.enum(approvalSubmissionStatusValues)]).default("pending"),
+  locationId: z.union([z.literal(""), z.uuid()]).default(""),
+});
+
+const requiredDecisionNote = z
+  .string()
+  .trim()
+  .min(1, "Explain what the employee must fix.")
+  .max(1000, "Keep the note under 1000 characters.");
+
+/**
+ * A decision is a discriminated union so the note requirement is expressed once, structurally:
+ * `rejected` and `needs_correction` carry a mandatory non-empty note, `approved` an optional one.
+ */
+export const approvalDecisionSchema = z.discriminatedUnion("decision", [
+  z.object({
+    decision: z.literal("approved"),
+    note: z.string().trim().max(1000, "Keep the note under 1000 characters.").default(""),
+  }),
+  z.object({ decision: z.literal("rejected"), note: requiredDecisionNote }),
+  z.object({ decision: z.literal("needs_correction"), note: requiredDecisionNote }),
+]);
+
+/** Employee resubmission of replacement evidence against an open correction request. */
+export const approvalResubmitFormSchema = z.object({
+  stepId: z.uuid(),
+  employeeNote: z.string().trim().max(500).default(""),
+  expectedRevision: revision,
+});
+
 export type TrainingAssignmentTargetInput = z.infer<typeof trainingAssignmentTargetSchema>;
 export type TrainingAssignmentCreateInput = z.infer<typeof trainingAssignmentCreateSchema>;
 export type TrainingAssignmentQuery = z.infer<typeof trainingAssignmentQuerySchema>;
@@ -111,3 +156,8 @@ export type TrainingStepActionInput = z.infer<typeof trainingStepActionSchema>;
 export type TrainingAnswerSubmitInput = z.infer<typeof trainingAnswerSubmitSchema>;
 export type TrainingEvidenceUploadFormInput = z.infer<typeof trainingEvidenceUploadFormSchema>;
 export type TrainingSessionSubmitInput = z.infer<typeof trainingSessionSubmitSchema>;
+export type ApprovalSubmissionStatus = (typeof approvalSubmissionStatusValues)[number];
+export type ApprovalDecisionValue = (typeof approvalDecisionValues)[number];
+export type ApprovalQueueQuery = z.infer<typeof approvalQueueQuerySchema>;
+export type ApprovalDecisionInput = z.infer<typeof approvalDecisionSchema>;
+export type ApprovalResubmitFormInput = z.infer<typeof approvalResubmitFormSchema>;

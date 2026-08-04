@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  approvalDecisionSchema,
+  approvalDecisionValues,
+  approvalQueueQuerySchema,
+  approvalResubmitFormSchema,
+  approvalSubmissionStatusValues,
   trainingAnswerSubmitSchema,
   trainingAssignmentCreateSchema,
   trainingAssignmentQuerySchema,
@@ -203,5 +208,107 @@ describe("Phase 8 training session schemas", () => {
   it("requires an expected revision to submit a session", () => {
     expect(() => trainingSessionSubmitSchema.parse({})).toThrow();
     expect(trainingSessionSubmitSchema.parse({ expectedRevision: "2" }).expectedRevision).toBe(2);
+  });
+});
+
+describe("Phase 10 approval decision schema", () => {
+  it("accepts an approval with no note", () => {
+    const result = approvalDecisionSchema.parse({ decision: "approved" });
+    expect(result.decision).toBe("approved");
+    expect(result.note).toBe("");
+  });
+
+  it("accepts an approval with an optional note", () => {
+    const result = approvalDecisionSchema.parse({ decision: "approved", note: "  Clean work.  " });
+    expect(result.note).toBe("Clean work.");
+  });
+
+  it("requires a non-empty note to reject", () => {
+    expect(() => approvalDecisionSchema.parse({ decision: "rejected" })).toThrow();
+    expect(() => approvalDecisionSchema.parse({ decision: "rejected", note: "" })).toThrow();
+    expect(() => approvalDecisionSchema.parse({ decision: "rejected", note: "   " })).toThrow();
+    expect(approvalDecisionSchema.parse({ decision: "rejected", note: "Wrong grill." }).note).toBe(
+      "Wrong grill.",
+    );
+  });
+
+  it("requires a non-empty note to request a correction", () => {
+    expect(() => approvalDecisionSchema.parse({ decision: "needs_correction" })).toThrow();
+    expect(() =>
+      approvalDecisionSchema.parse({ decision: "needs_correction", note: "  " }),
+    ).toThrow();
+    expect(
+      approvalDecisionSchema.parse({ decision: "needs_correction", note: "Retake the photo." })
+        .note,
+    ).toBe("Retake the photo.");
+  });
+
+  it("bounds every note length", () => {
+    for (const decision of approvalDecisionValues) {
+      expect(() => approvalDecisionSchema.parse({ decision, note: "a".repeat(1001) })).toThrow();
+      expect(() =>
+        approvalDecisionSchema.parse({ decision, note: "a".repeat(1000) }),
+      ).not.toThrow();
+    }
+  });
+
+  it("rejects a decision outside the enum", () => {
+    expect(() => approvalDecisionSchema.parse({ decision: "pending", note: "x" })).toThrow();
+    expect(() => approvalDecisionSchema.parse({ decision: "escalated", note: "x" })).toThrow();
+  });
+
+  it("exposes exactly the three recordable decisions", () => {
+    expect([...approvalDecisionValues]).toEqual(["approved", "rejected", "needs_correction"]);
+  });
+});
+
+describe("Approval queue query schema", () => {
+  it("defaults to the pending queue with no location filter", () => {
+    const result = approvalQueueQuerySchema.parse({});
+    expect(result.status).toBe("pending");
+    expect(result.locationId).toBe("");
+  });
+
+  it("accepts every submission status, including an explicit all-status view", () => {
+    for (const status of approvalSubmissionStatusValues) {
+      expect(approvalQueueQuerySchema.parse({ status }).status).toBe(status);
+    }
+    expect(approvalQueueQuerySchema.parse({ status: "" }).status).toBe("");
+  });
+
+  it("rejects an unknown status or a malformed location filter", () => {
+    expect(() => approvalQueueQuerySchema.parse({ status: "needs_review" })).toThrow();
+    expect(() => approvalQueueQuerySchema.parse({ locationId: "downtown" })).toThrow();
+  });
+});
+
+describe("Approval resubmission schema", () => {
+  it("requires a step and an expected revision, defaulting the note", () => {
+    const result = approvalResubmitFormSchema.parse({
+      stepId: crypto.randomUUID(),
+      expectedRevision: "3",
+    });
+    expect(result.employeeNote).toBe("");
+    expect(result.expectedRevision).toBe(3);
+  });
+
+  it("rejects a missing step, a malformed step, or a bad revision", () => {
+    expect(() => approvalResubmitFormSchema.parse({ expectedRevision: 1 })).toThrow();
+    expect(() =>
+      approvalResubmitFormSchema.parse({ stepId: "step-2", expectedRevision: 1 }),
+    ).toThrow();
+    expect(() =>
+      approvalResubmitFormSchema.parse({ stepId: crypto.randomUUID(), expectedRevision: 0 }),
+    ).toThrow();
+  });
+
+  it("bounds the employee note length", () => {
+    expect(() =>
+      approvalResubmitFormSchema.parse({
+        stepId: crypto.randomUUID(),
+        expectedRevision: 1,
+        employeeNote: "a".repeat(501),
+      }),
+    ).toThrow();
   });
 });
