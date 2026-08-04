@@ -520,6 +520,9 @@ export async function submitItemEvidence(
 
   if (computation.run.status === "in_progress") {
     const uploaded = await uploadEmployeeMedia(session, formData, requestId);
+    if (uploaded.mediaType !== "image") {
+      throw new AppError("BAD_REQUEST", "This item accepts only photo evidence.");
+    }
     const existingProgress = computation.progressByItemId.get(itemId);
     const existingEvidence = existingProgress
       ? (computation.evidenceByProgressId.get(existingProgress.id) ?? [])
@@ -567,6 +570,9 @@ export async function submitItemEvidence(
   if (computation.run.status === "awaiting_approval") {
     const { correction } = await requireOpenCorrection(session.organizationId, runId);
     const uploaded = await uploadEmployeeMedia(session, formData, requestId);
+    if (uploaded.mediaType !== "image") {
+      throw new AppError("BAD_REQUEST", "This item accepts only photo evidence.");
+    }
     const existingProgress = computation.progressByItemId.get(itemId);
     const existingEvidence = existingProgress
       ? (computation.evidenceByProgressId.get(existingProgress.id) ?? [])
