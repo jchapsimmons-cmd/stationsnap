@@ -14,7 +14,10 @@ export default async function EmployeeChecklistRunPage({
 
   return (
     <div className="page-stack">
-      <PageHeader title={state.checklistTitle} description="Complete every required item, then submit." />
+      <PageHeader
+        title={state.checklistTitle}
+        description="Complete every required item, then submit."
+      />
       <ChecklistRunRunner runId={runId} initialState={state} />
     </div>
   );

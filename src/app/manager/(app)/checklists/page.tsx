@@ -23,7 +23,10 @@ export default async function ManagerChecklistsPage({
     status: typeof params["status"] === "string" ? params["status"] : "",
     type: typeof params["type"] === "string" ? params["type"] : "",
   });
-  const [rows, locationRows] = await Promise.all([listChecklists(session, query), listLocations(session)]);
+  const [rows, locationRows] = await Promise.all([
+    listChecklists(session, query),
+    listLocations(session),
+  ]);
   const itemCounts = await countChecklistItems(
     session.organizationId,
     rows.map((row) => row.id),
@@ -89,8 +92,8 @@ export default async function ManagerChecklistsPage({
                 <strong>{row.title}</strong>
                 <small>
                   {CHECKLIST_TYPE_LABELS[row.type] ?? row.type} · {row.locationName}
-                  {row.stationName ? ` · ${row.stationName}` : ""} ·{" "}
-                  {itemCounts.get(row.id) ?? 0} {itemCounts.get(row.id) === 1 ? "item" : "items"}
+                  {row.stationName ? ` · ${row.stationName}` : ""} · {itemCounts.get(row.id) ?? 0}{" "}
+                  {itemCounts.get(row.id) === 1 ? "item" : "items"}
                 </small>
               </span>
               <StatusBadge tone={CHECKLIST_STATUS_TONE[row.status] ?? "neutral"}>

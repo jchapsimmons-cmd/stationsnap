@@ -129,11 +129,17 @@ export async function listChecklists(actor: ManagerSessionContext, query: Checkl
     .from(checklists)
     .innerJoin(
       locations,
-      and(eq(locations.id, checklists.locationId), eq(locations.organizationId, checklists.organizationId)),
+      and(
+        eq(locations.id, checklists.locationId),
+        eq(locations.organizationId, checklists.organizationId),
+      ),
     )
     .leftJoin(
       stations,
-      and(eq(stations.id, checklists.stationId), eq(stations.organizationId, checklists.organizationId)),
+      and(
+        eq(stations.id, checklists.stationId),
+        eq(stations.organizationId, checklists.organizationId),
+      ),
     )
     .where(and(...conditions))
     .orderBy(desc(checklists.updatedAt))
@@ -260,7 +266,13 @@ export async function createChecklist(
     "A checklist with that title already exists at this location.",
   );
 
-  await auditChecklistMutation(actor, "checklist.created", checklistId, input.locationId, requestId);
+  await auditChecklistMutation(
+    actor,
+    "checklist.created",
+    checklistId,
+    input.locationId,
+    requestId,
+  );
   return getChecklistDetail(actor, checklistId);
 }
 
@@ -294,7 +306,10 @@ export async function updateChecklist(
             updatedAt: new Date(),
           })
           .where(
-            and(eq(checklists.id, checklistId), eq(checklists.organizationId, actor.organizationId)),
+            and(
+              eq(checklists.id, checklistId),
+              eq(checklists.organizationId, actor.organizationId),
+            ),
           );
 
         const existingIds = new Set(current.items.map((item) => item.id));
@@ -411,7 +426,10 @@ export async function listChecklistsForEmployee(session: EmployeeSessionContext)
     .from(checklists)
     .leftJoin(
       stations,
-      and(eq(stations.id, checklists.stationId), eq(stations.organizationId, checklists.organizationId)),
+      and(
+        eq(stations.id, checklists.stationId),
+        eq(stations.organizationId, checklists.organizationId),
+      ),
     )
     .where(
       and(
@@ -423,7 +441,10 @@ export async function listChecklistsForEmployee(session: EmployeeSessionContext)
     .orderBy(checklists.title);
 }
 
-export async function getChecklistForEmployee(session: EmployeeSessionContext, checklistId: string) {
+export async function getChecklistForEmployee(
+  session: EmployeeSessionContext,
+  checklistId: string,
+) {
   const [row] = await getDb()
     .select()
     .from(checklists)

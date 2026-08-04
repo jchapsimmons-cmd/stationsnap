@@ -1,9 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  calendarDateInTimeZone,
-  endOfDayInTimeZone,
-  isoWeekStartInTimeZone,
-} from "@/lib/timezone";
+import { calendarDateInTimeZone, endOfDayInTimeZone, isoWeekStartInTimeZone } from "@/lib/timezone";
 
 describe("endOfDayInTimeZone", () => {
   it("resolves end of day in UTC itself", () => {

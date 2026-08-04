@@ -13,6 +13,8 @@ export default async function ManagerLayout({ children }: { children: ReactNode 
     { href: "/manager/training/approvals", label: "Approvals" },
     { href: "/manager/training/paths", label: "Training paths" },
     { href: "/manager/qualifications", label: "Qualifications" },
+    { href: "/manager/checklists", label: "Checklists" },
+    { href: "/manager/checklist-runs", label: "Checklist runs" },
     { href: "/manager/settings/locations", label: "Locations" },
     { href: "/manager/settings/stations", label: "Stations" },
     { href: "/manager/qr", label: "QR codes" },

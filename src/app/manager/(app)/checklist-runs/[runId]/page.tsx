@@ -103,8 +103,8 @@ export default async function ManagerChecklistRunReviewPage({
       ) : detail.submission ? (
         <Card>
           <p role="status">
-            This submission was already decided. Decisions are permanent — a new submission
-            appears here if the employee resubmits after a requested correction.
+            This submission was already decided. Decisions are permanent — a new submission appears
+            here if the employee resubmits after a requested correction.
           </p>
         </Card>
       ) : null}

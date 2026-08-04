@@ -51,6 +51,7 @@ import {
 import {
   approvalDecisions,
   approvalSubmissions,
+  checklistItems,
   correctionRequests,
   employeeQualifications,
   files as filesTable,
@@ -102,6 +103,23 @@ import {
   updateTrainingQuestion,
 } from "@/server/sops/service";
 import { getMediaFile, getMediaFileForEmployee, uploadMedia } from "@/server/storage/media-service";
+import { decideChecklistRun } from "@/server/checklists/approvals";
+import {
+  getChecklistRunDetail,
+  listChecklistRuns,
+  recordItemAction,
+  saveItemNote,
+  startOrResumeRun,
+  submitChecklistRun,
+  submitItemEvidence,
+} from "@/server/checklists/runs";
+import {
+  createChecklist,
+  getChecklistDetail,
+  getChecklistForEmployee,
+  listChecklists,
+  updateChecklist,
+} from "@/server/checklists/service";
 import {
   decideApprovalSubmission,
   getApprovalSubmissionDetail,
@@ -4719,6 +4737,522 @@ async function verifyDatabase(): Promise<void> {
     );
   }
 
+  // --- Phase 12: checklists as a separate aggregate ---
+
+  let unauthorizedChecklistCreateRejected = false;
+  try {
+    await createChecklist(
+      riversideManagerContext,
+      {
+        title: "Closing Checklist",
+        description: "",
+        type: "closing",
+        recurrenceType: "daily",
+        status: "active",
+        locationId: seedIds.locations.downtown,
+        stationId: null,
+        items: [
+          {
+            title: "Lock the doors",
+            instructions: "",
+            isRequired: true,
+            timerSeconds: null,
+            requirePhoto: false,
+            requireApproval: false,
+            requireNote: false,
+            referenceFileId: null,
+          },
+        ],
+      },
+      "verify-phase12-checklist-create-unauthorized-rejected",
+    );
+  } catch {
+    unauthorizedChecklistCreateRejected = true;
+  }
+  if (!unauthorizedChecklistCreateRejected) {
+    throw new Error("A manager without access to the location created a checklist");
+  }
+
+  const closingChecklist = await createChecklist(
+    managerContext,
+    {
+      title: "Closing Checklist",
+      description: "End of day closing tasks.",
+      type: "closing",
+      recurrenceType: "daily",
+      status: "active",
+      locationId: seedIds.locations.downtown,
+      stationId: null,
+      items: [
+        {
+          title: "Empty all trash",
+          instructions: "",
+          isRequired: true,
+          timerSeconds: null,
+          requirePhoto: false,
+          requireApproval: false,
+          requireNote: false,
+          referenceFileId: null,
+        },
+        {
+          title: "Sanitize the grill",
+          instructions: "Contact time matters.",
+          isRequired: true,
+          timerSeconds: 60,
+          requirePhoto: false,
+          requireApproval: false,
+          requireNote: false,
+          referenceFileId: null,
+        },
+        {
+          title: "Submit closing photo",
+          instructions: "",
+          isRequired: true,
+          timerSeconds: null,
+          requirePhoto: true,
+          requireApproval: true,
+          requireNote: false,
+          referenceFileId: null,
+        },
+        {
+          title: "Leave a shift note",
+          instructions: "",
+          isRequired: true,
+          timerSeconds: null,
+          requirePhoto: false,
+          requireApproval: false,
+          requireNote: true,
+          referenceFileId: null,
+        },
+      ],
+    },
+    "verify-phase12-checklist-create",
+  );
+  if (closingChecklist.items.length !== 4) {
+    throw new Error("Checklist creation did not persist every item");
+  }
+  const [tickItem, timerItem, photoItem, noteItem] = closingChecklist.items;
+  if (!tickItem || !timerItem || !photoItem || !noteItem) {
+    throw new Error("Checklist creation did not return every item in order");
+  }
+
+  let duplicateChecklistTitleRejected = false;
+  try {
+    await createChecklist(
+      managerContext,
+      {
+        title: "Closing Checklist",
+        description: "",
+        type: "closing",
+        recurrenceType: "once",
+        status: "active",
+        locationId: seedIds.locations.downtown,
+        stationId: null,
+        items: [
+          {
+            title: "Item",
+            instructions: "",
+            isRequired: true,
+            timerSeconds: null,
+            requirePhoto: false,
+            requireApproval: false,
+            requireNote: false,
+            referenceFileId: null,
+          },
+        ],
+      },
+      "verify-phase12-checklist-duplicate-title-rejected",
+    );
+  } catch {
+    duplicateChecklistTitleRejected = true;
+  }
+  if (!duplicateChecklistTitleRejected) {
+    throw new Error("A duplicate checklist title at the same location was accepted");
+  }
+
+  const checklistEmployee = await createEmployee(managerContext, {
+    primaryLocationId: seedIds.locations.downtown,
+    employeeNumber: "9201",
+    displayName: "Riley Checklist",
+    jobRole: "Cook",
+    language: "en",
+    pin: "9201",
+    status: "active",
+  });
+  const rileyContext = await loginNewEmployee("9201", "9201", "phase12-riley");
+  if (checklistEmployee.primaryLocationId !== seedIds.locations.downtown) {
+    throw new Error(
+      "The Phase 12 checklist employee fixture was not created at the expected location",
+    );
+  }
+
+  const checklistDetailForManager = await getChecklistDetail(managerContext, closingChecklist.id);
+  if (checklistDetailForManager.items.length !== 4) {
+    throw new Error("Reading a checklist's detail did not return its active items");
+  }
+  const checklistForEmployee = await getChecklistForEmployee(rileyContext, closingChecklist.id);
+  if (checklistForEmployee.items.length !== 4) {
+    throw new Error("The employee-facing checklist read did not return its active items");
+  }
+
+  const startedRun = await startOrResumeRun(
+    rileyContext,
+    closingChecklist.id,
+    "verify-phase12-run-start",
+  );
+  if (startedRun.items.length !== 4 || startedRun.items.some((item) => item.isDone)) {
+    throw new Error("Starting a checklist run did not create fresh pending progress");
+  }
+  const resumedRun = await startOrResumeRun(
+    rileyContext,
+    closingChecklist.id,
+    "verify-phase12-run-resume",
+  );
+  if (resumedRun.id !== startedRun.id) {
+    throw new Error("Resuming an in-progress checklist run created a second run instead");
+  }
+
+  let plainTickOnAutoItemRejected = false;
+  try {
+    await recordItemAction(
+      rileyContext,
+      startedRun.id,
+      timerItem.id,
+      { action: "ticked", expectedRevision: resumedRun.revision },
+      "verify-phase12-tick-timer-item-rejected",
+    );
+  } catch {
+    plainTickOnAutoItemRejected = true;
+  }
+  if (!plainTickOnAutoItemRejected) {
+    throw new Error("A manual tick action was accepted on an item with an automatic requirement");
+  }
+
+  const afterTick = await recordItemAction(
+    rileyContext,
+    startedRun.id,
+    tickItem.id,
+    { action: "ticked", expectedRevision: resumedRun.revision },
+    "verify-phase12-tick",
+  );
+  if (!afterTick.items.find((item) => item.id === tickItem.id)?.isDone) {
+    throw new Error("Ticking a plain checklist item did not mark it done");
+  }
+
+  const afterTimerItem = await recordItemAction(
+    rileyContext,
+    startedRun.id,
+    timerItem.id,
+    { action: "timer_completed", expectedRevision: afterTick.revision },
+    "verify-phase12-timer-complete",
+  );
+  if (!afterTimerItem.items.find((item) => item.id === timerItem.id)?.isDone) {
+    throw new Error("Completing a checklist item's timer did not mark it done");
+  }
+
+  let checklistPrematureSubmitRejected = false;
+  try {
+    await submitChecklistRun(
+      rileyContext,
+      startedRun.id,
+      afterTimerItem.revision,
+      "verify-phase12-premature-submit-rejected",
+    );
+  } catch {
+    checklistPrematureSubmitRejected = true;
+  }
+  if (!checklistPrematureSubmitRejected) {
+    throw new Error("Submitting a checklist run with incomplete required items was accepted");
+  }
+
+  const smallPngForChecklist = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+    "base64",
+  );
+  let evidenceOnNonPhotoItemRejected = false;
+  try {
+    const wrongItemForm = new FormData();
+    wrongItemForm.set(
+      "file",
+      new File([new Uint8Array(smallPngForChecklist)], "wrong-item.png", { type: "image/png" }),
+    );
+    await submitItemEvidence(
+      rileyContext,
+      startedRun.id,
+      tickItem.id,
+      wrongItemForm,
+      { employeeNote: "", expectedRevision: afterTimerItem.revision },
+      "verify-phase12-evidence-wrong-item-rejected",
+    );
+  } catch {
+    evidenceOnNonPhotoItemRejected = true;
+  }
+  if (!evidenceOnNonPhotoItemRejected) {
+    throw new Error("Photo evidence was accepted for a checklist item that does not require one");
+  }
+
+  const photoForm = new FormData();
+  photoForm.set(
+    "file",
+    new File([new Uint8Array(smallPngForChecklist)], "closing.png", { type: "image/png" }),
+  );
+  const afterPhoto = await submitItemEvidence(
+    rileyContext,
+    startedRun.id,
+    photoItem.id,
+    photoForm,
+    { employeeNote: "Grill area clean", expectedRevision: afterTimerItem.revision },
+    "verify-phase12-evidence-upload",
+  );
+  if (!afterPhoto.items.find((item) => item.id === photoItem.id)?.isDone) {
+    throw new Error("Uploading required photo evidence did not mark the checklist item done");
+  }
+
+  const afterNote = await saveItemNote(
+    rileyContext,
+    startedRun.id,
+    noteItem.id,
+    {
+      employeeNote: "Fryer oil changed, all stations restocked.",
+      expectedRevision: afterPhoto.revision,
+    },
+    "verify-phase12-note-save",
+  );
+  if (!afterNote.items.find((item) => item.id === noteItem.id)?.isDone) {
+    throw new Error("Saving a required checklist item note did not mark it done");
+  }
+
+  const submittedRun = await submitChecklistRun(
+    rileyContext,
+    startedRun.id,
+    afterNote.revision,
+    "verify-phase12-submit",
+  );
+  if (submittedRun.status !== "awaiting_approval") {
+    throw new Error(
+      "Submitting a checklist run with an approval-required item did not route for review",
+    );
+  }
+
+  let duplicateOccurrenceWhileAwaitingRejected = false;
+  try {
+    await startOrResumeRun(
+      rileyContext,
+      closingChecklist.id,
+      "verify-phase12-duplicate-occurrence-awaiting-rejected",
+    );
+  } catch {
+    duplicateOccurrenceWhileAwaitingRejected = true;
+  }
+  if (!duplicateOccurrenceWhileAwaitingRejected) {
+    throw new Error(
+      "A second checklist run was started for the same day while one was awaiting review",
+    );
+  }
+
+  let unauthorizedDecideRejected = false;
+  try {
+    await decideChecklistRun(
+      riversideManagerContext,
+      submittedRun.id,
+      { decision: "approved", note: "" },
+      "verify-phase12-decide-unauthorized-rejected",
+    );
+  } catch {
+    unauthorizedDecideRejected = true;
+  }
+  if (!unauthorizedDecideRejected) {
+    throw new Error("A manager without access to the location decided a checklist run");
+  }
+
+  await decideChecklistRun(
+    scopedManagerContext,
+    submittedRun.id,
+    { decision: "needs_correction", note: "The closing photo is blurry, retake it." },
+    "verify-phase12-decide-needs-correction",
+  );
+  const afterChecklistCorrectionRequest = await getChecklistRunDetail(
+    scopedManagerContext,
+    submittedRun.id,
+  );
+  if (
+    afterChecklistCorrectionRequest.status !== "awaiting_approval" ||
+    afterChecklistCorrectionRequest.submission?.status !== "needs_correction"
+  ) {
+    throw new Error("Requesting a checklist correction did not leave the run awaiting review");
+  }
+
+  const replacementPhotoForm = new FormData();
+  replacementPhotoForm.set(
+    "file",
+    new File([new Uint8Array(smallPngForChecklist)], "closing-retake.png", { type: "image/png" }),
+  );
+  const afterChecklistResubmit = await submitItemEvidence(
+    rileyContext,
+    startedRun.id,
+    photoItem.id,
+    replacementPhotoForm,
+    { employeeNote: "Retaken, in focus", expectedRevision: afterNote.revision },
+    "verify-phase12-correction-resubmit",
+  );
+  if (afterChecklistResubmit.status !== "awaiting_approval") {
+    throw new Error("Resubmitting a checklist correction changed the run out of review");
+  }
+  const resubmittedPhotoItem = afterChecklistResubmit.items.find(
+    (item) => item.id === photoItem.id,
+  );
+  if (!resubmittedPhotoItem || resubmittedPhotoItem.evidence.length !== 2) {
+    throw new Error("Correction resubmission did not append replacement evidence");
+  }
+
+  let duplicateChecklistResubmitRejected = false;
+  try {
+    const secondReplacementForm = new FormData();
+    secondReplacementForm.set(
+      "file",
+      new File([new Uint8Array(smallPngForChecklist)], "closing-again.png", { type: "image/png" }),
+    );
+    await submitItemEvidence(
+      rileyContext,
+      startedRun.id,
+      photoItem.id,
+      secondReplacementForm,
+      { employeeNote: "", expectedRevision: afterChecklistResubmit.revision },
+      "verify-phase12-duplicate-resubmit-rejected",
+    );
+  } catch {
+    duplicateChecklistResubmitRejected = true;
+  }
+  if (!duplicateChecklistResubmitRejected) {
+    throw new Error("A checklist correction was resubmitted twice for the same decision");
+  }
+
+  const approvedRunDetail = await decideChecklistRun(
+    scopedManagerContext,
+    submittedRun.id,
+    { decision: "approved", note: "" },
+    "verify-phase12-decide-approved",
+  );
+  if (approvedRunDetail.status !== "submitted" || approvedRunDetail.submissions.length !== 2) {
+    throw new Error(
+      "Approving a resubmitted checklist run did not complete it with both generations retained",
+    );
+  }
+
+  const idempotentSubmit = await submitChecklistRun(
+    rileyContext,
+    startedRun.id,
+    999,
+    "verify-phase12-idempotent-submit",
+  );
+  if (idempotentSubmit.status !== "submitted") {
+    throw new Error("Resubmitting an already-submitted checklist run was not idempotent");
+  }
+
+  let duplicateOccurrenceAfterSubmitRejected = false;
+  try {
+    await startOrResumeRun(
+      rileyContext,
+      closingChecklist.id,
+      "verify-phase12-duplicate-occurrence-submitted-rejected",
+    );
+  } catch {
+    duplicateOccurrenceAfterSubmitRejected = true;
+  }
+  if (!duplicateOccurrenceAfterSubmitRejected) {
+    throw new Error("A second checklist run was started for the same day after one was submitted");
+  }
+
+  const riversideChecklists = await listChecklists(riversideManagerContext, {
+    locationId: "",
+    status: "",
+    type: "",
+  });
+  if (riversideChecklists.some((row) => row.id === closingChecklist.id)) {
+    throw new Error("A manager without access to the location could see its checklist");
+  }
+  const riversideRuns = await listChecklistRuns(riversideManagerContext, {
+    locationId: "",
+    status: "",
+  });
+  if (riversideRuns.some((row) => row.id === startedRun.id)) {
+    throw new Error("A manager without access to the location could see its checklist run");
+  }
+  const submittedRunsForOwner = await listChecklistRuns(managerContext, {
+    locationId: "",
+    status: "submitted",
+  });
+  if (!submittedRunsForOwner.some((row) => row.id === startedRun.id)) {
+    throw new Error("The submitted checklist run did not appear in the owner's run list");
+  }
+
+  const updatedChecklist = await updateChecklist(
+    managerContext,
+    closingChecklist.id,
+    {
+      title: closingChecklist.title,
+      description: closingChecklist.description,
+      type: closingChecklist.type,
+      recurrenceType: closingChecklist.recurrenceType,
+      status: closingChecklist.status,
+      items: [
+        {
+          id: tickItem.id,
+          title: tickItem.title,
+          instructions: tickItem.instructions,
+          isRequired: tickItem.isRequired,
+          timerSeconds: tickItem.timerSeconds,
+          requirePhoto: tickItem.requirePhoto,
+          requireApproval: tickItem.requireApproval,
+          requireNote: tickItem.requireNote,
+          referenceFileId: tickItem.referenceFileId,
+        },
+        {
+          id: timerItem.id,
+          title: timerItem.title,
+          instructions: timerItem.instructions,
+          isRequired: timerItem.isRequired,
+          timerSeconds: timerItem.timerSeconds,
+          requirePhoto: timerItem.requirePhoto,
+          requireApproval: timerItem.requireApproval,
+          requireNote: timerItem.requireNote,
+          referenceFileId: timerItem.referenceFileId,
+        },
+        {
+          id: noteItem.id,
+          title: noteItem.title,
+          instructions: noteItem.instructions,
+          isRequired: noteItem.isRequired,
+          timerSeconds: noteItem.timerSeconds,
+          requirePhoto: noteItem.requirePhoto,
+          requireApproval: noteItem.requireApproval,
+          requireNote: noteItem.requireNote,
+          referenceFileId: noteItem.referenceFileId,
+        },
+      ],
+    },
+    "verify-phase12-checklist-update-remove-item",
+  );
+  if (updatedChecklist.items.length !== 3) {
+    throw new Error("Editing a checklist did not reconcile its item list");
+  }
+  const disabledPhotoItem = await getDb()
+    .select()
+    .from(checklistItems)
+    .where(eq(checklistItems.id, photoItem.id))
+    .limit(1);
+  if (disabledPhotoItem[0]?.status !== "disabled") {
+    throw new Error(
+      "Removing an item with existing run history deleted it instead of disabling it",
+    );
+  }
+  const runDetailAfterItemRemoval = await getChecklistRunDetail(managerContext, startedRun.id);
+  if (!runDetailAfterItemRemoval.items.some((item) => item.id === photoItem.id)) {
+    throw new Error(
+      "A historical checklist run lost an item after it was removed from the definition",
+    );
+  }
+
   const actions = new Set(
     (await getDb().select({ action: auditEvents.action }).from(auditEvents)).map(
       (event) => event.action,
@@ -4766,6 +5300,16 @@ async function verifyDatabase(): Promise<void> {
     "training_path.updated",
     "qualification.awarded",
     "qualification.revoked",
+    "checklist.created",
+    "checklist.updated",
+    "checklist_run.started",
+    "checklist_run.resumed",
+    "checklist_run.item_progress_recorded",
+    "checklist_run.evidence_submitted",
+    "checklist_run.submitted",
+    "checklist_run.approval_decided",
+    "checklist_run.correction_requested",
+    "checklist_run.correction_resubmitted",
   ];
   if (requiredAuditActions.some((action) => !actions.has(action))) {
     throw new Error(
@@ -4776,7 +5320,7 @@ async function verifyDatabase(): Promise<void> {
   await verifyUpgradeMigration();
 
   process.stdout.write(
-    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, migrationConcurrencyLock: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true, employeeStationReader: true, employeeSopReader: true, employeeCategoryLibrary: true, employeeRecentViews: true, employeeMediaAuthorization: true, qrCreationAndTargetValidation: true, qrLocationScoping: true, qrRevocation: true, qrRotation: true, qrScanResolution: true, qrUnavailableTarget: true, qrEnumerationRateLimit: true, trainingConfigDefaultsAndScoping: true, trainingConfigStaleWriteRejection: true, trainingStepRequirementGuards: true, trainingQuestionCrudAndReorder: true, trainingPublishReadinessRules: true, trainingPublishedImmutability: true, trainingDraftCloning: true, trainingAssignmentCreationAndScoping: true, trainingSessionStartAndResume: true, trainingSequentialStepEnforcement: true, trainingWatchTimerQuestionEvidenceEnforcement: true, trainingDuplicateActionRejection: true, trainingScoringAndApprovalRouting: true, trainingSubmitIdempotency: true, trainingAttemptLimitsAndRetraining: true, bulkAssignmentAuthorizationScoping: true, bulkAssignmentByEmployeeListWithDueDate: true, bulkAssignmentByJobRole: true, bulkAssignmentByLocation: true, bulkAssignmentIndependentDuplicateSkip: true, approvalQueueLocationScoping: true, approvalEvidenceAuthorization: true, approvalDecisionNoteRules: true, approvalApprovedDecision: true, approvalRejectedDecision: true, approvalCorrectionRequest: true, approvalDecisionImmutability: true, correctionOwnershipEnforcement: true, correctionAppendOnlyEvidence: true, correctionResubmitIdempotency: true, approvalDecisionHistoryRetention: true, trainingPathAuthorizationScoping: true, trainingPathItemValidation: true, trainingPathOrderedBlocking: true, qualificationAward: true, qualificationRenewal: true, qualificationOverviewClassification: true, qualificationEmployeeView: true, qualificationRevocation: true, trainingPathArchiveStopsAwards: true })}\n`,
+    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, migrationConcurrencyLock: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true, employeeStationReader: true, employeeSopReader: true, employeeCategoryLibrary: true, employeeRecentViews: true, employeeMediaAuthorization: true, qrCreationAndTargetValidation: true, qrLocationScoping: true, qrRevocation: true, qrRotation: true, qrScanResolution: true, qrUnavailableTarget: true, qrEnumerationRateLimit: true, trainingConfigDefaultsAndScoping: true, trainingConfigStaleWriteRejection: true, trainingStepRequirementGuards: true, trainingQuestionCrudAndReorder: true, trainingPublishReadinessRules: true, trainingPublishedImmutability: true, trainingDraftCloning: true, trainingAssignmentCreationAndScoping: true, trainingSessionStartAndResume: true, trainingSequentialStepEnforcement: true, trainingWatchTimerQuestionEvidenceEnforcement: true, trainingDuplicateActionRejection: true, trainingScoringAndApprovalRouting: true, trainingSubmitIdempotency: true, trainingAttemptLimitsAndRetraining: true, bulkAssignmentAuthorizationScoping: true, bulkAssignmentByEmployeeListWithDueDate: true, bulkAssignmentByJobRole: true, bulkAssignmentByLocation: true, bulkAssignmentIndependentDuplicateSkip: true, approvalQueueLocationScoping: true, approvalEvidenceAuthorization: true, approvalDecisionNoteRules: true, approvalApprovedDecision: true, approvalRejectedDecision: true, approvalCorrectionRequest: true, approvalDecisionImmutability: true, correctionOwnershipEnforcement: true, correctionAppendOnlyEvidence: true, correctionResubmitIdempotency: true, approvalDecisionHistoryRetention: true, trainingPathAuthorizationScoping: true, trainingPathItemValidation: true, trainingPathOrderedBlocking: true, qualificationAward: true, qualificationRenewal: true, qualificationOverviewClassification: true, qualificationEmployeeView: true, qualificationRevocation: true, trainingPathArchiveStopsAwards: true, checklistAuthorizationScoping: true, checklistDuplicateTitleRejection: true, checklistRunStartAndResume: true, checklistAutoRequirementGuardsManualTick: true, checklistTimerPhotoNoteEnforcement: true, checklistSubmitRequiresAllRequiredItems: true, checklistDuplicateOccurrencePrevention: true, checklistApprovalRouting: true, checklistApprovalUnauthorizedRejection: true, checklistCorrectionRequestAndResubmit: true, checklistCorrectionResubmitIdempotency: true, checklistApprovalDecisionCompletesRun: true, checklistSubmitIdempotency: true, checklistRunListLocationScoping: true, checklistItemRemovalDisablesRatherThanDeletes: true, checklistHistoricalRunRetainsRemovedItem: true })}\n`,
   );
 }
 

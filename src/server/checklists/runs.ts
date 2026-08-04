@@ -65,7 +65,12 @@ function computeOccurrenceKey(
 }
 
 async function auditChecklistRun(
-  actor: { organizationId: string; locationId: string; actorKind: "employee" | "manager"; actorId: string },
+  actor: {
+    organizationId: string;
+    locationId: string;
+    actorKind: "employee" | "manager";
+    actorId: string;
+  },
   action:
     | "checklist_run.started"
     | "checklist_run.resumed"
@@ -118,7 +123,10 @@ async function loadRunComputation(organizationId: string, runId: string): Promis
         .select()
         .from(checklistItems)
         .where(
-          and(eq(checklistItems.organizationId, organizationId), inArray(checklistItems.id, itemIds)),
+          and(
+            eq(checklistItems.organizationId, organizationId),
+            inArray(checklistItems.id, itemIds),
+          ),
         )
         .orderBy(asc(checklistItems.displayOrder))
     : [];
@@ -291,10 +299,18 @@ export async function startOrResumeRun(
       .update(checklistRuns)
       .set({ lastResumedAt: new Date(), updatedAt: new Date() })
       .where(
-        and(eq(checklistRuns.id, latest.id), eq(checklistRuns.organizationId, session.organizationId)),
+        and(
+          eq(checklistRuns.id, latest.id),
+          eq(checklistRuns.organizationId, session.organizationId),
+        ),
       );
     await auditChecklistRun(
-      { organizationId: session.organizationId, locationId: session.locationId, actorKind: "employee", actorId: session.employeeId },
+      {
+        organizationId: session.organizationId,
+        locationId: session.locationId,
+        actorKind: "employee",
+        actorId: session.employeeId,
+      },
       "checklist_run.resumed",
       latest.id,
       requestId,
@@ -311,7 +327,12 @@ export async function startOrResumeRun(
   const [location] = await getDb()
     .select({ timezone: locations.timezone })
     .from(locations)
-    .where(and(eq(locations.id, session.locationId), eq(locations.organizationId, session.organizationId)))
+    .where(
+      and(
+        eq(locations.id, session.locationId),
+        eq(locations.organizationId, session.organizationId),
+      ),
+    )
     .limit(1);
   if (!location) throw new AppError("NOT_FOUND", "Location not found.");
 
@@ -332,7 +353,12 @@ export async function startOrResumeRun(
 
   const runId = randomUUID();
   const now = new Date();
-  const occurrenceKey = computeOccurrenceKey(checklist.recurrenceType, runId, now, location.timezone);
+  const occurrenceKey = computeOccurrenceKey(
+    checklist.recurrenceType,
+    runId,
+    now,
+    location.timezone,
+  );
 
   try {
     await getDb().transaction(async (tx) => {
@@ -358,7 +384,9 @@ export async function startOrResumeRun(
     });
   } catch (error: unknown) {
     const code =
-      error && typeof error === "object" && "code" in error ? (error as { code?: string }).code : undefined;
+      error && typeof error === "object" && "code" in error
+        ? (error as { code?: string }).code
+        : undefined;
     if (code === "23505") {
       throw new AppError("CONFLICT", "This checklist has already been started for this period.");
     }
@@ -366,7 +394,12 @@ export async function startOrResumeRun(
   }
 
   await auditChecklistRun(
-    { organizationId: session.organizationId, locationId: session.locationId, actorKind: "employee", actorId: session.employeeId },
+    {
+      organizationId: session.organizationId,
+      locationId: session.locationId,
+      actorKind: "employee",
+      actorId: session.employeeId,
+    },
     "checklist_run.started",
     runId,
     requestId,
@@ -445,7 +478,12 @@ export async function recordItemAction(
   });
 
   await auditChecklistRun(
-    { organizationId: session.organizationId, locationId: session.locationId, actorKind: "employee", actorId: session.employeeId },
+    {
+      organizationId: session.organizationId,
+      locationId: session.locationId,
+      actorKind: "employee",
+      actorId: session.employeeId,
+    },
     "checklist_run.item_progress_recorded",
     runId,
     requestId,
@@ -488,7 +526,12 @@ export async function saveItemNote(
   });
 
   await auditChecklistRun(
-    { organizationId: session.organizationId, locationId: session.locationId, actorKind: "employee", actorId: session.employeeId },
+    {
+      organizationId: session.organizationId,
+      locationId: session.locationId,
+      actorKind: "employee",
+      actorId: session.employeeId,
+    },
     "checklist_run.item_progress_recorded",
     runId,
     requestId,
@@ -559,7 +602,12 @@ export async function submitItemEvidence(
     });
 
     await auditChecklistRun(
-      { organizationId: session.organizationId, locationId: session.locationId, actorKind: "employee", actorId: session.employeeId },
+      {
+        organizationId: session.organizationId,
+        locationId: session.locationId,
+        actorKind: "employee",
+        actorId: session.employeeId,
+      },
       "checklist_run.evidence_submitted",
       runId,
       requestId,
@@ -632,7 +680,12 @@ export async function submitItemEvidence(
     });
 
     await auditChecklistRun(
-      { organizationId: session.organizationId, locationId: session.locationId, actorKind: "employee", actorId: session.employeeId },
+      {
+        organizationId: session.organizationId,
+        locationId: session.locationId,
+        actorKind: "employee",
+        actorId: session.employeeId,
+      },
       "checklist_run.correction_resubmitted",
       runId,
       requestId,
@@ -693,7 +746,12 @@ export async function submitChecklistRun(
   });
 
   await auditChecklistRun(
-    { organizationId: session.organizationId, locationId: session.locationId, actorKind: "employee", actorId: session.employeeId },
+    {
+      organizationId: session.organizationId,
+      locationId: session.locationId,
+      actorKind: "employee",
+      actorId: session.employeeId,
+    },
     "checklist_run.submitted",
     runId,
     requestId,
@@ -749,15 +807,24 @@ export async function listChecklistRuns(actor: ManagerSessionContext, query: Che
     .from(checklistRuns)
     .innerJoin(
       checklists,
-      and(eq(checklists.id, checklistRuns.checklistId), eq(checklists.organizationId, checklistRuns.organizationId)),
+      and(
+        eq(checklists.id, checklistRuns.checklistId),
+        eq(checklists.organizationId, checklistRuns.organizationId),
+      ),
     )
     .innerJoin(
       employees,
-      and(eq(employees.id, checklistRuns.employeeId), eq(employees.organizationId, checklistRuns.organizationId)),
+      and(
+        eq(employees.id, checklistRuns.employeeId),
+        eq(employees.organizationId, checklistRuns.organizationId),
+      ),
     )
     .innerJoin(
       locations,
-      and(eq(locations.id, checklistRuns.locationId), eq(locations.organizationId, checklistRuns.organizationId)),
+      and(
+        eq(locations.id, checklistRuns.locationId),
+        eq(locations.organizationId, checklistRuns.organizationId),
+      ),
     )
     .where(and(...conditions))
     .orderBy(desc(checklistRuns.updatedAt))
@@ -780,11 +847,17 @@ export async function getChecklistRunDetail(actor: ManagerSessionContext, runId:
     .from(checklistRuns)
     .innerJoin(
       employees,
-      and(eq(employees.id, checklistRuns.employeeId), eq(employees.organizationId, checklistRuns.organizationId)),
+      and(
+        eq(employees.id, checklistRuns.employeeId),
+        eq(employees.organizationId, checklistRuns.organizationId),
+      ),
     )
     .innerJoin(
       locations,
-      and(eq(locations.id, checklistRuns.locationId), eq(locations.organizationId, checklistRuns.organizationId)),
+      and(
+        eq(locations.id, checklistRuns.locationId),
+        eq(locations.organizationId, checklistRuns.organizationId),
+      ),
     )
     .where(eq(checklistRuns.id, runId))
     .limit(1);

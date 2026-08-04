@@ -144,7 +144,9 @@ describe("Phase 12 checklist item action schema", () => {
   });
 
   it("rejects a non-positive expected revision", () => {
-    expect(() => checklistItemActionSchema.parse({ action: "ticked", expectedRevision: 0 })).toThrow();
+    expect(() =>
+      checklistItemActionSchema.parse({ action: "ticked", expectedRevision: 0 }),
+    ).toThrow();
   });
 });
 
@@ -180,7 +182,9 @@ describe("Phase 12 checklist approval decision schema", () => {
   });
 
   it("requires a non-empty note to reject", () => {
-    expect(() => checklistApprovalDecisionSchema.parse({ decision: "rejected", note: "" })).toThrow();
+    expect(() =>
+      checklistApprovalDecisionSchema.parse({ decision: "rejected", note: "" }),
+    ).toThrow();
     expect(
       checklistApprovalDecisionSchema.parse({ decision: "rejected", note: "Missed a spot." }).note,
     ).toBe("Missed a spot.");

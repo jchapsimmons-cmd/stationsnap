@@ -3,10 +3,7 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { ArrowDown, ArrowUp, Plus, Trash } from "@phosphor-icons/react";
-import {
-  CHECKLIST_RECURRENCE_LABELS,
-  CHECKLIST_TYPE_LABELS,
-} from "@/components/checklists/status";
+import { CHECKLIST_RECURRENCE_LABELS, CHECKLIST_TYPE_LABELS } from "@/components/checklists/status";
 import { Button, Card, Checkbox, Input, Select, Textarea } from "@/components/ui";
 
 interface ApiResult<T> {
@@ -136,7 +133,9 @@ export function ChecklistForm({
   }
 
   function updateItem(index: number, patch: Partial<ChecklistItemDraft>) {
-    setItems((prev) => prev.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item)));
+    setItems((prev) =>
+      prev.map((item, itemIndex) => (itemIndex === index ? { ...item, ...patch } : item)),
+    );
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -245,7 +244,10 @@ export function ChecklistForm({
           {isEdit && checklist ? (
             <div className="field">
               <span className="field__label">Station</span>
-              <p>{stations.find((station) => station.id === checklist.stationId)?.name ?? "Any station"}</p>
+              <p>
+                {stations.find((station) => station.id === checklist.stationId)?.name ??
+                  "Any station"}
+              </p>
             </div>
           ) : (
             <Select
@@ -372,7 +374,9 @@ export function ChecklistForm({
                       id={`checklist-item-photo-${index}`}
                       label="Require photo"
                       checked={item.requirePhoto}
-                      onChange={(event) => updateItem(index, { requirePhoto: event.target.checked })}
+                      onChange={(event) =>
+                        updateItem(index, { requirePhoto: event.target.checked })
+                      }
                     />
                     <Checkbox
                       id={`checklist-item-note-${index}`}
@@ -384,7 +388,9 @@ export function ChecklistForm({
                       id={`checklist-item-approval-${index}`}
                       label="Require manager approval"
                       checked={item.requireApproval}
-                      onChange={(event) => updateItem(index, { requireApproval: event.target.checked })}
+                      onChange={(event) =>
+                        updateItem(index, { requireApproval: event.target.checked })
+                      }
                     />
                     <Button type="button" variant="danger" onClick={() => removeItem(index)}>
                       <Trash size={18} aria-hidden="true" />

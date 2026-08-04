@@ -24,7 +24,10 @@ export default async function ManagerChecklistDetailPage({
         title={checklist.title}
         description={`${CHECKLIST_TYPE_LABELS[checklist.type] ?? checklist.type} · ${CHECKLIST_RECURRENCE_LABELS[checklist.recurrenceType] ?? checklist.recurrenceType}`}
         actions={
-          <Link className="button button--secondary" href={`/manager/checklists/${checklist.id}/edit`}>
+          <Link
+            className="button button--secondary"
+            href={`/manager/checklists/${checklist.id}/edit`}
+          >
             Edit checklist
           </Link>
         }

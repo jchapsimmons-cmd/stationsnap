@@ -1760,7 +1760,10 @@ export const checklistApprovalDecisions = pgTable(
   (table) => [
     foreignKey({
       columns: [table.submissionId, table.organizationId],
-      foreignColumns: [checklistApprovalSubmissions.id, checklistApprovalSubmissions.organizationId],
+      foreignColumns: [
+        checklistApprovalSubmissions.id,
+        checklistApprovalSubmissions.organizationId,
+      ],
       name: "checklist_approval_decisions_submission_org_fk",
     }).onDelete("restrict"),
     unique("checklist_approval_decisions_id_org_unique").on(table.id, table.organizationId),
@@ -1789,7 +1792,10 @@ export const checklistCorrectionRequests = pgTable(
   (table) => [
     foreignKey({
       columns: [table.submissionId, table.organizationId],
-      foreignColumns: [checklistApprovalSubmissions.id, checklistApprovalSubmissions.organizationId],
+      foreignColumns: [
+        checklistApprovalSubmissions.id,
+        checklistApprovalSubmissions.organizationId,
+      ],
       name: "checklist_correction_requests_submission_org_fk",
     }).onDelete("restrict"),
     foreignKey({
@@ -1799,7 +1805,10 @@ export const checklistCorrectionRequests = pgTable(
     }).onDelete("restrict"),
     foreignKey({
       columns: [table.resolvedSubmissionId, table.organizationId],
-      foreignColumns: [checklistApprovalSubmissions.id, checklistApprovalSubmissions.organizationId],
+      foreignColumns: [
+        checklistApprovalSubmissions.id,
+        checklistApprovalSubmissions.organizationId,
+      ],
       name: "checklist_correction_requests_resolved_submission_org_fk",
     }).onDelete("restrict"),
     unique("checklist_correction_requests_decision_uidx").on(table.decisionId),

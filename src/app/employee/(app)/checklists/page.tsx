@@ -43,7 +43,8 @@ export default async function EmployeeChecklistsPage() {
                   <strong>{checklist.title}</strong>
                   <small>
                     {CHECKLIST_TYPE_LABELS[checklist.type] ?? checklist.type} ·{" "}
-                    {CHECKLIST_RECURRENCE_LABELS[checklist.recurrenceType] ?? checklist.recurrenceType}
+                    {CHECKLIST_RECURRENCE_LABELS[checklist.recurrenceType] ??
+                      checklist.recurrenceType}
                     {checklist.stationName ? ` · ${checklist.stationName}` : ""}
                   </small>
                 </span>

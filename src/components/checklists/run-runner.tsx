@@ -284,7 +284,11 @@ export function ChecklistRunRunner({
               )}
 
               {(item.requireNote || item.employeeNote) && (
-                <ItemNoteField item={item} disabled={disabled} onSave={(note) => saveNote(item.id, note)} />
+                <ItemNoteField
+                  item={item}
+                  disabled={disabled}
+                  onSave={(note) => saveNote(item.id, note)}
+                />
               )}
             </Card>
           </li>
@@ -292,7 +296,11 @@ export function ChecklistRunRunner({
       </ol>
 
       {state.status === "in_progress" && (
-        <Button type="button" disabled={!allRequiredDone || submitPending} onClick={() => void submitRun()}>
+        <Button
+          type="button"
+          disabled={!allRequiredDone || submitPending}
+          onClick={() => void submitRun()}
+        >
           {submitPending ? "Submitting…" : "Submit checklist"}
         </Button>
       )}
