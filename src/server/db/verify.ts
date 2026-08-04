@@ -46,7 +46,12 @@ import {
   updateOrganization,
   updateStation,
 } from "@/server/management/service";
-import { files as filesTable, qrScanEvents } from "@/server/db/schema";
+import {
+  approvalSubmissions,
+  files as filesTable,
+  qrScanEvents,
+  trainingAssignments,
+} from "@/server/db/schema";
 import {
   createQrCode,
   getQrCode,
@@ -91,6 +96,16 @@ import {
   updateTrainingQuestion,
 } from "@/server/sops/service";
 import { getMediaFileForEmployee, uploadMedia } from "@/server/storage/media-service";
+import {
+  assignTraining,
+  getAssignmentDetail,
+  getSessionState,
+  recordStepAction,
+  startOrResumeSession,
+  submitAnswer,
+  submitSession,
+  submitStepEvidence,
+} from "@/server/training/service";
 
 const port = 55_439;
 const database = "stationsnap_verify";
@@ -2453,6 +2468,709 @@ async function verifyDatabase(): Promise<void> {
     throw new Error("Cloning a draft did not carry over question choices and correctness");
   }
 
+  // --- Phase 8: training session state machine, evidence, attempts, grading, and resume ---
+
+  const engineDraft = await createSop(
+    managerContext,
+    {
+      title: "Grill startup checklist training",
+      description: "Startup safety training for the grill station",
+      category: "safety",
+      locationId: seedIds.locations.downtown,
+      stationId: seedIds.stations.grill,
+      estimatedMinutes: 5,
+      difficulty: "beginner",
+      coverImageFileId: null,
+      sourceVideoFileId: null,
+      materials: [],
+      warnings: [],
+    },
+    "verify-phase8-sop-create",
+  );
+  const engineVideo = await uploadTestVideo(managerContext);
+  const engineStepOneDraft = await createStep(
+    managerContext,
+    engineDraft.id,
+    {
+      title: "Watch the startup video",
+      instruction: "Watch the full grill startup video.",
+      imageFileId: null,
+      videoFileId: engineVideo.id,
+      warning: "",
+      quantity: "",
+      unit: "",
+      equipmentSetting: "",
+      timerSeconds: 5,
+      isRequired: true,
+      expectedRevision: engineDraft.version.revision,
+    },
+    "verify-phase8-step-one-create",
+  );
+  const engineStepTwoDraft = await createStep(
+    managerContext,
+    engineDraft.id,
+    {
+      title: "Confirm the grill is preheated",
+      instruction: "Confirm the grill has reached temperature and photograph the display.",
+      imageFileId: null,
+      videoFileId: null,
+      warning: "",
+      quantity: "",
+      unit: "",
+      equipmentSetting: "",
+      timerSeconds: null,
+      isRequired: true,
+      expectedRevision: engineStepOneDraft.version.revision,
+    },
+    "verify-phase8-step-two-create",
+  );
+  const engineStepOneId = engineStepTwoDraft.steps.find(
+    (step) => step.title === "Watch the startup video",
+  )!.id;
+  const engineStepTwoId = engineStepTwoDraft.steps.find(
+    (step) => step.title === "Confirm the grill is preheated",
+  )!.id;
+
+  const engineConfig = await updateTrainingConfig(
+    managerContext,
+    engineDraft.id,
+    {
+      requirementState: "required",
+      defaultMode: "guided",
+      allowBacktracking: true,
+      requireSequentialProgress: true,
+      requireFullVideoWatch: true,
+      requireEvidenceApproval: true,
+      passingScorePercent: 70,
+      maxAttempts: 2,
+      qualificationValidityDays: null,
+      retrainingGraceDays: null,
+      expectedRevision: engineStepTwoDraft.version.revision,
+    },
+    "verify-phase8-config-save",
+  );
+  const engineStepOneRequirements = await updateStepTrainingRequirements(
+    managerContext,
+    engineDraft.id,
+    engineStepOneId,
+    {
+      requireFullVideo: true,
+      requireConfirmation: false,
+      requireTimer: true,
+      requireQuestion: true,
+      requirePhoto: false,
+      requireVideo: false,
+      requireApproval: false,
+      expectedRevision: engineConfig.revision,
+    },
+    "verify-phase8-step-one-requirements",
+  );
+  const engineStepTwoRequirements = await updateStepTrainingRequirements(
+    managerContext,
+    engineDraft.id,
+    engineStepTwoId,
+    {
+      requireFullVideo: false,
+      requireConfirmation: true,
+      requireTimer: false,
+      requireQuestion: false,
+      requirePhoto: true,
+      requireVideo: false,
+      requireApproval: true,
+      expectedRevision: engineStepOneRequirements.revision,
+    },
+    "verify-phase8-step-two-requirements",
+  );
+  const engineStepOneQuestion = await createTrainingQuestion(
+    managerContext,
+    engineDraft.id,
+    {
+      stepId: engineStepOneId,
+      type: "single_choice",
+      text: "What should you do before starting the grill?",
+      explanation: "Always watch the safety video first.",
+      points: 2,
+      placement: "after_step",
+      explanationPolicy: "always",
+      choices: [
+        { text: "Watch the safety video", isCorrect: true },
+        { text: "Turn on the fryer", isCorrect: false },
+      ],
+      expectedRevision: engineStepTwoRequirements.revision,
+    },
+    "verify-phase8-question-step-one-create",
+  );
+  const engineStepOneQuestionId = engineStepOneQuestion.questions.find(
+    (question) => question.stepId === engineStepOneId,
+  )!.id;
+  const engineStepOneCorrectChoiceId = engineStepOneQuestion.questions
+    .find((question) => question.stepId === engineStepOneId)!
+    .choices.find((choice) => choice.isCorrect)!.id;
+  const engineFinalQuestion = await createTrainingQuestion(
+    managerContext,
+    engineDraft.id,
+    {
+      stepId: null,
+      type: "true_false",
+      text: "The grill must reach temperature before cooking.",
+      explanation: "",
+      points: 1,
+      placement: "final",
+      explanationPolicy: "on_incorrect",
+      choices: [
+        { text: "True", isCorrect: true },
+        { text: "False", isCorrect: false },
+      ],
+      expectedRevision: engineStepOneQuestion.revision,
+    },
+    "verify-phase8-question-final-create",
+  );
+  const engineFinalQuestionId = engineFinalQuestion.questions.find(
+    (question) => question.placement === "final",
+  )!.id;
+  const engineFinalCorrectChoiceId = engineFinalQuestion.questions
+    .find((question) => question.id === engineFinalQuestionId)!
+    .choices.find((choice) => choice.isCorrect)!.id;
+
+  const enginePublished = await publishSop(
+    managerContext,
+    engineDraft.id,
+    {
+      expectedRevision: engineFinalQuestion.revision,
+      changeSummary: "",
+      retrainingRule: { type: "none" },
+    },
+    "verify-phase8-publish",
+  );
+  if (enginePublished.status !== "published") {
+    throw new Error("Publishing the Phase 8 training fixture did not succeed");
+  }
+
+  let crossLocationAssignmentRejected = false;
+  try {
+    await assignTraining(
+      managerContext,
+      { employeeId: employeeSeed[3].id, sopId: engineDraft.id },
+      "verify-phase8-assign-cross-location-rejected",
+    );
+  } catch {
+    crossLocationAssignmentRejected = true;
+  }
+  if (!crossLocationAssignmentRejected) {
+    throw new Error("An assignment was created for an employee outside the SOP's location");
+  }
+
+  const engineAssignment = await assignTraining(
+    managerContext,
+    { employeeId: employeeSeed[0].id, sopId: engineDraft.id },
+    "verify-phase8-assign-create",
+  );
+  if (engineAssignment.status !== "assigned" || engineAssignment.requiredMode !== "guided") {
+    throw new Error("Assignment creation did not persist the expected defaults");
+  }
+
+  let duplicateActiveAssignmentRejected = false;
+  try {
+    await assignTraining(
+      managerContext,
+      { employeeId: employeeSeed[0].id, sopId: engineDraft.id },
+      "verify-phase8-assign-duplicate-rejected",
+    );
+  } catch {
+    duplicateActiveAssignmentRejected = true;
+  }
+  if (!duplicateActiveAssignmentRejected) {
+    throw new Error("A duplicate active assignment was accepted");
+  }
+
+  let foreignAssignmentRejected = false;
+  try {
+    await getAssignmentDetail(riversideEmployeeContext, engineAssignment.id);
+  } catch {
+    foreignAssignmentRejected = true;
+  }
+  if (!foreignAssignmentRejected) {
+    throw new Error("An employee accessed another employee's training assignment");
+  }
+
+  const assignmentDetail = await getAssignmentDetail(employeeContext, engineAssignment.id);
+  if (assignmentDetail.maxAttempts !== 2 || assignmentDetail.attemptsUsed !== 0) {
+    throw new Error("Assignment detail did not reflect the training configuration");
+  }
+
+  const startedSession = await startOrResumeSession(
+    employeeContext,
+    engineAssignment.id,
+    "verify-phase8-session-start",
+  );
+  const resumedSession = await startOrResumeSession(
+    employeeContext,
+    engineAssignment.id,
+    "verify-phase8-session-resume",
+  );
+  if (resumedSession.id !== startedSession.id) {
+    throw new Error("Resuming an in-progress assignment created a second session");
+  }
+
+  const initialState = await getSessionState(
+    employeeContext,
+    engineAssignment.id,
+    startedSession.id,
+  );
+  if (initialState.currentStepId !== engineStepOneId || initialState.status !== "in_progress") {
+    throw new Error("A freshly started session did not resolve the first required step");
+  }
+
+  let prematureSubmitRejected = false;
+  try {
+    await submitSession(
+      employeeContext,
+      engineAssignment.id,
+      startedSession.id,
+      initialState.revision,
+      "verify-phase8-submit-premature-rejected",
+    );
+  } catch {
+    prematureSubmitRejected = true;
+  }
+  if (!prematureSubmitRejected) {
+    throw new Error("Submitting before required steps were complete was accepted");
+  }
+
+  let skippedStepRejected = false;
+  try {
+    await recordStepAction(
+      employeeContext,
+      engineAssignment.id,
+      startedSession.id,
+      engineStepTwoId,
+      "confirmed",
+      initialState.revision,
+      "verify-phase8-skip-step-rejected",
+    );
+  } catch {
+    skippedStepRejected = true;
+  }
+  if (!skippedStepRejected) {
+    throw new Error("A later step was completed before the current required step");
+  }
+
+  const afterVideoWatch = await recordStepAction(
+    employeeContext,
+    engineAssignment.id,
+    startedSession.id,
+    engineStepOneId,
+    "video_watched",
+    initialState.revision,
+    "verify-phase8-video-watched",
+  );
+  if (
+    !afterVideoWatch.steps.find((step) => step.id === engineStepOneId)!.progress.videoWatchedFully
+  ) {
+    throw new Error("Marking a video watched did not persist");
+  }
+
+  let duplicateVideoActionRejected = false;
+  try {
+    await recordStepAction(
+      employeeContext,
+      engineAssignment.id,
+      startedSession.id,
+      engineStepOneId,
+      "video_watched",
+      initialState.revision,
+      "verify-phase8-duplicate-action-rejected",
+    );
+  } catch {
+    duplicateVideoActionRejected = true;
+  }
+  if (!duplicateVideoActionRejected) {
+    throw new Error("Repeating a step action with a stale revision was accepted");
+  }
+
+  const afterTimer = await recordStepAction(
+    employeeContext,
+    engineAssignment.id,
+    startedSession.id,
+    engineStepOneId,
+    "timer_completed",
+    afterVideoWatch.revision,
+    "verify-phase8-timer-completed",
+  );
+  const afterQuestion = await submitAnswer(
+    employeeContext,
+    engineAssignment.id,
+    startedSession.id,
+    engineStepOneQuestionId,
+    [engineStepOneCorrectChoiceId],
+    afterTimer.revision,
+    "verify-phase8-answer-step-one",
+  );
+  if (
+    afterQuestion.steps.find((step) => step.id === engineStepOneId)!.progress.status !== "completed"
+  ) {
+    throw new Error(
+      "Step one did not complete once its video, timer, and question requirements were met",
+    );
+  }
+  if (afterQuestion.currentStepId !== engineStepTwoId) {
+    throw new Error("The authoritative current step did not advance to the next required step");
+  }
+
+  let videoOnStepWithoutVideoRejected = false;
+  try {
+    await recordStepAction(
+      employeeContext,
+      engineAssignment.id,
+      startedSession.id,
+      engineStepTwoId,
+      "video_watched",
+      afterQuestion.revision,
+      "verify-phase8-video-without-video-rejected",
+    );
+  } catch {
+    videoOnStepWithoutVideoRejected = true;
+  }
+  if (!videoOnStepWithoutVideoRejected) {
+    throw new Error("Marking a video watched was accepted for a step with no video");
+  }
+
+  const afterConfirm = await recordStepAction(
+    employeeContext,
+    engineAssignment.id,
+    startedSession.id,
+    engineStepTwoId,
+    "confirmed",
+    afterQuestion.revision,
+    "verify-phase8-confirm-step-two",
+  );
+
+  let evidenceOnWrongTypeRejected = false;
+  try {
+    const wrongTypeForm = new FormData();
+    wrongTypeForm.set(
+      "file",
+      new File([new Uint8Array(Buffer.from("not-a-real-video"))], "proof.mp4", {
+        type: "video/mp4",
+      }),
+    );
+    await submitStepEvidence(
+      employeeContext,
+      engineAssignment.id,
+      startedSession.id,
+      engineStepTwoId,
+      wrongTypeForm,
+      { employeeNote: "", expectedRevision: afterConfirm.revision },
+      "verify-phase8-evidence-wrong-type-rejected",
+    );
+  } catch {
+    evidenceOnWrongTypeRejected = true;
+  }
+  if (!evidenceOnWrongTypeRejected) {
+    throw new Error("Video evidence was accepted for a step that only requires a photo");
+  }
+
+  const evidenceForm = new FormData();
+  evidenceForm.set(
+    "file",
+    new File([new Uint8Array(smallPng)], "proof.png", { type: "image/png" }),
+  );
+  const afterEvidence = await submitStepEvidence(
+    employeeContext,
+    engineAssignment.id,
+    startedSession.id,
+    engineStepTwoId,
+    evidenceForm,
+    { employeeNote: "Grill display reads 400F", expectedRevision: afterConfirm.revision },
+    "verify-phase8-evidence-upload",
+  );
+  const stepTwoAfterEvidence = afterEvidence.steps.find((step) => step.id === engineStepTwoId)!;
+  if (
+    stepTwoAfterEvidence.progress.status !== "completed" ||
+    stepTwoAfterEvidence.evidence.length !== 1
+  ) {
+    throw new Error("Uploading required evidence did not complete the step");
+  }
+  if (!afterEvidence.allRequiredStepsDone) {
+    throw new Error("All required steps were completed but the session did not recognize it");
+  }
+
+  const employeeUploadedEvidenceFile = await getMediaFileForEmployee(
+    employeeContext,
+    stepTwoAfterEvidence.evidence[0]!.fileId,
+  );
+  if (employeeUploadedEvidenceFile.mimeType !== "image/png") {
+    throw new Error("The employee could not read back their own submitted evidence");
+  }
+
+  let finalSubmitWithoutAnswerRejected = false;
+  try {
+    await submitSession(
+      employeeContext,
+      engineAssignment.id,
+      startedSession.id,
+      afterEvidence.revision,
+      "verify-phase8-submit-without-final-answer-rejected",
+    );
+  } catch {
+    finalSubmitWithoutAnswerRejected = true;
+  }
+  if (!finalSubmitWithoutAnswerRejected) {
+    throw new Error("Submitting without answering the final question was accepted");
+  }
+
+  const afterFinalAnswer = await submitAnswer(
+    employeeContext,
+    engineAssignment.id,
+    startedSession.id,
+    engineFinalQuestionId,
+    [engineFinalCorrectChoiceId],
+    afterEvidence.revision,
+    "verify-phase8-final-answer",
+  );
+  if (!afterFinalAnswer.finalQuestionsAnswered) {
+    throw new Error("Answering the final question was not recorded");
+  }
+
+  const submittedSession = await submitSession(
+    employeeContext,
+    engineAssignment.id,
+    startedSession.id,
+    afterFinalAnswer.revision,
+    "verify-phase8-submit",
+  );
+  if (submittedSession.status !== "awaiting_approval") {
+    throw new Error("A session with an approval-required step did not route to manager approval");
+  }
+  if (submittedSession.scorePercent !== 100) {
+    throw new Error("A fully correct attempt did not score 100 percent");
+  }
+
+  const pendingApprovals = await getDb()
+    .select()
+    .from(approvalSubmissions)
+    .where(eq(approvalSubmissions.sessionId, startedSession.id));
+  if (pendingApprovals.length !== 1 || pendingApprovals[0]?.status !== "pending") {
+    throw new Error(
+      "Submitting a session requiring approval did not create exactly one pending approval submission",
+    );
+  }
+
+  const idempotentResubmit = await submitSession(
+    employeeContext,
+    engineAssignment.id,
+    startedSession.id,
+    afterFinalAnswer.revision,
+    "verify-phase8-resubmit-idempotent",
+  );
+  if (idempotentResubmit.status !== "awaiting_approval") {
+    throw new Error("Resubmitting an already-submitted session was not idempotent");
+  }
+  const approvalsAfterResubmit = await getDb()
+    .select()
+    .from(approvalSubmissions)
+    .where(eq(approvalSubmissions.sessionId, startedSession.id));
+  if (approvalsAfterResubmit.length !== 1) {
+    throw new Error("An offline retry of submit created a duplicate approval submission");
+  }
+
+  // Second fixture: no approval/evidence, used to exercise auto-graded failure and attempt limits.
+  const attemptLimitDraft = await createSop(
+    managerContext,
+    {
+      title: "Knife safety quiz",
+      description: "Quick knife safety comprehension check",
+      category: "safety",
+      locationId: seedIds.locations.downtown,
+      stationId: seedIds.stations.prep,
+      estimatedMinutes: 3,
+      difficulty: "beginner",
+      coverImageFileId: null,
+      sourceVideoFileId: null,
+      materials: [],
+      warnings: [],
+    },
+    "verify-phase8-attempt-limit-sop-create",
+  );
+  const attemptLimitStep = await createStep(
+    managerContext,
+    attemptLimitDraft.id,
+    {
+      title: "Answer the safety question",
+      instruction: "Answer the knife safety question.",
+      imageFileId: null,
+      videoFileId: null,
+      warning: "",
+      quantity: "",
+      unit: "",
+      equipmentSetting: "",
+      timerSeconds: null,
+      isRequired: true,
+      expectedRevision: attemptLimitDraft.version.revision,
+    },
+    "verify-phase8-attempt-limit-step-create",
+  );
+  const attemptLimitStepId = attemptLimitStep.steps[0]!.id;
+  const attemptLimitConfig = await updateTrainingConfig(
+    managerContext,
+    attemptLimitDraft.id,
+    {
+      requirementState: "required",
+      defaultMode: "test",
+      allowBacktracking: true,
+      requireSequentialProgress: true,
+      requireFullVideoWatch: false,
+      requireEvidenceApproval: false,
+      passingScorePercent: 100,
+      maxAttempts: 1,
+      qualificationValidityDays: null,
+      retrainingGraceDays: null,
+      expectedRevision: attemptLimitStep.version.revision,
+    },
+    "verify-phase8-attempt-limit-config",
+  );
+  const attemptLimitStepRequirements = await updateStepTrainingRequirements(
+    managerContext,
+    attemptLimitDraft.id,
+    attemptLimitStepId,
+    {
+      requireFullVideo: false,
+      requireConfirmation: false,
+      requireTimer: false,
+      requireQuestion: true,
+      requirePhoto: false,
+      requireVideo: false,
+      requireApproval: false,
+      expectedRevision: attemptLimitConfig.revision,
+    },
+    "verify-phase8-attempt-limit-step-requirements",
+  );
+  const attemptLimitQuestion = await createTrainingQuestion(
+    managerContext,
+    attemptLimitDraft.id,
+    {
+      stepId: attemptLimitStepId,
+      type: "true_false",
+      text: "Knives should be carried blade down.",
+      explanation: "",
+      points: 1,
+      placement: "after_step",
+      explanationPolicy: "never",
+      choices: [
+        { text: "True", isCorrect: true },
+        { text: "False", isCorrect: false },
+      ],
+      expectedRevision: attemptLimitStepRequirements.revision,
+    },
+    "verify-phase8-attempt-limit-question-create",
+  );
+  const attemptLimitQuestionId = attemptLimitQuestion.questions[0]!.id;
+  const attemptLimitWrongChoiceId = attemptLimitQuestion.questions[0]!.choices.find(
+    (choice) => !choice.isCorrect,
+  )!.id;
+
+  const attemptLimitPublished = await publishSop(
+    managerContext,
+    attemptLimitDraft.id,
+    {
+      expectedRevision: attemptLimitQuestion.revision,
+      changeSummary: "",
+      retrainingRule: { type: "none" },
+    },
+    "verify-phase8-attempt-limit-publish",
+  );
+  if (attemptLimitPublished.status !== "published") {
+    throw new Error("Publishing the attempt-limit fixture did not succeed");
+  }
+
+  const attemptLimitAssignment = await assignTraining(
+    managerContext,
+    { employeeId: employeeSeed[1].id, sopId: attemptLimitDraft.id },
+    "verify-phase8-attempt-limit-assign",
+  );
+
+  const secondEmployeeLogin = await loginEmployee(
+    {
+      organizationSlug: "stationsnap-demo",
+      locationSlug: "downtown",
+      employeeNumber: employeeSeed[1].employeeNumber,
+      pin: employeePin,
+    },
+    { ipHash: "verify-ip-employee-second", requestId: "verify-employee-second-login" },
+  );
+  const secondEmployeeContext = await getEmployeeSession(secondEmployeeLogin.token);
+  if (!secondEmployeeContext) throw new Error("Second employee session verification failed");
+
+  const attemptLimitSession = await startOrResumeSession(
+    secondEmployeeContext,
+    attemptLimitAssignment.id,
+    "verify-phase8-attempt-limit-start",
+  );
+  const attemptLimitState = await getSessionState(
+    secondEmployeeContext,
+    attemptLimitAssignment.id,
+    attemptLimitSession.id,
+  );
+  const afterWrongAnswer = await submitAnswer(
+    secondEmployeeContext,
+    attemptLimitAssignment.id,
+    attemptLimitSession.id,
+    attemptLimitQuestionId,
+    [attemptLimitWrongChoiceId],
+    attemptLimitState.revision,
+    "verify-phase8-attempt-limit-wrong-answer",
+  );
+  const failedAttempt = await submitSession(
+    secondEmployeeContext,
+    attemptLimitAssignment.id,
+    attemptLimitSession.id,
+    afterWrongAnswer.revision,
+    "verify-phase8-attempt-limit-submit-fail",
+  );
+  if (failedAttempt.status !== "failed" || failedAttempt.scorePercent !== 0) {
+    throw new Error("An incorrect attempt did not fail with a zero score");
+  }
+
+  let maxAttemptsRejected = false;
+  try {
+    await startOrResumeSession(
+      secondEmployeeContext,
+      attemptLimitAssignment.id,
+      "verify-phase8-attempt-limit-exhausted",
+    );
+  } catch {
+    maxAttemptsRejected = true;
+  }
+  if (!maxAttemptsRejected) {
+    throw new Error("A new attempt was started after the maximum attempts were exhausted");
+  }
+
+  const attemptLimitAssignmentAfter = await getAssignmentDetail(
+    secondEmployeeContext,
+    attemptLimitAssignment.id,
+  );
+  if (attemptLimitAssignmentAfter.status !== "failed") {
+    throw new Error("The assignment did not move to failed once attempts were exhausted");
+  }
+
+  const retrainingAssignment = await assignTraining(
+    managerContext,
+    { employeeId: employeeSeed[1].id, sopId: attemptLimitDraft.id },
+    "verify-phase8-retraining-assign",
+  );
+  if (retrainingAssignment.status !== "assigned") {
+    throw new Error(
+      "Re-assigning training after exhausted attempts did not create a fresh assignment",
+    );
+  }
+  const [retrainingRow] = await getDb()
+    .select({ retrainingGeneration: trainingAssignments.retrainingGeneration })
+    .from(trainingAssignments)
+    .where(eq(trainingAssignments.id, retrainingAssignment.id));
+  if (retrainingRow?.retrainingGeneration !== 1) {
+    throw new Error("Retraining assignment did not increment the generation counter");
+  }
+
   const actions = new Set(
     (await getDb().select({ action: auditEvents.action }).from(auditEvents)).map(
       (event) => event.action,
@@ -2486,6 +3204,13 @@ async function verifyDatabase(): Promise<void> {
     "qr.created",
     "qr.revoked",
     "qr.rotated",
+    "training.assigned",
+    "training.session_started",
+    "training.session_resumed",
+    "training.step_progress_recorded",
+    "training.answer_submitted",
+    "training.evidence_submitted",
+    "training.session_submitted",
   ];
   if (requiredAuditActions.some((action) => !actions.has(action))) {
     throw new Error(
@@ -2496,7 +3221,7 @@ async function verifyDatabase(): Promise<void> {
   await verifyUpgradeMigration();
 
   process.stdout.write(
-    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true, employeeStationReader: true, employeeSopReader: true, employeeCategoryLibrary: true, employeeRecentViews: true, employeeMediaAuthorization: true, qrCreationAndTargetValidation: true, qrLocationScoping: true, qrRevocation: true, qrRotation: true, qrScanResolution: true, qrUnavailableTarget: true, qrEnumerationRateLimit: true, trainingConfigDefaultsAndScoping: true, trainingConfigStaleWriteRejection: true, trainingStepRequirementGuards: true, trainingQuestionCrudAndReorder: true, trainingPublishReadinessRules: true, trainingPublishedImmutability: true, trainingDraftCloning: true })}\n`,
+    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true, employeeStationReader: true, employeeSopReader: true, employeeCategoryLibrary: true, employeeRecentViews: true, employeeMediaAuthorization: true, qrCreationAndTargetValidation: true, qrLocationScoping: true, qrRevocation: true, qrRotation: true, qrScanResolution: true, qrUnavailableTarget: true, qrEnumerationRateLimit: true, trainingConfigDefaultsAndScoping: true, trainingConfigStaleWriteRejection: true, trainingStepRequirementGuards: true, trainingQuestionCrudAndReorder: true, trainingPublishReadinessRules: true, trainingPublishedImmutability: true, trainingDraftCloning: true, trainingAssignmentCreationAndScoping: true, trainingSessionStartAndResume: true, trainingSequentialStepEnforcement: true, trainingWatchTimerQuestionEvidenceEnforcement: true, trainingDuplicateActionRejection: true, trainingScoringAndApprovalRouting: true, trainingSubmitIdempotency: true, trainingAttemptLimitsAndRetraining: true })}\n`,
   );
 }
 
