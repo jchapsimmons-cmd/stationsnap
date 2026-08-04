@@ -78,6 +78,13 @@
       "when": 1785837831586,
       "tag": "0010_phase11_qualifications",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1785852238938,
+      "tag": "0011_phase12_checklists",
+      "breakpoints": true
     }
   ]
 }

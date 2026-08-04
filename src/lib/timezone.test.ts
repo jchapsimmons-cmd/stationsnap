@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { endOfDayInTimeZone } from "@/lib/timezone";
+import { calendarDateInTimeZone, endOfDayInTimeZone, isoWeekStartInTimeZone } from "@/lib/timezone";
 
 describe("endOfDayInTimeZone", () => {
   it("resolves end of day in UTC itself", () => {
@@ -39,5 +39,35 @@ describe("endOfDayInTimeZone", () => {
   it("throws for a malformed calendar date", () => {
     expect(() => endOfDayInTimeZone("2026/01/15", "UTC")).toThrow();
     expect(() => endOfDayInTimeZone("not-a-date", "America/Chicago")).toThrow();
+  });
+});
+
+describe("calendarDateInTimeZone", () => {
+  it("returns the same date in UTC", () => {
+    expect(calendarDateInTimeZone(new Date("2026-01-15T05:30:00Z"), "UTC")).toBe("2026-01-15");
+  });
+
+  it("returns the prior calendar date for a zone west of UTC before its offset elapses", () => {
+    expect(calendarDateInTimeZone(new Date("2026-01-15T05:30:00Z"), "America/Chicago")).toBe(
+      "2026-01-14",
+    );
+  });
+});
+
+describe("isoWeekStartInTimeZone", () => {
+  it("resolves the Monday for a mid-week date", () => {
+    expect(isoWeekStartInTimeZone(new Date("2026-01-15T12:00:00Z"), "UTC")).toBe("2026-01-12");
+  });
+
+  it("resolves to itself for a date that is already a Monday", () => {
+    expect(isoWeekStartInTimeZone(new Date("2026-01-19T12:00:00Z"), "UTC")).toBe("2026-01-19");
+  });
+
+  it("resolves the Monday using the zone's own calendar date, not UTC's", () => {
+    // 2026-01-15T05:30:00Z is still 2026-01-14 (a Wednesday) in America/Chicago, so the ISO
+    // week start is one day earlier than the UTC calendar date would suggest.
+    expect(isoWeekStartInTimeZone(new Date("2026-01-15T05:30:00Z"), "America/Chicago")).toBe(
+      "2026-01-12",
+    );
   });
 });

@@ -60,3 +60,28 @@ export function endOfDayInTimeZone(calendarDate: string, timeZone: string): Date
 
   return new Date(instant);
 }
+
+/** The `YYYY-MM-DD` calendar date the given instant falls on as observed in `timeZone`. */
+export function calendarDateInTimeZone(instant: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(instant);
+}
+
+/**
+ * The `YYYY-MM-DD` Monday that starts the ISO week containing the given instant, as observed in
+ * `timeZone`. Used to key one checklist run per employee per week for `weekly` recurrence.
+ */
+export function isoWeekStartInTimeZone(instant: Date, timeZone: string): string {
+  const calendarDate = calendarDateInTimeZone(instant, timeZone);
+  const match = CALENDAR_DATE_PATTERN.exec(calendarDate);
+  if (!match) throw new Error("Expected a YYYY-MM-DD calendar date.");
+  const [, yearText, monthText, dayText] = match as unknown as [string, string, string, string];
+  const asUtc = Date.UTC(Number(yearText), Number(monthText) - 1, Number(dayText));
+  const isoWeekday = new Date(asUtc).getUTCDay() || 7;
+  const monday = new Date(asUtc - (isoWeekday - 1) * 86_400_000);
+  return `${monday.getUTCFullYear()}-${String(monday.getUTCMonth() + 1).padStart(2, "0")}-${String(monday.getUTCDate()).padStart(2, "0")}`;
+}

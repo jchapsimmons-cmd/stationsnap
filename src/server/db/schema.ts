@@ -115,6 +115,46 @@ export const trainingPathVersionPolicy = pgEnum("training_path_version_policy", 
   "current_version",
   "any_passed_version",
 ]);
+export const checklistType = pgEnum("checklist_type", [
+  "opening",
+  "closing",
+  "cleaning",
+  "prep",
+  "custom",
+]);
+export const checklistRecurrenceType = pgEnum("checklist_recurrence_type", [
+  "once",
+  "daily",
+  "weekly",
+]);
+export const checklistRunStatus = pgEnum("checklist_run_status", [
+  "in_progress",
+  "awaiting_approval",
+  "submitted",
+  "rejected",
+]);
+export const checklistItemProgressStatus = pgEnum("checklist_item_progress_status", [
+  "pending",
+  "in_progress",
+  "completed",
+]);
+export const checklistEvidenceType = pgEnum("checklist_evidence_type", ["photo"]);
+export const checklistEvidenceStatus = pgEnum("checklist_evidence_status", [
+  "pending",
+  "approved",
+  "rejected",
+]);
+export const checklistApprovalSubmissionStatus = pgEnum("checklist_approval_submission_status", [
+  "pending",
+  "approved",
+  "rejected",
+  "needs_correction",
+]);
+export const checklistApprovalDecisionType = pgEnum("checklist_approval_decision_type", [
+  "approved",
+  "rejected",
+  "needs_correction",
+]);
 
 const timestamps = {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -1449,5 +1489,335 @@ export const qualificationSupportingSessions = pgTable(
       table.sessionId,
     ),
     index("qualification_supporting_sessions_qualification_idx").on(table.qualificationId),
+  ],
+);
+
+/**
+ * A manager-owned checklist definition, scoped to one location (and optionally one station).
+ * Unlike SOPs, checklists are not versioned in this phase: edits apply in place, and items are
+ * disabled rather than deleted once a run has referenced them, so historical runs keep resolving
+ * their items. `recurrenceType` drives the occurrence key `checklist_runs` computes at start time.
+ */
+export const checklists = pgTable(
+  "checklists",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    locationId: uuid("location_id").notNull(),
+    stationId: uuid("station_id"),
+    type: checklistType("type").notNull(),
+    title: text("title").notNull(),
+    description: text("description").notNull().default(""),
+    recurrenceType: checklistRecurrenceType("recurrence_type").notNull().default("once"),
+    status: recordStatus("status").notNull().default("active"),
+    createdByManagerUserId: uuid("created_by_manager_user_id")
+      .notNull()
+      .references(() => managerUsers.id, { onDelete: "restrict" }),
+    ...timestamps,
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.locationId, table.organizationId],
+      foreignColumns: [locations.id, locations.organizationId],
+      name: "checklists_location_org_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.stationId, table.organizationId, table.locationId],
+      foreignColumns: [stations.id, stations.organizationId, stations.locationId],
+      name: "checklists_station_org_location_fk",
+    }).onDelete("restrict"),
+    unique("checklists_id_org_unique").on(table.id, table.organizationId),
+    uniqueIndex("checklists_org_location_title_uidx").on(
+      table.organizationId,
+      table.locationId,
+      table.title,
+    ),
+    index("checklists_org_location_status_idx").on(
+      table.organizationId,
+      table.locationId,
+      table.status,
+      table.updatedAt,
+    ),
+    index("checklists_org_station_idx").on(table.organizationId, table.stationId),
+  ],
+);
+
+export const checklistItems = pgTable(
+  "checklist_items",
+  {
+    id: uuid("id").primaryKey(),
+    checklistId: uuid("checklist_id").notNull(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    displayOrder: integer("display_order").notNull(),
+    title: text("title").notNull(),
+    instructions: text("instructions").notNull().default(""),
+    isRequired: boolean("is_required").notNull().default(true),
+    timerSeconds: integer("timer_seconds"),
+    requirePhoto: boolean("require_photo").notNull().default(false),
+    requireApproval: boolean("require_approval").notNull().default(false),
+    requireNote: boolean("require_note").notNull().default(false),
+    referenceFileId: uuid("reference_file_id"),
+    status: recordStatus("status").notNull().default("active"),
+    ...timestamps,
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.checklistId, table.organizationId],
+      foreignColumns: [checklists.id, checklists.organizationId],
+      name: "checklist_items_checklist_org_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.referenceFileId, table.organizationId],
+      foreignColumns: [files.id, files.organizationId],
+      name: "checklist_items_reference_file_org_fk",
+    }).onDelete("restrict"),
+    unique("checklist_items_id_org_unique").on(table.id, table.organizationId),
+    index("checklist_items_checklist_order_idx").on(table.checklistId, table.displayOrder),
+    index("checklist_items_checklist_status_idx").on(table.checklistId, table.status),
+  ],
+);
+
+/**
+ * One employee's attempt at a checklist. `occurrenceKey` is computed server-side from
+ * `recurrenceType` at start time (`once:<runId>` never collides; `daily:<date>` and
+ * `weekly:<isoWeekStart>` are computed in the location's IANA timezone) and, together with the
+ * partial unique index below, is the DB-enforced half of duplicate-occurrence prevention — a
+ * `rejected` run does not count, so a rejected attempt can always be retried.
+ */
+export const checklistRuns = pgTable(
+  "checklist_runs",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    locationId: uuid("location_id").notNull(),
+    checklistId: uuid("checklist_id").notNull(),
+    employeeId: uuid("employee_id").notNull(),
+    occurrenceKey: text("occurrence_key").notNull(),
+    status: checklistRunStatus("status").notNull().default("in_progress"),
+    revision: integer("revision").notNull().default(1),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    lastResumedAt: timestamp("last_resumed_at", { withTimezone: true }).notNull().defaultNow(),
+    submittedAt: timestamp("submitted_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.locationId, table.organizationId],
+      foreignColumns: [locations.id, locations.organizationId],
+      name: "checklist_runs_location_org_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.checklistId, table.organizationId],
+      foreignColumns: [checklists.id, checklists.organizationId],
+      name: "checklist_runs_checklist_org_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.employeeId, table.organizationId, table.locationId],
+      foreignColumns: [employees.id, employees.organizationId, employees.primaryLocationId],
+      name: "checklist_runs_employee_org_location_fk",
+    }).onDelete("restrict"),
+    unique("checklist_runs_id_org_unique").on(table.id, table.organizationId),
+    uniqueIndex("checklist_runs_checklist_employee_occurrence_uidx")
+      .on(table.checklistId, table.employeeId, table.occurrenceKey)
+      .where(sql`status <> 'rejected'`),
+    index("checklist_runs_org_location_status_idx").on(
+      table.organizationId,
+      table.locationId,
+      table.status,
+      table.updatedAt,
+    ),
+    index("checklist_runs_employee_status_idx").on(table.employeeId, table.status),
+  ],
+);
+
+export const checklistItemProgress = pgTable(
+  "checklist_item_progress",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    runId: uuid("run_id").notNull(),
+    itemId: uuid("item_id").notNull(),
+    status: checklistItemProgressStatus("status").notNull().default("pending"),
+    timerCompleted: boolean("timer_completed").notNull().default(false),
+    employeeNote: text("employee_note").notNull().default(""),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.runId, table.organizationId],
+      foreignColumns: [checklistRuns.id, checklistRuns.organizationId],
+      name: "checklist_item_progress_run_org_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.itemId, table.organizationId],
+      foreignColumns: [checklistItems.id, checklistItems.organizationId],
+      name: "checklist_item_progress_item_org_fk",
+    }).onDelete("restrict"),
+    unique("checklist_item_progress_id_org_unique").on(table.id, table.organizationId),
+    unique("checklist_item_progress_run_item_uidx").on(table.runId, table.itemId),
+    index("checklist_item_progress_run_idx").on(table.runId),
+  ],
+);
+
+export const checklistEvidence = pgTable(
+  "checklist_evidence",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    progressId: uuid("progress_id").notNull(),
+    fileId: uuid("file_id").notNull(),
+    evidenceType: checklistEvidenceType("evidence_type").notNull().default("photo"),
+    submissionGeneration: integer("submission_generation").notNull().default(1),
+    status: checklistEvidenceStatus("status").notNull().default("pending"),
+    employeeNote: text("employee_note").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.progressId, table.organizationId],
+      foreignColumns: [checklistItemProgress.id, checklistItemProgress.organizationId],
+      name: "checklist_evidence_progress_org_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.fileId, table.organizationId],
+      foreignColumns: [files.id, files.organizationId],
+      name: "checklist_evidence_file_org_fk",
+    }).onDelete("restrict"),
+    unique("checklist_evidence_progress_generation_uidx").on(
+      table.progressId,
+      table.submissionGeneration,
+    ),
+    index("checklist_evidence_progress_idx").on(table.progressId),
+  ],
+);
+
+/**
+ * Dedicated checklist approval/correction tables — deliberately not sharing `approval_submissions`
+ * et al. with SOP training, per data-model.md's "otherwise use dedicated checklist decision
+ * tables" fallback. Structure mirrors the training approval tables exactly (see notes there) so
+ * the manager review flow and correction lifecycle behave identically for both domains.
+ */
+export const checklistApprovalSubmissions = pgTable(
+  "checklist_approval_submissions",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    runId: uuid("run_id").notNull(),
+    submissionGeneration: integer("submission_generation").notNull().default(1),
+    status: checklistApprovalSubmissionStatus("status").notNull().default("pending"),
+    submittedAt: timestamp("submitted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.runId, table.organizationId],
+      foreignColumns: [checklistRuns.id, checklistRuns.organizationId],
+      name: "checklist_approval_submissions_run_org_fk",
+    }).onDelete("cascade"),
+    unique("checklist_approval_submissions_id_org_unique").on(table.id, table.organizationId),
+    unique("checklist_approval_submissions_run_generation_uidx").on(
+      table.runId,
+      table.submissionGeneration,
+    ),
+    index("checklist_approval_submissions_org_status_idx").on(table.organizationId, table.status),
+    index("checklist_approval_submissions_org_status_submitted_idx").on(
+      table.organizationId,
+      table.status,
+      table.submittedAt,
+    ),
+  ],
+);
+
+export const checklistApprovalDecisions = pgTable(
+  "checklist_approval_decisions",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    submissionId: uuid("submission_id").notNull(),
+    decision: checklistApprovalDecisionType("decision").notNull(),
+    note: text("note").notNull().default(""),
+    decidedByManagerUserId: uuid("decided_by_manager_user_id")
+      .notNull()
+      .references(() => managerUsers.id, { onDelete: "restrict" }),
+    decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.submissionId, table.organizationId],
+      foreignColumns: [
+        checklistApprovalSubmissions.id,
+        checklistApprovalSubmissions.organizationId,
+      ],
+      name: "checklist_approval_decisions_submission_org_fk",
+    }).onDelete("restrict"),
+    unique("checklist_approval_decisions_id_org_unique").on(table.id, table.organizationId),
+    index("checklist_approval_decisions_submission_decided_idx").on(
+      table.submissionId,
+      table.decidedAt,
+    ),
+    index("checklist_approval_decisions_org_decided_idx").on(table.organizationId, table.decidedAt),
+  ],
+);
+
+export const checklistCorrectionRequests = pgTable(
+  "checklist_correction_requests",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    submissionId: uuid("submission_id").notNull(),
+    decisionId: uuid("decision_id").notNull(),
+    replacementGeneration: integer("replacement_generation").notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolvedSubmissionId: uuid("resolved_submission_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.submissionId, table.organizationId],
+      foreignColumns: [
+        checklistApprovalSubmissions.id,
+        checklistApprovalSubmissions.organizationId,
+      ],
+      name: "checklist_correction_requests_submission_org_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.decisionId, table.organizationId],
+      foreignColumns: [checklistApprovalDecisions.id, checklistApprovalDecisions.organizationId],
+      name: "checklist_correction_requests_decision_org_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.resolvedSubmissionId, table.organizationId],
+      foreignColumns: [
+        checklistApprovalSubmissions.id,
+        checklistApprovalSubmissions.organizationId,
+      ],
+      name: "checklist_correction_requests_resolved_submission_org_fk",
+    }).onDelete("restrict"),
+    unique("checklist_correction_requests_decision_uidx").on(table.decisionId),
+    uniqueIndex("checklist_correction_requests_open_submission_uidx")
+      .on(table.submissionId)
+      .where(sql`resolved_at is null`),
+    index("checklist_correction_requests_org_submission_idx").on(
+      table.organizationId,
+      table.submissionId,
+    ),
   ],
 );
