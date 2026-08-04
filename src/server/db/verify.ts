@@ -5092,7 +5092,7 @@ async function verifyDatabase(): Promise<void> {
     startedRun.id,
     photoItem.id,
     replacementPhotoForm,
-    { employeeNote: "Retaken, in focus", expectedRevision: afterNote.revision },
+    { employeeNote: "Retaken, in focus", expectedRevision: submittedRun.revision },
     "verify-phase12-correction-resubmit",
   );
   if (afterChecklistResubmit.status !== "awaiting_approval") {
