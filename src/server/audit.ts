@@ -51,7 +51,17 @@ export type AuditAction =
   | "training_path.created"
   | "training_path.updated"
   | "qualification.awarded"
-  | "qualification.revoked";
+  | "qualification.revoked"
+  | "checklist.created"
+  | "checklist.updated"
+  | "checklist_run.started"
+  | "checklist_run.resumed"
+  | "checklist_run.item_progress_recorded"
+  | "checklist_run.evidence_submitted"
+  | "checklist_run.submitted"
+  | "checklist_run.approval_decided"
+  | "checklist_run.correction_requested"
+  | "checklist_run.correction_resubmitted";
 
 export interface AuditEventInput {
   organizationId?: string;
