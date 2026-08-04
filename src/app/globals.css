@@ -1673,6 +1673,22 @@ h2 {
   object-fit: cover;
 }
 
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) 0;
+}
+.pagination__status {
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+}
+.pagination a[aria-disabled="true"] {
+  pointer-events: none;
+  opacity: 0.5;
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,

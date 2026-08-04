@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { AppError } from "@/lib/errors";
 import { endOfDayInTimeZone } from "@/lib/timezone";
 import { writeAuditEvent } from "@/server/audit";
 import { requireManagerManagedLocation } from "@/server/auth/authorization";
 import type { EmployeeSessionContext, ManagerSessionContext } from "@/server/auth/sessions";
 import { getDb } from "@/server/db/client";
+import { writeDomainEvent } from "@/server/events";
 import {
   approvalSubmissions,
   employees,
@@ -37,6 +38,7 @@ import type {
   TrainingAssignmentSkipReason,
   TrainingAssignmentTargetInput,
   TrainingEvidenceUploadFormInput,
+  TrainingProgressReportQuery,
 } from "@/server/training/schemas";
 import { uploadEmployeeMedia } from "@/server/storage/media-service";
 
@@ -508,6 +510,22 @@ export async function assignTraining(
     }
   }
 
+  if (created.length > 0) {
+    await writeDomainEvent({
+      organizationId: actor.organizationId,
+      locationId: sopRow.locationId,
+      type: "training.assignment_batch_created",
+      subjectType: "sop",
+      subjectId: sopRow.id,
+      payload: {
+        targetType: input.target.type,
+        requiredMode,
+        createdCount: created.length,
+        skippedCount: skipped.length,
+      },
+    });
+  }
+
   return { created, skipped };
 }
 
@@ -615,6 +633,100 @@ export async function listAssignments(
     .where(and(...conditions))
     .orderBy(desc(trainingAssignments.createdAt))
     .limit(300);
+}
+
+/**
+ * Paginated training progress/failure report for `/manager/reports/training`. Same tenant/location
+ * scoping and join shape as `listAssignments`, extended with a bounded search and a real total
+ * count instead of a fixed 300-row cap, since a report page needs "N of M" rather than a live queue.
+ */
+export async function getTrainingProgressReport(
+  actor: ManagerSessionContext,
+  query: TrainingProgressReportQuery,
+) {
+  const empty = { items: [], total: 0, page: query.page, pageSize: query.pageSize };
+  const managedIds = await getManagedLocationIds(actor);
+  if (managedIds.length === 0) return empty;
+  if (query.locationId && !managedIds.includes(query.locationId)) return empty;
+
+  const conditions = [
+    eq(trainingAssignments.organizationId, actor.organizationId),
+    inArray(trainingAssignments.locationId, query.locationId ? [query.locationId] : managedIds),
+  ];
+  if (query.status) conditions.push(eq(trainingAssignments.status, query.status));
+  if (query.search) {
+    const pattern = `%${query.search}%`;
+    conditions.push(or(ilike(employees.displayName, pattern), ilike(sopVersions.title, pattern))!);
+  }
+
+  const db = getDb();
+  const base = () =>
+    db
+      .select({
+        id: trainingAssignments.id,
+        status: trainingAssignments.status,
+        requiredMode: trainingAssignments.requiredMode,
+        dueAt: trainingAssignments.dueAt,
+        employeeId: trainingAssignments.employeeId,
+        employeeName: employees.displayName,
+        locationId: trainingAssignments.locationId,
+        locationName: locations.name,
+        sopId: sopVersions.sopId,
+        sopTitle: sopVersions.title,
+        versionNumber: sopVersions.versionNumber,
+        createdAt: trainingAssignments.createdAt,
+        updatedAt: trainingAssignments.updatedAt,
+      })
+      .from(trainingAssignments)
+      .innerJoin(
+        employees,
+        and(
+          eq(employees.id, trainingAssignments.employeeId),
+          eq(employees.organizationId, trainingAssignments.organizationId),
+        ),
+      )
+      .innerJoin(
+        locations,
+        and(
+          eq(locations.id, trainingAssignments.locationId),
+          eq(locations.organizationId, trainingAssignments.organizationId),
+        ),
+      )
+      .innerJoin(
+        sopVersions,
+        and(
+          eq(sopVersions.id, trainingAssignments.sopVersionId),
+          eq(sopVersions.organizationId, trainingAssignments.organizationId),
+        ),
+      );
+
+  const [items, totalRows] = await Promise.all([
+    base()
+      .where(and(...conditions))
+      .orderBy(desc(trainingAssignments.updatedAt), desc(trainingAssignments.id))
+      .limit(query.pageSize)
+      .offset((query.page - 1) * query.pageSize),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(trainingAssignments)
+      .innerJoin(
+        employees,
+        and(
+          eq(employees.id, trainingAssignments.employeeId),
+          eq(employees.organizationId, trainingAssignments.organizationId),
+        ),
+      )
+      .innerJoin(
+        sopVersions,
+        and(
+          eq(sopVersions.id, trainingAssignments.sopVersionId),
+          eq(sopVersions.organizationId, trainingAssignments.organizationId),
+        ),
+      )
+      .where(and(...conditions)),
+  ]);
+
+  return { items, total: totalRows[0]?.count ?? 0, page: query.page, pageSize: query.pageSize };
 }
 
 /** A single assignment's detail for the assigning manager: employee, SOP/version, status, due date, and attempt summary. */
@@ -1402,6 +1514,7 @@ export async function submitSession(
 
   const scorePercent = computeScorePercent(computation);
   const needsApproval = assignmentNeedsApproval(computation);
+  const passed = !needsApproval && scorePercent >= computation.config.passingScorePercent;
   const now = new Date();
   let awardOutcomes: QualificationAwardOutcome[] = [];
 
@@ -1420,7 +1533,6 @@ export async function submitSession(
         status: "pending",
       });
     } else {
-      const passed = scorePercent >= computation.config.passingScorePercent;
       await bumpSessionRevision(tx, session.organizationId, sessionId, expectedRevision, {
         status: passed ? "passed" : "failed",
         scorePercent,
@@ -1460,6 +1572,18 @@ export async function submitSession(
   });
 
   await auditTraining(session, "training.session_submitted", sessionId, requestId);
+  await writeDomainEvent({
+    organizationId: session.organizationId,
+    locationId: session.locationId,
+    type: "training.session_completed",
+    subjectType: "training_assignment",
+    subjectId: assignment.id,
+    payload: {
+      sessionId,
+      status: needsApproval ? "awaiting_approval" : passed ? "passed" : "failed",
+      scorePercent,
+    },
+  });
   for (const outcome of awardOutcomes) {
     await writeAuditEvent({
       organizationId: session.organizationId,
@@ -1471,6 +1595,14 @@ export async function submitSession(
       targetId: outcome.qualificationId,
       metadata: { definitionId: outcome.definitionId, isNewAward: outcome.isNewAward },
       requestId,
+    });
+    await writeDomainEvent({
+      organizationId: session.organizationId,
+      locationId: session.locationId,
+      type: "qualification.awarded",
+      subjectType: "employee_qualification",
+      subjectId: outcome.qualificationId,
+      payload: { definitionId: outcome.definitionId, isNewAward: outcome.isNewAward },
     });
   }
   return getSessionState(session, assignmentId, sessionId);

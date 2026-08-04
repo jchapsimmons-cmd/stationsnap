@@ -69,6 +69,13 @@ export const qualificationOverviewQuerySchema = z.object({
   tab: z.union([z.literal(""), z.enum(qualificationOverviewTabValues)]).default(""),
 });
 
+export const qualificationsReportQuerySchema = z.object({
+  locationId: z.union([z.literal(""), z.uuid()]).default(""),
+  tab: z.union([z.literal(""), z.enum(qualificationOverviewTabValues)]).default(""),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+});
+
 export const qualificationRevokeSchema = z.object({
   note: z.string().trim().max(1_000).default(""),
 });
@@ -80,4 +87,5 @@ export type TrainingPathUpdateInput = z.infer<typeof trainingPathUpdateSchema>;
 export type TrainingPathQuery = z.infer<typeof trainingPathQuerySchema>;
 export type QualificationOverviewTab = (typeof qualificationOverviewTabValues)[number];
 export type QualificationOverviewQuery = z.infer<typeof qualificationOverviewQuerySchema>;
+export type QualificationsReportQuery = z.infer<typeof qualificationsReportQuerySchema>;
 export type QualificationRevokeInput = z.infer<typeof qualificationRevokeSchema>;

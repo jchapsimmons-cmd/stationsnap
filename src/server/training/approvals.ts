@@ -5,6 +5,7 @@ import { writeAuditEvent } from "@/server/audit";
 import { requireManagerManagedLocation } from "@/server/auth/authorization";
 import type { EmployeeSessionContext, ManagerSessionContext } from "@/server/auth/sessions";
 import { getDb } from "@/server/db/client";
+import { writeDomainEvent } from "@/server/events";
 import {
   approvalDecisions,
   approvalSubmissions,
@@ -497,6 +498,14 @@ export async function decideApprovalSubmission(
       requestId,
     });
   }
+  await writeDomainEvent({
+    organizationId: actor.organizationId,
+    locationId: context.assignment.locationId,
+    type: "training.approval_decided",
+    subjectType: "training_assignment",
+    subjectId: context.assignment.id,
+    payload: { decision: input.decision, submissionId },
+  });
   for (const outcome of awardOutcomes) {
     await writeAuditEvent({
       organizationId: actor.organizationId,
@@ -508,6 +517,14 @@ export async function decideApprovalSubmission(
       targetId: outcome.qualificationId,
       metadata: { definitionId: outcome.definitionId, isNewAward: outcome.isNewAward },
       requestId,
+    });
+    await writeDomainEvent({
+      organizationId: actor.organizationId,
+      locationId: context.assignment.locationId,
+      type: "qualification.awarded",
+      subjectType: "employee_qualification",
+      subjectId: outcome.qualificationId,
+      payload: { definitionId: outcome.definitionId, isNewAward: outcome.isNewAward },
     });
   }
 

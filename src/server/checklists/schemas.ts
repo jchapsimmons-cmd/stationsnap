@@ -68,6 +68,14 @@ export const checklistRunQuerySchema = z.object({
   status: z.union([z.literal(""), z.enum(checklistRunStatusValues)]).default(""),
 });
 
+export const checklistCompletionReportQuerySchema = z.object({
+  locationId: z.union([z.literal(""), z.uuid()]).default(""),
+  status: z.union([z.literal(""), z.enum(checklistRunStatusValues)]).default(""),
+  search: z.string().trim().max(120).default(""),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+});
+
 export const checklistItemActionValues = ["ticked", "unticked", "timer_completed"] as const;
 
 export const checklistItemActionSchema = z.object({
@@ -124,6 +132,7 @@ export type ChecklistCreateInput = z.infer<typeof checklistCreateSchema>;
 export type ChecklistUpdateInput = z.infer<typeof checklistUpdateSchema>;
 export type ChecklistQuery = z.infer<typeof checklistQuerySchema>;
 export type ChecklistRunQuery = z.infer<typeof checklistRunQuerySchema>;
+export type ChecklistCompletionReportQuery = z.infer<typeof checklistCompletionReportQuerySchema>;
 export type ChecklistItemActionInput = z.infer<typeof checklistItemActionSchema>;
 export type ChecklistItemNoteInput = z.infer<typeof checklistItemNoteSchema>;
 export type ChecklistItemEvidenceUploadFormInput = z.infer<

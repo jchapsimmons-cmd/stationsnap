@@ -62,6 +62,15 @@ export const sopQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(50).default(20),
 });
 
+export const sopVersionHistoryReportQuerySchema = z.object({
+  search: z.string().trim().max(120).default(""),
+  category: z.union([z.literal(""), category]).default(""),
+  locationId: z.union([z.literal(""), z.uuid()]).default(""),
+  status: z.union([z.literal(""), status]).default(""),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+});
+
 export const sopStepCreateSchema = z.object({
   title: z.string().trim().max(160).default(""),
   instruction: z.string().trim().min(1).max(4_000),
@@ -252,6 +261,7 @@ export const trainingQuestionReorderSchema = z.object({
 export type SopCreateInput = z.infer<typeof sopCreateSchema>;
 export type SopDraftUpdateInput = z.infer<typeof sopDraftUpdateSchema>;
 export type SopQuery = z.infer<typeof sopQuerySchema>;
+export type SopVersionHistoryReportQuery = z.infer<typeof sopVersionHistoryReportQuerySchema>;
 export type SopStepCreateInput = z.infer<typeof sopStepCreateSchema>;
 export type SopStepUpdateInput = z.infer<typeof sopStepUpdateSchema>;
 export type SopStepReorderInput = z.infer<typeof sopStepReorderSchema>;

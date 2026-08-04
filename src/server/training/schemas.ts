@@ -72,6 +72,14 @@ export const trainingAssignmentQuerySchema = z.object({
   locationId: z.union([z.literal(""), z.uuid()]).default(""),
 });
 
+export const trainingProgressReportQuerySchema = z.object({
+  status: z.union([z.literal(""), z.enum(trainingAssignmentStatusValues)]).default(""),
+  locationId: z.union([z.literal(""), z.uuid()]).default(""),
+  search: z.string().trim().max(120).default(""),
+  page: z.coerce.number().int().min(1).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(20),
+});
+
 export const trainingSessionRevisionSchema = z.object({
   expectedRevision: revision,
 });
@@ -161,3 +169,4 @@ export type ApprovalDecisionValue = (typeof approvalDecisionValues)[number];
 export type ApprovalQueueQuery = z.infer<typeof approvalQueueQuerySchema>;
 export type ApprovalDecisionInput = z.infer<typeof approvalDecisionSchema>;
 export type ApprovalResubmitFormInput = z.infer<typeof approvalResubmitFormSchema>;
+export type TrainingProgressReportQuery = z.infer<typeof trainingProgressReportQuerySchema>;

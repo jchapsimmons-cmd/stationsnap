@@ -1,7 +1,7 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import EmbeddedPostgres from "embedded-postgres";
 import { Pool } from "pg";
 import { endOfDayInTimeZone } from "@/lib/timezone";
@@ -53,6 +53,7 @@ import {
   approvalSubmissions,
   checklistItems,
   correctionRequests,
+  domainEvents,
   employeeQualifications,
   files as filesTable,
   qrScanEvents,
@@ -60,6 +61,8 @@ import {
   translations as translationsTable,
   trainingAssignments,
 } from "@/server/db/schema";
+import { domainEventTypeValues, listActivity } from "@/server/events";
+import { getApprovalHistoryReport } from "@/server/reports";
 import {
   createQrCode,
   getQrCode,
@@ -84,6 +87,7 @@ import {
   getSop,
   getSopDraft,
   getSopVersionDetail,
+  getSopVersionHistoryReport,
   getStepTrainingRequirementsDraft,
   getTrainingConfigDraft,
   getTrainingQuestion,
@@ -112,6 +116,7 @@ import {
 import { getMediaFile, getMediaFileForEmployee, uploadMedia } from "@/server/storage/media-service";
 import { decideChecklistRun } from "@/server/checklists/approvals";
 import {
+  getChecklistCompletionReport,
   getChecklistRunDetail,
   listChecklistRuns,
   recordItemAction,
@@ -139,6 +144,7 @@ import {
   getPathDetail,
   getQualificationDetail,
   getQualificationDetailForEmployee,
+  getQualificationsReport,
   listPaths,
   listQualificationsForEmployee,
   listQualificationsOverview,
@@ -150,6 +156,7 @@ import {
   assignTraining,
   getAssignmentDetail,
   getSessionState,
+  getTrainingProgressReport,
   recordStepAction,
   startOrResumeSession,
   submitAnswer,
@@ -5652,10 +5659,367 @@ async function verifyDatabase(): Promise<void> {
     );
   }
 
+  // --- Phase 14: aggregates, paginated reports, and activity history from real domain events ---
+  // Every fixture above already exercised every mutation `writeDomainEvent` is wired into (SOP
+  // publish/archive, bulk assignment, session completion, training/checklist approval decisions,
+  // qualification award/revoke, checklist creation/run submission, translation approval), so this
+  // section proves the resulting `domain_events` rows and the report/activity reads over them
+  // rather than re-deriving new fixtures for each one.
+
+  const domainEventTotalRows = await getDb()
+    .select({ count: sql<number>`count(*)::int` })
+    .from(domainEvents)
+    .where(eq(domainEvents.organizationId, seedIds.organization));
+  const domainEventTotal = domainEventTotalRows[0]?.count ?? 0;
+  // A single generously-sized page covers every event this run has produced (well under this
+  // bound in practice) so type coverage and the reported total can both be checked against it.
+  const ownerActivityAll = await listActivity(managerContext, {
+    page: 1,
+    pageSize: Math.max(domainEventTotal, 1),
+  });
+  const observedActivityTypes = new Set(ownerActivityAll.items.map((item) => item.type));
+  const missingActivityTypes = domainEventTypeValues.filter(
+    (type) => !observedActivityTypes.has(type),
+  );
+  if (missingActivityTypes.length > 0) {
+    throw new Error(
+      `Missing domain event types in activity feed: ${missingActivityTypes.join(", ")}`,
+    );
+  }
+  if (ownerActivityAll.total !== domainEventTotal) {
+    throw new Error(
+      `Owner activity total (${ownerActivityAll.total}) did not match the actual domain_events row count (${domainEventTotal})`,
+    );
+  }
+  if (ownerActivityAll.items.length !== domainEventTotal) {
+    throw new Error("Owner activity page did not return every domain event within its bound");
+  }
+  // Pagination distinctness: a small page size guarantees at least two pages given >= 11 event
+  // types, and no id may appear on both.
+  const activityPage1 = await listActivity(managerContext, { page: 1, pageSize: 2 });
+  const activityPage2 = await listActivity(managerContext, { page: 2, pageSize: 2 });
+  const activityPage1Ids = new Set(activityPage1.items.map((item) => item.id));
+  if (activityPage2.items.some((item) => activityPage1Ids.has(item.id))) {
+    throw new Error("Activity pagination returned overlapping rows across pages");
+  }
+
+  const scopedActivity = await listActivity(scopedManagerContext, { page: 1, pageSize: 100 });
+  if (scopedActivity.items.some((item) => item.locationId !== seedIds.locations.downtown)) {
+    throw new Error("A location-scoped manager saw an activity event outside their location");
+  }
+  const scopedActivityOtherLocation = await listActivity(scopedManagerContext, {
+    locationId: seedIds.locations.riverside,
+    page: 1,
+    pageSize: 20,
+  });
+  if (scopedActivityOtherLocation.items.length !== 0 || scopedActivityOtherLocation.total !== 0) {
+    throw new Error("A location-scoped manager was not empty-stated for an unmanaged location");
+  }
+
+  const publishedActivity = await listActivity(managerContext, {
+    type: "sop.published",
+    page: 1,
+    pageSize: 50,
+  });
+  if (
+    publishedActivity.total === 0 ||
+    publishedActivity.items.some((item) => item.type !== "sop.published")
+  ) {
+    throw new Error("Activity type filter did not narrow to sop.published events");
+  }
+
+  // Training progress report
+  const trainingReportPage = await getTrainingProgressReport(managerContext, {
+    status: "",
+    locationId: "",
+    search: "",
+    page: 1,
+    pageSize: 5,
+  });
+  if (trainingReportPage.total === 0 || trainingReportPage.items.length === 0) {
+    throw new Error("Training progress report returned no rows despite prior fixtures");
+  }
+  const firstTrainingRow = trainingReportPage.items[0];
+  if (!firstTrainingRow) throw new Error("Training progress report page was unexpectedly empty");
+  const trainingReportByStatus = await getTrainingProgressReport(managerContext, {
+    status: firstTrainingRow.status,
+    locationId: "",
+    search: "",
+    page: 1,
+    pageSize: 100,
+  });
+  if (
+    trainingReportByStatus.items.some((row) => row.status !== firstTrainingRow.status) ||
+    !trainingReportByStatus.items.some((row) => row.id === firstTrainingRow.id)
+  ) {
+    throw new Error("Training progress report status filter did not behave correctly");
+  }
+  const trainingReportBySearch = await getTrainingProgressReport(managerContext, {
+    status: "",
+    locationId: "",
+    search: firstTrainingRow.employeeName,
+    page: 1,
+    pageSize: 100,
+  });
+  if (!trainingReportBySearch.items.some((row) => row.id === firstTrainingRow.id)) {
+    throw new Error("Training progress report search did not find the searched employee");
+  }
+  const scopedTrainingReport = await getTrainingProgressReport(scopedManagerContext, {
+    status: "",
+    locationId: "",
+    search: "",
+    page: 1,
+    pageSize: 100,
+  });
+  if (scopedTrainingReport.items.some((row) => row.locationId !== seedIds.locations.downtown)) {
+    throw new Error("A location-scoped manager saw a training progress row outside their location");
+  }
+
+  // Qualifications report. The only Phase 11 qualification program (`grillPath`) was deliberately
+  // archived by that phase's own "archiving stops awards" test, so — correctly — it no longer
+  // appears in `listQualificationsOverview`'s active-program roster by this point in the file.
+  // Build a small fresh active program here rather than depending on that now-archived fixture.
+  const reportPathSop = await createMinimalPublishedSop(
+    managerContext,
+    "Phase 14 Report Fixture SOP",
+    seedIds.locations.downtown,
+    "verify-phase14-report-sop",
+  );
+  const reportPath = await createPath(
+    managerContext,
+    {
+      title: "Phase 14 Report Path",
+      description: "",
+      locationId: seedIds.locations.downtown,
+      stationId: null,
+      enforceOrder: true,
+      status: "active",
+      definition: {
+        name: "Phase 14 Report Qualification",
+        description: "",
+        defaultValidityDays: 90,
+      },
+      items: [{ sopId: reportPathSop.id, isRequired: true, versionPolicy: "current_version" }],
+    },
+    "verify-phase14-report-path-create",
+  );
+  const reportPathEmployee = await createEmployee(managerContext, {
+    primaryLocationId: seedIds.locations.downtown,
+    employeeNumber: "9105",
+    displayName: "Riley Reportee",
+    jobRole: "Cook",
+    language: "en",
+    pin: "9105",
+    status: "active",
+  });
+  const reportPathAssign = await assignTraining(
+    managerContext,
+    {
+      sopId: reportPathSop.id,
+      target: { type: "employees", employeeIds: [reportPathEmployee.id] },
+    },
+    "verify-phase14-report-assign",
+  );
+  const reportPathAssignmentId = reportPathAssign.created[0]?.id;
+  if (!reportPathAssignmentId) {
+    throw new Error("The Phase 14 report fixture assignment was not created");
+  }
+  const reportPathEmployeeSession = await loginNewEmployee(
+    "9105",
+    "9105",
+    "verify-phase14-report-employee",
+  );
+  await completeMinimalAssignment(
+    reportPathEmployeeSession,
+    reportPathAssignmentId,
+    "verify-phase14-report-complete",
+  );
+
+  const qualificationsReportPage = await getQualificationsReport(managerContext, {
+    locationId: "",
+    tab: "",
+    page: 1,
+    pageSize: 5,
+  });
+  if (qualificationsReportPage.total === 0 || qualificationsReportPage.items.length === 0) {
+    throw new Error("Qualifications report returned no rows despite prior fixtures");
+  }
+  // Every active-location employee is a row in this report, so the fresh fixture may not land on
+  // a 5-row first page once sorted by name; fetch a page wide enough to find it deterministically.
+  const qualificationsReportWide = await getQualificationsReport(managerContext, {
+    locationId: "",
+    tab: "",
+    page: 1,
+    pageSize: 200,
+  });
+  const firstQualificationRow = qualificationsReportWide.items.find(
+    (row) =>
+      row.definitionId === reportPath.definition.id && row.employeeId === reportPathEmployee.id,
+  );
+  if (!firstQualificationRow) {
+    throw new Error("Qualifications report did not include the freshly awarded Phase 14 fixture");
+  }
+  const qualificationsReportByTab = await getQualificationsReport(managerContext, {
+    locationId: "",
+    tab: firstQualificationRow.classification,
+    page: 1,
+    pageSize: 200,
+  });
+  if (
+    qualificationsReportByTab.items.some(
+      (row) => row.classification !== firstQualificationRow.classification,
+    )
+  ) {
+    throw new Error("Qualifications report tab filter did not behave correctly");
+  }
+  if (qualificationsReportPage.total > 1) {
+    const qualificationsPage1 = await getQualificationsReport(managerContext, {
+      locationId: "",
+      tab: "",
+      page: 1,
+      pageSize: 1,
+    });
+    const qualificationsPage2 = await getQualificationsReport(managerContext, {
+      locationId: "",
+      tab: "",
+      page: 2,
+      pageSize: 1,
+    });
+    // Compare by employee+definition rather than `qualificationId` alone: a "missing" candidate
+    // row legitimately has a null `qualificationId`, and every row here shares the same
+    // `definitionId` since the fixture above is the only active program in this run.
+    if (
+      qualificationsPage1.items[0]?.employeeId === qualificationsPage2.items[0]?.employeeId &&
+      qualificationsPage1.items[0]?.definitionId === qualificationsPage2.items[0]?.definitionId
+    ) {
+      throw new Error("Qualifications report pagination did not return distinct pages");
+    }
+  }
+
+  // Checklist completion report
+  const checklistReportPage = await getChecklistCompletionReport(managerContext, {
+    status: "",
+    locationId: "",
+    search: "",
+    page: 1,
+    pageSize: 5,
+  });
+  if (checklistReportPage.total === 0 || checklistReportPage.items.length === 0) {
+    throw new Error("Checklist completion report returned no rows despite prior fixtures");
+  }
+  const firstChecklistRow = checklistReportPage.items[0];
+  if (!firstChecklistRow)
+    throw new Error("Checklist completion report page was unexpectedly empty");
+  const checklistReportByStatus = await getChecklistCompletionReport(managerContext, {
+    status: firstChecklistRow.status,
+    locationId: "",
+    search: "",
+    page: 1,
+    pageSize: 100,
+  });
+  if (
+    checklistReportByStatus.items.some((row) => row.status !== firstChecklistRow.status) ||
+    !checklistReportByStatus.items.some((row) => row.id === firstChecklistRow.id)
+  ) {
+    throw new Error("Checklist completion report status filter did not behave correctly");
+  }
+  const scopedChecklistReport = await getChecklistCompletionReport(scopedManagerContext, {
+    status: "",
+    locationId: "",
+    search: "",
+    page: 1,
+    pageSize: 100,
+  });
+  if (scopedChecklistReport.items.some((row) => row.locationId !== seedIds.locations.downtown)) {
+    throw new Error(
+      "A location-scoped manager saw a checklist completion row outside their location",
+    );
+  }
+
+  // SOP version history report
+  const sopVersionReportPage = await getSopVersionHistoryReport(managerContext, {
+    search: "",
+    category: "",
+    status: "",
+    locationId: "",
+    page: 1,
+    pageSize: 5,
+  });
+  if (sopVersionReportPage.total === 0 || sopVersionReportPage.items.length === 0) {
+    throw new Error("SOP version history report returned no rows despite prior fixtures");
+  }
+  const firstSopVersionRow = sopVersionReportPage.items[0];
+  if (!firstSopVersionRow)
+    throw new Error("SOP version history report page was unexpectedly empty");
+  const sopVersionReportByStatus = await getSopVersionHistoryReport(managerContext, {
+    search: "",
+    category: "",
+    status: firstSopVersionRow.status,
+    locationId: "",
+    page: 1,
+    pageSize: 200,
+  });
+  if (
+    sopVersionReportByStatus.items.some((row) => row.status !== firstSopVersionRow.status) ||
+    !sopVersionReportByStatus.items.some((row) => row.id === firstSopVersionRow.id)
+  ) {
+    throw new Error("SOP version history report status filter did not behave correctly");
+  }
+  const scopedSopVersionReport = await getSopVersionHistoryReport(scopedManagerContext, {
+    search: "",
+    category: "",
+    status: "",
+    locationId: "",
+    page: 1,
+    pageSize: 200,
+  });
+  if (scopedSopVersionReport.items.some((row) => row.locationId !== seedIds.locations.downtown)) {
+    throw new Error(
+      "A location-scoped manager saw a SOP version history row outside their location",
+    );
+  }
+
+  // Approval decision history report (unions the separate training and checklist decision tables)
+  const approvalHistoryPage = await getApprovalHistoryReport(managerContext, {
+    locationId: "",
+    decision: "",
+    page: 1,
+    pageSize: 100,
+  });
+  if (approvalHistoryPage.total === 0 || approvalHistoryPage.items.length === 0) {
+    throw new Error("Approval history report returned no rows despite prior fixtures");
+  }
+  if (!approvalHistoryPage.items.some((row) => row.kind === "training")) {
+    throw new Error("Approval history report is missing training decisions");
+  }
+  if (!approvalHistoryPage.items.some((row) => row.kind === "checklist")) {
+    throw new Error("Approval history report is missing checklist decisions");
+  }
+  const firstApprovalRow = approvalHistoryPage.items[0];
+  if (!firstApprovalRow) throw new Error("Approval history report page was unexpectedly empty");
+  const approvalHistoryByDecision = await getApprovalHistoryReport(managerContext, {
+    locationId: "",
+    decision: firstApprovalRow.decision,
+    page: 1,
+    pageSize: 100,
+  });
+  if (approvalHistoryByDecision.items.some((row) => row.decision !== firstApprovalRow.decision)) {
+    throw new Error("Approval history report decision filter did not behave correctly");
+  }
+  const scopedApprovalHistory = await getApprovalHistoryReport(scopedManagerContext, {
+    locationId: "",
+    decision: "",
+    page: 1,
+    pageSize: 200,
+  });
+  if (scopedApprovalHistory.items.some((row) => row.locationId !== seedIds.locations.downtown)) {
+    throw new Error("A location-scoped manager saw an approval decision outside their location");
+  }
+
   await verifyUpgradeMigration();
 
   process.stdout.write(
-    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, migrationConcurrencyLock: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true, employeeStationReader: true, employeeSopReader: true, employeeCategoryLibrary: true, employeeRecentViews: true, employeeMediaAuthorization: true, qrCreationAndTargetValidation: true, qrLocationScoping: true, qrRevocation: true, qrRotation: true, qrScanResolution: true, qrUnavailableTarget: true, qrEnumerationRateLimit: true, trainingConfigDefaultsAndScoping: true, trainingConfigStaleWriteRejection: true, trainingStepRequirementGuards: true, trainingQuestionCrudAndReorder: true, trainingPublishReadinessRules: true, trainingPublishedImmutability: true, trainingDraftCloning: true, trainingAssignmentCreationAndScoping: true, trainingSessionStartAndResume: true, trainingSequentialStepEnforcement: true, trainingWatchTimerQuestionEvidenceEnforcement: true, trainingDuplicateActionRejection: true, trainingScoringAndApprovalRouting: true, trainingSubmitIdempotency: true, trainingAttemptLimitsAndRetraining: true, bulkAssignmentAuthorizationScoping: true, bulkAssignmentByEmployeeListWithDueDate: true, bulkAssignmentByJobRole: true, bulkAssignmentByLocation: true, bulkAssignmentIndependentDuplicateSkip: true, approvalQueueLocationScoping: true, approvalEvidenceAuthorization: true, approvalDecisionNoteRules: true, approvalApprovedDecision: true, approvalRejectedDecision: true, approvalCorrectionRequest: true, approvalDecisionImmutability: true, correctionOwnershipEnforcement: true, correctionAppendOnlyEvidence: true, correctionResubmitIdempotency: true, approvalDecisionHistoryRetention: true, trainingPathAuthorizationScoping: true, trainingPathItemValidation: true, trainingPathOrderedBlocking: true, qualificationAward: true, qualificationRenewal: true, qualificationOverviewClassification: true, qualificationEmployeeView: true, qualificationRevocation: true, trainingPathArchiveStopsAwards: true, checklistAuthorizationScoping: true, checklistDuplicateTitleRejection: true, checklistRunStartAndResume: true, checklistAutoRequirementGuardsManualTick: true, checklistTimerPhotoNoteEnforcement: true, checklistSubmitRequiresAllRequiredItems: true, checklistDuplicateOccurrencePrevention: true, checklistApprovalRouting: true, checklistApprovalUnauthorizedRejection: true, checklistCorrectionRequestAndResubmit: true, checklistCorrectionResubmitIdempotency: true, checklistApprovalDecisionCompletesRun: true, checklistSubmitIdempotency: true, checklistRunListLocationScoping: true, checklistItemRemovalDisablesRatherThanDeletes: true, checklistHistoricalRunRetainsRemovedItem: true, translationMatrixExcludesProtectedFields: true, translationLocationScoping: true, translationEntityOwnershipGuard: true, translationEmptyApprovalRejected: true, translationEditResetsApproval: true, translationStaleSourceDetection: true, translationEmployeeLocaleSwitchPreservesProtectedFields: true, translationUnapprovedFallsBackToOriginal: true })}\n`,
+    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, migrationConcurrencyLock: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true, employeeStationReader: true, employeeSopReader: true, employeeCategoryLibrary: true, employeeRecentViews: true, employeeMediaAuthorization: true, qrCreationAndTargetValidation: true, qrLocationScoping: true, qrRevocation: true, qrRotation: true, qrScanResolution: true, qrUnavailableTarget: true, qrEnumerationRateLimit: true, trainingConfigDefaultsAndScoping: true, trainingConfigStaleWriteRejection: true, trainingStepRequirementGuards: true, trainingQuestionCrudAndReorder: true, trainingPublishReadinessRules: true, trainingPublishedImmutability: true, trainingDraftCloning: true, trainingAssignmentCreationAndScoping: true, trainingSessionStartAndResume: true, trainingSequentialStepEnforcement: true, trainingWatchTimerQuestionEvidenceEnforcement: true, trainingDuplicateActionRejection: true, trainingScoringAndApprovalRouting: true, trainingSubmitIdempotency: true, trainingAttemptLimitsAndRetraining: true, bulkAssignmentAuthorizationScoping: true, bulkAssignmentByEmployeeListWithDueDate: true, bulkAssignmentByJobRole: true, bulkAssignmentByLocation: true, bulkAssignmentIndependentDuplicateSkip: true, approvalQueueLocationScoping: true, approvalEvidenceAuthorization: true, approvalDecisionNoteRules: true, approvalApprovedDecision: true, approvalRejectedDecision: true, approvalCorrectionRequest: true, approvalDecisionImmutability: true, correctionOwnershipEnforcement: true, correctionAppendOnlyEvidence: true, correctionResubmitIdempotency: true, approvalDecisionHistoryRetention: true, trainingPathAuthorizationScoping: true, trainingPathItemValidation: true, trainingPathOrderedBlocking: true, qualificationAward: true, qualificationRenewal: true, qualificationOverviewClassification: true, qualificationEmployeeView: true, qualificationRevocation: true, trainingPathArchiveStopsAwards: true, checklistAuthorizationScoping: true, checklistDuplicateTitleRejection: true, checklistRunStartAndResume: true, checklistAutoRequirementGuardsManualTick: true, checklistTimerPhotoNoteEnforcement: true, checklistSubmitRequiresAllRequiredItems: true, checklistDuplicateOccurrencePrevention: true, checklistApprovalRouting: true, checklistApprovalUnauthorizedRejection: true, checklistCorrectionRequestAndResubmit: true, checklistCorrectionResubmitIdempotency: true, checklistApprovalDecisionCompletesRun: true, checklistSubmitIdempotency: true, checklistRunListLocationScoping: true, checklistItemRemovalDisablesRatherThanDeletes: true, checklistHistoricalRunRetainsRemovedItem: true, translationMatrixExcludesProtectedFields: true, translationLocationScoping: true, translationEntityOwnershipGuard: true, translationEmptyApprovalRejected: true, translationEditResetsApproval: true, translationStaleSourceDetection: true, translationEmployeeLocaleSwitchPreservesProtectedFields: true, translationUnapprovedFallsBackToOriginal: true, domainEventEmissionCoverage: true, activityFeedLocationScoping: true, activityFeedTypeFilterAndPagination: true, trainingProgressReportFilteringAndScoping: true, qualificationsReportFilteringAndPagination: true, checklistCompletionReportFilteringAndScoping: true, sopVersionHistoryReportFilteringAndScoping: true, approvalHistoryReportUnionAndScoping: true })}\n`,
   );
 }
 

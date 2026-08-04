@@ -11,6 +11,7 @@ import type {
   ChecklistUpdateInput,
 } from "@/server/checklists/schemas";
 import { getDb } from "@/server/db/client";
+import { writeDomainEvent } from "@/server/events";
 import {
   checklistItemProgress,
   checklistItems,
@@ -273,6 +274,14 @@ export async function createChecklist(
     input.locationId,
     requestId,
   );
+  await writeDomainEvent({
+    organizationId: actor.organizationId,
+    locationId: input.locationId,
+    type: "checklist.created",
+    subjectType: "checklist",
+    subjectId: checklistId,
+    payload: { title: input.title, type: input.type },
+  });
   return getChecklistDetail(actor, checklistId);
 }
 
