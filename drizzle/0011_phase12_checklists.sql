@@ -161,5 +161,6 @@ CREATE INDEX "checklist_items_checklist_status_idx" ON "checklist_items" USING b
 CREATE UNIQUE INDEX "checklist_runs_checklist_employee_occurrence_uidx" ON "checklist_runs" USING btree ("checklist_id","employee_id","occurrence_key") WHERE status <> 'rejected';--> statement-breakpoint
 CREATE INDEX "checklist_runs_org_location_status_idx" ON "checklist_runs" USING btree ("organization_id","location_id","status","updated_at");--> statement-breakpoint
 CREATE INDEX "checklist_runs_employee_status_idx" ON "checklist_runs" USING btree ("employee_id","status");--> statement-breakpoint
+CREATE UNIQUE INDEX "checklists_org_location_title_uidx" ON "checklists" USING btree ("organization_id","location_id","title");--> statement-breakpoint
 CREATE INDEX "checklists_org_location_status_idx" ON "checklists" USING btree ("organization_id","location_id","status","updated_at");--> statement-breakpoint
 CREATE INDEX "checklists_org_station_idx" ON "checklists" USING btree ("organization_id","station_id");

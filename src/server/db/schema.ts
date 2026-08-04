@@ -1529,6 +1529,11 @@ export const checklists = pgTable(
       name: "checklists_station_org_location_fk",
     }).onDelete("restrict"),
     unique("checklists_id_org_unique").on(table.id, table.organizationId),
+    uniqueIndex("checklists_org_location_title_uidx").on(
+      table.organizationId,
+      table.locationId,
+      table.title,
+    ),
     index("checklists_org_location_status_idx").on(
       table.organizationId,
       table.locationId,

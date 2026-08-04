@@ -1,5 +1,5 @@
 {
-  "id": "d2c0f37d-5192-442a-be87-32c79793c6f1",
+  "id": "aee8f21b-57e2-4f3b-ad95-e4e58b312183",
   "prevId": "f8641e18-d09b-47cc-aea2-a1b041c03776",
   "version": "7",
   "dialect": "postgresql",
@@ -1845,6 +1845,33 @@
         }
       },
       "indexes": {
+        "checklists_org_location_title_uidx": {
+          "name": "checklists_org_location_title_uidx",
+          "columns": [
+            {
+              "expression": "organization_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "location_id",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            },
+            {
+              "expression": "title",
+              "isExpression": false,
+              "asc": true,
+              "nulls": "last"
+            }
+          ],
+          "isUnique": true,
+          "concurrently": false,
+          "method": "btree",
+          "with": {}
+        },
         "checklists_org_location_status_idx": {
           "name": "checklists_org_location_status_idx",
           "columns": [
