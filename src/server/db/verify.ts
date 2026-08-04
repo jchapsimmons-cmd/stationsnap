@@ -48,7 +48,9 @@ import {
   updateStation,
 } from "@/server/management/service";
 import {
+  approvalDecisions,
   approvalSubmissions,
+  correctionRequests,
   files as filesTable,
   qrScanEvents,
   trainingAssignments,
@@ -96,7 +98,15 @@ import {
   updateTrainingConfig,
   updateTrainingQuestion,
 } from "@/server/sops/service";
-import { getMediaFileForEmployee, uploadMedia } from "@/server/storage/media-service";
+import { getMediaFile, getMediaFileForEmployee, uploadMedia } from "@/server/storage/media-service";
+import {
+  decideApprovalSubmission,
+  getApprovalSubmissionDetail,
+  getEmployeeCorrectionDetail,
+  listApprovalQueue,
+  resubmitCorrection,
+} from "@/server/training/approvals";
+import { approvalDecisionSchema } from "@/server/training/schemas";
 import {
   assignTraining,
   getAssignmentDetail,
@@ -3421,6 +3431,523 @@ async function verifyDatabase(): Promise<void> {
     );
   }
 
+  // --- Phase 10: immutable approval decisions and correction evidence history ---
+
+  // The Phase 8 engine session is still sitting in `awaiting_approval` with exactly one pending
+  // submission; it is the natural fixture for a full needs_correction -> resubmit -> approved loop.
+  const [engineSubmission] = await getDb()
+    .select()
+    .from(approvalSubmissions)
+    .where(eq(approvalSubmissions.sessionId, startedSession.id));
+  if (!engineSubmission || engineSubmission.status !== "pending") {
+    throw new Error("The Phase 8 approval submission was not available for Phase 10 review");
+  }
+
+  const ownerQueue = await listApprovalQueue(managerContext, { status: "pending", locationId: "" });
+  const queuedSubmission = ownerQueue.find((row) => row.id === engineSubmission.id);
+  if (
+    !queuedSubmission ||
+    queuedSubmission.employeeId !== employeeSeed[0].id ||
+    queuedSubmission.locationId !== seedIds.locations.downtown ||
+    queuedSubmission.submissionGeneration !== 1
+  ) {
+    throw new Error("The pending submission did not appear in the owner's approval queue");
+  }
+
+  const foreignQueue = await listApprovalQueue(riversideManagerContext, {
+    status: "pending",
+    locationId: "",
+  });
+  if (foreignQueue.some((row) => row.id === engineSubmission.id)) {
+    throw new Error("A manager saw an approval submission outside their permitted locations");
+  }
+  const spoofedLocationQueue = await listApprovalQueue(riversideManagerContext, {
+    status: "pending",
+    locationId: seedIds.locations.downtown,
+  });
+  if (spoofedLocationQueue.length !== 0) {
+    throw new Error("A client-supplied location filter widened a manager's approval queue scope");
+  }
+
+  let foreignApprovalDetailRejected = false;
+  try {
+    await getApprovalSubmissionDetail(riversideManagerContext, engineSubmission.id);
+  } catch {
+    foreignApprovalDetailRejected = true;
+  }
+  if (!foreignApprovalDetailRejected) {
+    throw new Error("A manager opened an approval submission outside their permitted locations");
+  }
+
+  let foreignApprovalDecisionRejected = false;
+  try {
+    await decideApprovalSubmission(
+      riversideManagerContext,
+      engineSubmission.id,
+      { decision: "approved", note: "" },
+      "verify-phase10-decide-unauthorized-rejected",
+    );
+  } catch {
+    foreignApprovalDecisionRejected = true;
+  }
+  if (!foreignApprovalDecisionRejected) {
+    throw new Error("A manager decided an approval submission outside their permitted locations");
+  }
+
+  const reviewDetail = await getApprovalSubmissionDetail(managerContext, engineSubmission.id);
+  if (
+    reviewDetail.evidence.length !== 1 ||
+    reviewDetail.evidence[0]?.submissionGeneration !== 1 ||
+    reviewDetail.quiz.totalQuestions !== 2 ||
+    reviewDetail.quiz.correctAnswers !== 2 ||
+    !reviewDetail.submission.isDecidable
+  ) {
+    throw new Error("The approval review did not expose the submitted evidence and quiz summary");
+  }
+  const originalEvidenceFileId = reviewDetail.evidence[0]!.fileId;
+
+  const reviewedEvidenceFile = await getMediaFile(managerContext, originalEvidenceFileId);
+  if (reviewedEvidenceFile.mimeType !== "image/png") {
+    throw new Error("A reviewing manager could not read the submitted evidence file");
+  }
+  let foreignEvidenceReadRejected = false;
+  try {
+    await getMediaFile(riversideManagerContext, originalEvidenceFileId);
+  } catch {
+    foreignEvidenceReadRejected = true;
+  }
+  if (!foreignEvidenceReadRejected) {
+    throw new Error("A manager read employee evidence from a location they do not manage");
+  }
+
+  // Note rules live in the shared decision schema, which is what every API route parses.
+  for (const decision of ["rejected", "needs_correction"] as const) {
+    if (approvalDecisionSchema.safeParse({ decision }).success) {
+      throw new Error(`A ${decision} decision was accepted without a note`);
+    }
+    if (approvalDecisionSchema.safeParse({ decision, note: "   " }).success) {
+      throw new Error(`A ${decision} decision was accepted with a blank note`);
+    }
+  }
+  if (!approvalDecisionSchema.safeParse({ decision: "approved" }).success) {
+    throw new Error("An approval was rejected for omitting an optional note");
+  }
+
+  const correctionNote = "Retake the grill photo with the display in frame.";
+  const afterCorrectionRequest = await decideApprovalSubmission(
+    managerContext,
+    engineSubmission.id,
+    { decision: "needs_correction", note: correctionNote },
+    "verify-phase10-needs-correction",
+  );
+  if (
+    afterCorrectionRequest.submission.status !== "needs_correction" ||
+    afterCorrectionRequest.session.status !== "awaiting_approval"
+  ) {
+    throw new Error(
+      "Requesting a correction did not hold the session in awaiting_approval with a corrected submission",
+    );
+  }
+  const [openCorrection] = await getDb()
+    .select()
+    .from(correctionRequests)
+    .where(eq(correctionRequests.submissionId, engineSubmission.id));
+  if (
+    !openCorrection ||
+    openCorrection.replacementGeneration !== 2 ||
+    openCorrection.resolvedAt !== null ||
+    openCorrection.resolvedSubmissionId !== null
+  ) {
+    throw new Error("Requesting a correction did not open exactly one unresolved correction row");
+  }
+
+  let doubleDecisionRejected = false;
+  try {
+    await decideApprovalSubmission(
+      managerContext,
+      engineSubmission.id,
+      { decision: "approved", note: "" },
+      "verify-phase10-double-decision-rejected",
+    );
+  } catch {
+    doubleDecisionRejected = true;
+  }
+  if (!doubleDecisionRejected) {
+    throw new Error("An already-decided submission was decided a second time");
+  }
+  const decisionsAfterDoubleAttempt = await getDb()
+    .select()
+    .from(approvalDecisions)
+    .where(eq(approvalDecisions.submissionId, engineSubmission.id));
+  if (decisionsAfterDoubleAttempt.length !== 1) {
+    throw new Error("A rejected second decision still wrote a decision row");
+  }
+
+  let foreignCorrectionDetailRejected = false;
+  try {
+    await getEmployeeCorrectionDetail(secondEmployeeContext, engineSubmission.id);
+  } catch {
+    foreignCorrectionDetailRejected = true;
+  }
+  if (!foreignCorrectionDetailRejected) {
+    throw new Error("An employee opened another employee's correction request");
+  }
+
+  const correctionDetail = await getEmployeeCorrectionDetail(employeeContext, engineSubmission.id);
+  if (
+    !correctionDetail.correction.isOpen ||
+    correctionDetail.correction.managerNote !== correctionNote ||
+    correctionDetail.correction.replacementGeneration !== 2
+  ) {
+    throw new Error("The employee correction view did not surface the open request and its note");
+  }
+  const correctionStep = correctionDetail.steps.find((step) => step.id === engineStepTwoId);
+  if (!correctionStep || correctionStep.evidence.length !== 1) {
+    throw new Error("The employee correction view did not keep the original evidence visible");
+  }
+
+  let foreignResubmitRejected = false;
+  try {
+    const foreignForm = new FormData();
+    foreignForm.set(
+      "file",
+      new File([new Uint8Array(smallPng)], "not-mine.png", { type: "image/png" }),
+    );
+    await resubmitCorrection(
+      secondEmployeeContext,
+      engineSubmission.id,
+      foreignForm,
+      { stepId: engineStepTwoId, employeeNote: "", expectedRevision: 1 },
+      "verify-phase10-resubmit-unauthorized-rejected",
+    );
+  } catch {
+    foreignResubmitRejected = true;
+  }
+  if (!foreignResubmitRejected) {
+    throw new Error("An employee resubmitted against another employee's correction request");
+  }
+
+  const replacementForm = new FormData();
+  replacementForm.set(
+    "file",
+    new File([new Uint8Array(smallPng)], "fixed-proof.png", { type: "image/png" }),
+  );
+  const afterResubmit = await resubmitCorrection(
+    employeeContext,
+    engineSubmission.id,
+    replacementForm,
+    {
+      stepId: engineStepTwoId,
+      employeeNote: "Retook the photo with the display in frame.",
+      expectedRevision: correctionDetail.session.revision,
+    },
+    "verify-phase10-resubmit",
+  );
+  if (afterResubmit.correction.isOpen || afterResubmit.correction.resolvedAt === null) {
+    throw new Error("Resubmitting a correction did not resolve the correction request");
+  }
+  const resubmittedStep = afterResubmit.steps.find((step) => step.id === engineStepTwoId);
+  if (
+    !resubmittedStep ||
+    resubmittedStep.evidence.length !== 2 ||
+    resubmittedStep.evidence[0]?.fileId !== originalEvidenceFileId ||
+    resubmittedStep.evidence[1]?.submissionGeneration !== 2
+  ) {
+    throw new Error(
+      "Replacement evidence overwrote the original instead of adding an append-only generation",
+    );
+  }
+
+  const replacementSubmissionId = afterResubmit.correction.resolvedSubmissionId;
+  if (!replacementSubmissionId) {
+    throw new Error("Resolving a correction did not record the replacement submission");
+  }
+  const [replacementSubmission] = await getDb()
+    .select()
+    .from(approvalSubmissions)
+    .where(eq(approvalSubmissions.id, replacementSubmissionId));
+  if (
+    !replacementSubmission ||
+    replacementSubmission.status !== "pending" ||
+    replacementSubmission.submissionGeneration !== 2
+  ) {
+    throw new Error("Resubmitting a correction did not open a new pending submission generation");
+  }
+
+  let duplicateResubmitRejected = false;
+  try {
+    const duplicateForm = new FormData();
+    duplicateForm.set(
+      "file",
+      new File([new Uint8Array(smallPng)], "again.png", { type: "image/png" }),
+    );
+    await resubmitCorrection(
+      employeeContext,
+      engineSubmission.id,
+      duplicateForm,
+      {
+        stepId: engineStepTwoId,
+        employeeNote: "",
+        expectedRevision: afterResubmit.session.revision,
+      },
+      "verify-phase10-resubmit-duplicate-rejected",
+    );
+  } catch {
+    duplicateResubmitRejected = true;
+  }
+  if (!duplicateResubmitRejected) {
+    throw new Error("An already-resolved correction accepted a second resubmission");
+  }
+  const submissionsAfterDuplicateResubmit = await getDb()
+    .select()
+    .from(approvalSubmissions)
+    .where(eq(approvalSubmissions.sessionId, startedSession.id));
+  if (submissionsAfterDuplicateResubmit.length !== 2) {
+    throw new Error("A rejected duplicate resubmission still created another submission");
+  }
+
+  const afterApproval = await decideApprovalSubmission(
+    managerContext,
+    replacementSubmissionId,
+    { decision: "approved", note: "" },
+    "verify-phase10-approve",
+  );
+  if (afterApproval.submission.status !== "approved" || afterApproval.session.status !== "passed") {
+    throw new Error("An approval did not resolve the session to passed");
+  }
+  const approvedAssignment = await getAssignmentDetail(employeeContext, engineAssignment.id);
+  if (approvedAssignment.status !== "completed") {
+    throw new Error("An approval did not complete the training assignment");
+  }
+
+  // Both rounds of the loop must still be readable: history is appended, never overwritten.
+  if (
+    afterApproval.decisions.length !== 2 ||
+    afterApproval.decisions[0]?.decision !== "needs_correction" ||
+    afterApproval.decisions[0]?.note !== correctionNote ||
+    afterApproval.decisions[0]?.submissionGeneration !== 1 ||
+    afterApproval.decisions[1]?.decision !== "approved" ||
+    afterApproval.decisions[1]?.submissionGeneration !== 2
+  ) {
+    throw new Error("The decision history did not retain every round of the correction loop");
+  }
+  if (
+    afterApproval.corrections.length !== 1 ||
+    afterApproval.corrections[0]?.managerNote !== correctionNote ||
+    afterApproval.corrections[0]?.resolvedSubmissionId !== replacementSubmissionId
+  ) {
+    throw new Error("The correction history did not retain the resolved round");
+  }
+  if (afterApproval.evidence.length !== 2) {
+    throw new Error("The reviewer lost sight of an earlier evidence generation after approval");
+  }
+  const supersededDetail = await getApprovalSubmissionDetail(managerContext, engineSubmission.id);
+  if (
+    supersededDetail.submission.status !== "needs_correction" ||
+    supersededDetail.submission.isDecidable
+  ) {
+    throw new Error("A superseded submission generation was mutated or became decidable again");
+  }
+
+  // A second fixture exercises the rejection path, which ends an attempt rather than reopening it.
+  const rejectionDraft = await createSop(
+    managerContext,
+    {
+      title: "Walk-in cooler demonstration",
+      description: "Demonstration reviewed by a manager before it counts",
+      category: "cleaning",
+      locationId: seedIds.locations.downtown,
+      stationId: seedIds.stations.fry,
+      estimatedMinutes: 4,
+      difficulty: "beginner",
+      coverImageFileId: null,
+      sourceVideoFileId: null,
+      materials: [],
+      warnings: [],
+    },
+    "verify-phase10-rejection-sop-create",
+  );
+  const rejectionStepDraft = await createStep(
+    managerContext,
+    rejectionDraft.id,
+    {
+      title: "Photograph the cleaned shelving",
+      instruction: "Clean the shelving and photograph the result.",
+      imageFileId: null,
+      videoFileId: null,
+      warning: "",
+      quantity: "",
+      unit: "",
+      equipmentSetting: "",
+      timerSeconds: null,
+      isRequired: true,
+      expectedRevision: rejectionDraft.version.revision,
+    },
+    "verify-phase10-rejection-step-create",
+  );
+  const rejectionStepId = rejectionStepDraft.steps[0]!.id;
+  const rejectionConfig = await updateTrainingConfig(
+    managerContext,
+    rejectionDraft.id,
+    {
+      requirementState: "required",
+      defaultMode: "demonstration",
+      allowBacktracking: true,
+      requireSequentialProgress: true,
+      requireFullVideoWatch: false,
+      requireEvidenceApproval: true,
+      passingScorePercent: 80,
+      maxAttempts: 2,
+      qualificationValidityDays: null,
+      retrainingGraceDays: null,
+      expectedRevision: rejectionStepDraft.version.revision,
+    },
+    "verify-phase10-rejection-config",
+  );
+  const rejectionRequirements = await updateStepTrainingRequirements(
+    managerContext,
+    rejectionDraft.id,
+    rejectionStepId,
+    {
+      requireFullVideo: false,
+      requireConfirmation: false,
+      requireTimer: false,
+      requireQuestion: false,
+      requirePhoto: true,
+      requireVideo: false,
+      requireApproval: true,
+      expectedRevision: rejectionConfig.revision,
+    },
+    "verify-phase10-rejection-step-requirements",
+  );
+  const rejectionQuestion = await createTrainingQuestion(
+    managerContext,
+    rejectionDraft.id,
+    {
+      stepId: null,
+      type: "true_false",
+      text: "Shelving must be dry before restocking.",
+      explanation: "",
+      points: 1,
+      placement: "final",
+      explanationPolicy: "never",
+      choices: [
+        { text: "True", isCorrect: true },
+        { text: "False", isCorrect: false },
+      ],
+      expectedRevision: rejectionRequirements.revision,
+    },
+    "verify-phase10-rejection-question",
+  );
+  const rejectionQuestionId = rejectionQuestion.questions[0]!.id;
+  const rejectionCorrectChoiceId = rejectionQuestion.questions[0]!.choices.find(
+    (choice) => choice.isCorrect,
+  )!.id;
+
+  const rejectionPublished = await publishSop(
+    managerContext,
+    rejectionDraft.id,
+    {
+      expectedRevision: rejectionQuestion.revision,
+      changeSummary: "",
+      retrainingRule: { type: "none" },
+    },
+    "verify-phase10-rejection-publish",
+  );
+  if (rejectionPublished.status !== "published") {
+    throw new Error("Publishing the Phase 10 rejection fixture did not succeed");
+  }
+
+  const rejectionAssignResult = await assignTraining(
+    managerContext,
+    {
+      sopId: rejectionDraft.id,
+      target: { type: "employees", employeeIds: [employeeSeed[1].id] },
+    },
+    "verify-phase10-rejection-assign",
+  );
+  const rejectionAssignment = rejectionAssignResult.created[0];
+  if (!rejectionAssignment) throw new Error("The Phase 10 rejection assignment was not created");
+
+  const rejectionSession = await startOrResumeSession(
+    secondEmployeeContext,
+    rejectionAssignment.id,
+    "verify-phase10-rejection-start",
+  );
+  const rejectionState = await getSessionState(
+    secondEmployeeContext,
+    rejectionAssignment.id,
+    rejectionSession.id,
+  );
+  const rejectionEvidenceForm = new FormData();
+  rejectionEvidenceForm.set(
+    "file",
+    new File([new Uint8Array(smallPng)], "shelving.png", { type: "image/png" }),
+  );
+  const afterRejectionEvidence = await submitStepEvidence(
+    secondEmployeeContext,
+    rejectionAssignment.id,
+    rejectionSession.id,
+    rejectionStepId,
+    rejectionEvidenceForm,
+    { employeeNote: "", expectedRevision: rejectionState.revision },
+    "verify-phase10-rejection-evidence",
+  );
+  const afterRejectionAnswer = await submitAnswer(
+    secondEmployeeContext,
+    rejectionAssignment.id,
+    rejectionSession.id,
+    rejectionQuestionId,
+    [rejectionCorrectChoiceId],
+    afterRejectionEvidence.revision,
+    "verify-phase10-rejection-answer",
+  );
+  const rejectionSubmitted = await submitSession(
+    secondEmployeeContext,
+    rejectionAssignment.id,
+    rejectionSession.id,
+    afterRejectionAnswer.revision,
+    "verify-phase10-rejection-submit",
+  );
+  if (rejectionSubmitted.status !== "awaiting_approval") {
+    throw new Error("The Phase 10 rejection fixture did not route to manager approval");
+  }
+  const [rejectionSubmission] = await getDb()
+    .select()
+    .from(approvalSubmissions)
+    .where(eq(approvalSubmissions.sessionId, rejectionSession.id));
+  if (!rejectionSubmission) throw new Error("The rejection fixture created no approval submission");
+
+  const rejectionNote = "The back shelf is still soiled. This attempt does not pass.";
+  const afterRejection = await decideApprovalSubmission(
+    managerContext,
+    rejectionSubmission.id,
+    { decision: "rejected", note: rejectionNote },
+    "verify-phase10-reject",
+  );
+  if (
+    afterRejection.submission.status !== "rejected" ||
+    afterRejection.session.status !== "failed"
+  ) {
+    throw new Error("A rejection did not resolve the session to failed");
+  }
+  const rejectedAssignment = await getAssignmentDetail(
+    secondEmployeeContext,
+    rejectionAssignment.id,
+  );
+  if (rejectedAssignment.status !== "in_progress") {
+    throw new Error(
+      "A rejection with attempts remaining did not leave the assignment open for another attempt",
+    );
+  }
+  if (
+    afterRejection.decisions.length !== 1 ||
+    afterRejection.decisions[0]?.note !== rejectionNote ||
+    afterRejection.decisions[0]?.decidedByManagerUserId !== managerContext.managerUserId
+  ) {
+    throw new Error("A rejection did not record its manager, note, and decision permanently");
+  }
+
   const actions = new Set(
     (await getDb().select({ action: auditEvents.action }).from(auditEvents)).map(
       (event) => event.action,
@@ -3461,6 +3988,9 @@ async function verifyDatabase(): Promise<void> {
     "training.answer_submitted",
     "training.evidence_submitted",
     "training.session_submitted",
+    "training.approval_decided",
+    "training.correction_requested",
+    "training.correction_resubmitted",
   ];
   if (requiredAuditActions.some((action) => !actions.has(action))) {
     throw new Error(
@@ -3471,7 +4001,7 @@ async function verifyDatabase(): Promise<void> {
   await verifyUpgradeMigration();
 
   process.stdout.write(
-    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, migrationConcurrencyLock: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true, employeeStationReader: true, employeeSopReader: true, employeeCategoryLibrary: true, employeeRecentViews: true, employeeMediaAuthorization: true, qrCreationAndTargetValidation: true, qrLocationScoping: true, qrRevocation: true, qrRotation: true, qrScanResolution: true, qrUnavailableTarget: true, qrEnumerationRateLimit: true, trainingConfigDefaultsAndScoping: true, trainingConfigStaleWriteRejection: true, trainingStepRequirementGuards: true, trainingQuestionCrudAndReorder: true, trainingPublishReadinessRules: true, trainingPublishedImmutability: true, trainingDraftCloning: true, trainingAssignmentCreationAndScoping: true, trainingSessionStartAndResume: true, trainingSequentialStepEnforcement: true, trainingWatchTimerQuestionEvidenceEnforcement: true, trainingDuplicateActionRejection: true, trainingScoringAndApprovalRouting: true, trainingSubmitIdempotency: true, trainingAttemptLimitsAndRetraining: true, bulkAssignmentAuthorizationScoping: true, bulkAssignmentByEmployeeListWithDueDate: true, bulkAssignmentByJobRole: true, bulkAssignmentByLocation: true, bulkAssignmentIndependentDuplicateSkip: true })}\n`,
+    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, migrationConcurrencyLock: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true, employeeStationReader: true, employeeSopReader: true, employeeCategoryLibrary: true, employeeRecentViews: true, employeeMediaAuthorization: true, qrCreationAndTargetValidation: true, qrLocationScoping: true, qrRevocation: true, qrRotation: true, qrScanResolution: true, qrUnavailableTarget: true, qrEnumerationRateLimit: true, trainingConfigDefaultsAndScoping: true, trainingConfigStaleWriteRejection: true, trainingStepRequirementGuards: true, trainingQuestionCrudAndReorder: true, trainingPublishReadinessRules: true, trainingPublishedImmutability: true, trainingDraftCloning: true, trainingAssignmentCreationAndScoping: true, trainingSessionStartAndResume: true, trainingSequentialStepEnforcement: true, trainingWatchTimerQuestionEvidenceEnforcement: true, trainingDuplicateActionRejection: true, trainingScoringAndApprovalRouting: true, trainingSubmitIdempotency: true, trainingAttemptLimitsAndRetraining: true, bulkAssignmentAuthorizationScoping: true, bulkAssignmentByEmployeeListWithDueDate: true, bulkAssignmentByJobRole: true, bulkAssignmentByLocation: true, bulkAssignmentIndependentDuplicateSkip: true, approvalQueueLocationScoping: true, approvalEvidenceAuthorization: true, approvalDecisionNoteRules: true, approvalApprovedDecision: true, approvalRejectedDecision: true, approvalCorrectionRequest: true, approvalDecisionImmutability: true, correctionOwnershipEnforcement: true, correctionAppendOnlyEvidence: true, correctionResubmitIdempotency: true, approvalDecisionHistoryRetention: true })}\n`,
   );
 }
 

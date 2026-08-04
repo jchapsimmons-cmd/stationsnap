@@ -2,9 +2,18 @@ import { createHash, randomUUID } from "node:crypto";
 import { and, eq, or } from "drizzle-orm";
 import { AppError } from "@/lib/errors";
 import { writeAuditEvent } from "@/server/audit";
+import { managerCanManageLocation } from "@/server/auth/authorization";
 import type { EmployeeSessionContext, ManagerSessionContext } from "@/server/auth/sessions";
 import { getDb } from "@/server/db/client";
-import { files, sops, sopSteps, sopVersions, trainingAssignments } from "@/server/db/schema";
+import {
+  files,
+  sops,
+  sopSteps,
+  sopVersions,
+  trainingAssignments,
+  trainingEvidence,
+  trainingSessions,
+} from "@/server/db/schema";
 import { maxBytesForMediaType, mediaTypeForMime } from "@/server/storage/constants";
 import { createObjectKey, readStoredObject, writeStoredObject } from "@/server/storage/driver";
 
@@ -136,6 +145,41 @@ export async function getMediaFile(actor: ManagerSessionContext, fileId: string)
     .where(and(eq(files.id, fileId), eq(files.organizationId, actor.organizationId)))
     .limit(1);
   if (!row || row.status !== "ready") throw new AppError("NOT_FOUND", "File not found.");
+
+  // Employee-uploaded training evidence is location-scoped, not merely organization-scoped: a
+  // manager may only read the proof attached to an assignment at a location they manage. Manager
+  // authored SOP media keeps its existing organization scope.
+  if (row.uploaderEmployeeId) {
+    const [evidenceMatch] = await getDb()
+      .select({ locationId: trainingAssignments.locationId })
+      .from(trainingEvidence)
+      .innerJoin(
+        trainingSessions,
+        and(
+          eq(trainingSessions.id, trainingEvidence.sessionId),
+          eq(trainingSessions.organizationId, trainingEvidence.organizationId),
+        ),
+      )
+      .innerJoin(
+        trainingAssignments,
+        and(
+          eq(trainingAssignments.id, trainingSessions.assignmentId),
+          eq(trainingAssignments.organizationId, trainingSessions.organizationId),
+        ),
+      )
+      .where(
+        and(
+          eq(trainingEvidence.organizationId, actor.organizationId),
+          eq(trainingEvidence.fileId, fileId),
+        ),
+      )
+      .limit(1);
+    if (!evidenceMatch) throw new AppError("NOT_FOUND", "File not found.");
+    if (!(await managerCanManageLocation(actor, evidenceMatch.locationId))) {
+      throw new AppError("NOT_FOUND", "File not found.");
+    }
+  }
+
   const buffer = await readStoredObject(row.objectKey);
   return { buffer, mimeType: row.mimeType, originalName: row.originalName };
 }
