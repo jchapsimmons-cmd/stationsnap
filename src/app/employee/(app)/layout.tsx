@@ -13,6 +13,7 @@ export default async function EmployeeLayout({ children }: { children: ReactNode
       navItems={[
         { href: "/employee", label: "Home" },
         { href: "/employee/stations", label: "Stations" },
+        { href: "/employee/training", label: "Training" },
         { href: "/employee/recent", label: "Recent" },
         { href: "/employee/recipes", label: "Recipes" },
         { href: "/employee/cleaning", label: "Cleaning" },
