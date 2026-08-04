@@ -212,7 +212,7 @@ function serializeRunState(computation: RunComputation) {
           fileId: row.fileId,
           submissionGeneration: row.submissionGeneration,
           employeeNote: row.employeeNote,
-          createdAt: row.createdAt,
+          createdAt: row.createdAt.toISOString(),
         })),
       };
     }),
