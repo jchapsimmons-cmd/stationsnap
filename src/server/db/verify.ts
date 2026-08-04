@@ -169,6 +169,11 @@ const postgres = new EmbeddedPostgres({
   password,
   persistent: false,
   onLog: () => undefined,
+  // Some CI/agent containers run this script as root, under which PostgreSQL's own initdb
+  // refuses to run. embedded-postgres handles that by dropping privileges to a "postgres"
+  // system user (creating one if needed) and pre-creating/chowning the data directory for it.
+  // This is a no-op when the process is not root: embedded-postgres only consults it there.
+  createPostgresUser: true,
 });
 
 async function verifyUpgradeMigration(): Promise<void> {
