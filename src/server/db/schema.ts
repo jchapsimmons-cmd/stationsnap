@@ -155,6 +155,22 @@ export const checklistApprovalDecisionType = pgEnum("checklist_approval_decision
   "rejected",
   "needs_correction",
 ]);
+export const translationEntityType = pgEnum("translation_entity_type", [
+  "sop_version",
+  "sop_material",
+  "sop_warning",
+  "sop_step",
+]);
+export const translationField = pgEnum("translation_field", [
+  "title",
+  "description",
+  "name",
+  "text",
+  "instruction",
+  "warning",
+]);
+export const translationStatus = pgEnum("translation_status", ["pending_review", "approved"]);
+export const translationProvider = pgEnum("translation_provider", ["manual", "ai"]);
 
 const timestamps = {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -1819,5 +1835,48 @@ export const checklistCorrectionRequests = pgTable(
       table.organizationId,
       table.submissionId,
     ),
+  ],
+);
+
+// entityId is polymorphic (points at a row in sop_versions, sop_materials, sop_warnings, or
+// sop_steps depending on entityType) so it cannot carry a single foreign key; ownership and
+// tenancy are instead re-verified against the referenced table on every read and write in
+// src/server/sops/translations.ts. Every referenced row is itself immutable once its SOP version
+// is published, so a translation's source text can only go stale, never be edited out from
+// under it.
+export const translations = pgTable(
+  "translations",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    entityType: translationEntityType("entity_type").notNull(),
+    entityId: uuid("entity_id").notNull(),
+    field: translationField("field").notNull(),
+    sourceLocale: preferredLanguage("source_locale").notNull(),
+    targetLocale: preferredLanguage("target_locale").notNull(),
+    sourceTextHash: text("source_text_hash").notNull(),
+    translatedText: text("translated_text").notNull().default(""),
+    status: translationStatus("status").notNull().default("pending_review"),
+    provider: translationProvider("provider").notNull().default("manual"),
+    reviewerManagerUserId: uuid("reviewer_manager_user_id").references(() => managerUsers.id, {
+      onDelete: "restrict",
+    }),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    check(
+      "translations_source_target_locale_differ",
+      sql`${table.sourceLocale} <> ${table.targetLocale}`,
+    ),
+    unique("translations_entity_field_target_uidx").on(
+      table.entityId,
+      table.field,
+      table.targetLocale,
+    ),
+    index("translations_org_entity_idx").on(table.organizationId, table.entityType, table.entityId),
+    index("translations_org_status_idx").on(table.organizationId, table.status),
   ],
 );

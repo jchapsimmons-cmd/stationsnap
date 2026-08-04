@@ -1,20 +1,34 @@
 import { categoryLabel, difficultyLabel } from "@/components/sops/options";
-import { Card, PageHeader, StatusBadge } from "@/components/ui";
+import { Card, PageHeader, StatusBadge, Tabs } from "@/components/ui";
 import { requireEmployeePage } from "@/server/auth/authorization";
-import { getPublishedSopForEmployee } from "@/server/sops/service";
+import { employeeSopLocaleQuerySchema } from "@/server/sops/schemas";
+import { getLocalizedSopForEmployee } from "@/server/sops/translations";
 
 export default async function EmployeeSopViewerPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ sopId: string }>;
+  searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const { sopId } = await params;
   const session = await requireEmployeePage(`/employee/sops/${sopId}`);
-  const sop = await getPublishedSopForEmployee(session, sopId);
+  const rawLang = (await searchParams)["lang"];
+  const { lang } = employeeSopLocaleQuerySchema.parse({
+    lang: typeof rawLang === "string" ? rawLang : undefined,
+  });
+  const sop = await getLocalizedSopForEmployee(session, sopId, lang);
 
   return (
     <div className="page-stack">
-      <PageHeader title={sop.version.title} description={categoryLabel(sop.category)} />
+      <PageHeader title={sop.version.title.text} description={categoryLabel(sop.category)} />
+      <Tabs
+        label="Language"
+        items={[
+          { href: `/employee/sops/${sopId}?lang=en`, label: "English", active: lang === "en" },
+          { href: `/employee/sops/${sopId}?lang=es`, label: "Español", active: lang === "es" },
+        ]}
+      />
       <div className="preview-shell">
         {sop.version.coverImageFile && (
           // eslint-disable-next-line @next/next/no-img-element
@@ -26,13 +40,25 @@ export default async function EmployeeSopViewerPage({
             <StatusBadge tone="neutral">{sop.version.estimatedMinutes} min</StatusBadge>
           )}
         </div>
-        {sop.version.description && <p>{sop.version.description}</p>}
+        {sop.version.description.text && (
+          <p>
+            {sop.version.description.text}
+            {lang !== "en" && !sop.version.description.translated && (
+              <StatusBadge tone="neutral">Not yet translated</StatusBadge>
+            )}
+          </p>
+        )}
         {sop.warnings.length > 0 && (
           <Card>
             <h2>Warnings</h2>
             <ul>
               {sop.warnings.map((warning) => (
-                <li key={warning.id}>{warning.text}</li>
+                <li key={warning.id}>
+                  {warning.text.text}
+                  {lang !== "en" && !warning.text.translated && (
+                    <StatusBadge tone="neutral">Not yet translated</StatusBadge>
+                  )}
+                </li>
               ))}
             </ul>
           </Card>
@@ -43,8 +69,11 @@ export default async function EmployeeSopViewerPage({
             <ul>
               {sop.materials.map((material) => (
                 <li key={material.id}>
-                  {material.name}
+                  {material.name.text}
                   {material.quantity ? ` — ${material.quantity} ${material.unit}` : ""}
+                  {lang !== "en" && !material.name.translated && (
+                    <StatusBadge tone="neutral">Not yet translated</StatusBadge>
+                  )}
                 </li>
               ))}
             </ul>
@@ -53,8 +82,20 @@ export default async function EmployeeSopViewerPage({
         {sop.steps.map((step) => (
           <Card key={step.id}>
             <p className="eyebrow">Step {step.displayOrder}</p>
-            {step.title && <h2>{step.title}</h2>}
-            <p>{step.instruction}</p>
+            {step.title && (
+              <h2>
+                {step.title.text}
+                {lang !== "en" && !step.title.translated && (
+                  <StatusBadge tone="neutral">Not yet translated</StatusBadge>
+                )}
+              </h2>
+            )}
+            <p>
+              {step.instruction.text}
+              {lang !== "en" && !step.instruction.translated && (
+                <StatusBadge tone="neutral">Not yet translated</StatusBadge>
+              )}
+            </p>
             {step.imageFile && (
               // eslint-disable-next-line @next/next/no-img-element
               <img src={`/api/employee/media/${step.imageFile.id}`} alt="" />
@@ -62,7 +103,10 @@ export default async function EmployeeSopViewerPage({
             {step.videoFile && <video src={`/api/employee/media/${step.videoFile.id}`} controls />}
             {step.warning && (
               <p role="alert" className="form-status form-status--error">
-                {step.warning}
+                {step.warning.text}
+                {lang !== "en" && !step.warning.translated && (
+                  <StatusBadge tone="neutral">Not yet translated</StatusBadge>
+                )}
               </p>
             )}
             {step.timerSeconds && (

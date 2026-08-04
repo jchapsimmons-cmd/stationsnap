@@ -57,6 +57,7 @@ import {
   files as filesTable,
   qrScanEvents,
   qualificationSupportingSessions,
+  translations as translationsTable,
   trainingAssignments,
 } from "@/server/db/schema";
 import {
@@ -102,6 +103,12 @@ import {
   updateTrainingConfig,
   updateTrainingQuestion,
 } from "@/server/sops/service";
+import {
+  approveTranslation,
+  getLocalizedSopForEmployee,
+  getTranslationMatrix,
+  upsertTranslation,
+} from "@/server/sops/translations";
 import { getMediaFile, getMediaFileForEmployee, uploadMedia } from "@/server/storage/media-service";
 import { decideChecklistRun } from "@/server/checklists/approvals";
 import {
@@ -162,6 +169,11 @@ const postgres = new EmbeddedPostgres({
   password,
   persistent: false,
   onLog: () => undefined,
+  // Some CI/agent containers run this script as root, under which PostgreSQL's own initdb
+  // refuses to run. embedded-postgres handles that by dropping privileges to a "postgres"
+  // system user (creating one if needed) and pre-creating/chowning the data directory for it.
+  // This is a no-op when the process is not root: embedded-postgres only consults it there.
+  createPostgresUser: true,
 });
 
 async function verifyUpgradeMigration(): Promise<void> {
@@ -5253,6 +5265,327 @@ async function verifyDatabase(): Promise<void> {
     );
   }
 
+  // --- Phase 13: manual translations (English source, Spanish target) ---
+
+  const translationDraft = await createSop(
+    managerContext,
+    {
+      title: "Simple Syrup",
+      description: "A basic 1:1 sugar syrup for the bar.",
+      category: "recipe",
+      locationId: seedIds.locations.downtown,
+      stationId: null,
+      estimatedMinutes: 10,
+      difficulty: "beginner",
+      coverImageFileId: null,
+      sourceVideoFileId: null,
+      materials: [
+        { kind: "ingredient", name: "Granulated sugar", quantity: "2", unit: "cups" },
+        { kind: "ingredient", name: "Water", quantity: "2", unit: "cups" },
+      ],
+      warnings: [{ text: "Hot liquid — handle with care." }],
+    },
+    "verify-phase13-sop-create",
+  );
+  const translationStepDraft = await createStep(
+    managerContext,
+    translationDraft.id,
+    {
+      title: "Combine and heat",
+      instruction: "Combine sugar and water in a saucepan over medium heat until dissolved.",
+      imageFileId: null,
+      videoFileId: null,
+      warning: "Do not leave the stove unattended.",
+      quantity: "2",
+      unit: "cups",
+      equipmentSetting: "Medium heat",
+      timerSeconds: 300,
+      isRequired: true,
+      expectedRevision: translationDraft.version.revision,
+    },
+    "verify-phase13-step-create",
+  );
+  const translationPublished = await publishSop(
+    managerContext,
+    translationDraft.id,
+    {
+      expectedRevision: translationStepDraft.version.revision,
+      changeSummary: "",
+      retrainingRule: { type: "none" },
+    },
+    "verify-phase13-publish",
+  );
+  if (translationPublished.status !== "published" || !translationPublished.currentVersionId) {
+    throw new Error("Publishing the Phase 13 translation fixture SOP did not succeed");
+  }
+
+  const initialTranslationMatrix = await getTranslationMatrix(
+    managerContext,
+    translationPublished.id,
+    "es",
+  );
+  // Title, description, 2 material names, 1 warning, step title, step instruction, step warning.
+  // Quantities, units, the equipment setting, and the timer are protected measurements and must
+  // never appear here.
+  if (initialTranslationMatrix.rows.length !== 8) {
+    throw new Error(
+      `The Phase 13 translation matrix did not include exactly the translatable fields (got ${initialTranslationMatrix.rows.length})`,
+    );
+  }
+  if (initialTranslationMatrix.rows.some((row) => row.status !== "untranslated" || row.stale)) {
+    throw new Error(
+      "The Phase 13 translation matrix reported a status before any translation was entered",
+    );
+  }
+
+  let unauthorizedMatrixReadRejected = false;
+  try {
+    await getTranslationMatrix(riversideManagerContext, translationPublished.id, "es");
+  } catch {
+    unauthorizedMatrixReadRejected = true;
+  }
+  if (!unauthorizedMatrixReadRejected) {
+    throw new Error(
+      "A manager without access to the location read another location's translations",
+    );
+  }
+
+  let crossEntityUpsertRejected = false;
+  try {
+    await upsertTranslation(
+      managerContext,
+      translationPublished.id,
+      {
+        entityType: "sop_step",
+        entityId: randomUUID(),
+        field: "instruction",
+        targetLocale: "es",
+        translatedText: "No debería guardarse.",
+      },
+      "verify-phase13-cross-entity-rejected",
+    );
+  } catch {
+    crossEntityUpsertRejected = true;
+  }
+  if (!crossEntityUpsertRejected) {
+    throw new Error("A translation was saved for an entity id outside the SOP's current version");
+  }
+
+  const versionTitleField = initialTranslationMatrix.rows.find(
+    (row) => row.entityType === "sop_version" && row.field === "title",
+  );
+  const versionDescriptionField = initialTranslationMatrix.rows.find(
+    (row) => row.entityType === "sop_version" && row.field === "description",
+  );
+  if (!versionTitleField || !versionDescriptionField) {
+    throw new Error("The Phase 13 translation matrix was missing a version-level field");
+  }
+
+  const afterTitleSave = await upsertTranslation(
+    managerContext,
+    translationPublished.id,
+    {
+      entityType: "sop_version",
+      entityId: versionTitleField.entityId,
+      field: "title",
+      targetLocale: "es",
+      translatedText: "Jarabe simple",
+    },
+    "verify-phase13-upsert-title",
+  );
+  const savedTitleRow = afterTitleSave.rows.find(
+    (row) => row.entityType === "sop_version" && row.field === "title",
+  );
+  if (!savedTitleRow || savedTitleRow.status !== "pending_review" || !savedTitleRow.translationId) {
+    throw new Error("Saving a translation did not move it to pending review");
+  }
+
+  const afterEmptyDescriptionSave = await upsertTranslation(
+    managerContext,
+    translationPublished.id,
+    {
+      entityType: "sop_version",
+      entityId: versionDescriptionField.entityId,
+      field: "description",
+      targetLocale: "es",
+      translatedText: "",
+    },
+    "verify-phase13-empty-description-save",
+  );
+  const emptyDescriptionRow = afterEmptyDescriptionSave.rows.find(
+    (row) => row.entityType === "sop_version" && row.field === "description",
+  );
+  if (!emptyDescriptionRow || !emptyDescriptionRow.translationId) {
+    throw new Error("An empty translation draft was not saved");
+  }
+
+  let approveEmptyRejected = false;
+  try {
+    await approveTranslation(
+      managerContext,
+      translationPublished.id,
+      emptyDescriptionRow.translationId,
+      "verify-phase13-approve-empty-rejected",
+    );
+  } catch {
+    approveEmptyRejected = true;
+  }
+  if (!approveEmptyRejected) {
+    throw new Error("An empty translation was approved");
+  }
+
+  const afterTitleApprove = await approveTranslation(
+    managerContext,
+    translationPublished.id,
+    savedTitleRow.translationId,
+    "verify-phase13-approve-title",
+  );
+  const approvedTitleRow = afterTitleApprove.rows.find(
+    (row) => row.entityType === "sop_version" && row.field === "title",
+  );
+  if (!approvedTitleRow || approvedTitleRow.status !== "approved" || !approvedTitleRow.approvedAt) {
+    throw new Error("Approving a translation did not record its approval");
+  }
+
+  let unauthorizedApproveRejected = false;
+  try {
+    await approveTranslation(
+      riversideManagerContext,
+      translationPublished.id,
+      savedTitleRow.translationId,
+      "verify-phase13-unauthorized-approve-rejected",
+    );
+  } catch {
+    unauthorizedApproveRejected = true;
+  }
+  if (!unauthorizedApproveRejected) {
+    throw new Error("A manager without access to the location approved a translation");
+  }
+
+  const afterTitleReEdit = await upsertTranslation(
+    managerContext,
+    translationPublished.id,
+    {
+      entityType: "sop_version",
+      entityId: versionTitleField.entityId,
+      field: "title",
+      targetLocale: "es",
+      translatedText: "Jarabe simple (actualizado)",
+    },
+    "verify-phase13-re-edit-approved",
+  );
+  const reEditedTitleRow = afterTitleReEdit.rows.find(
+    (row) => row.entityType === "sop_version" && row.field === "title",
+  );
+  if (
+    !reEditedTitleRow ||
+    reEditedTitleRow.status !== "pending_review" ||
+    reEditedTitleRow.approvedAt
+  ) {
+    throw new Error("Editing an approved translation did not require fresh review");
+  }
+
+  const afterTitleReApprove = await approveTranslation(
+    managerContext,
+    translationPublished.id,
+    savedTitleRow.translationId,
+    "verify-phase13-re-approve-title",
+  );
+  const reApprovedTitleRow = afterTitleReApprove.rows.find(
+    (row) => row.entityType === "sop_version" && row.field === "title",
+  );
+  if (!reApprovedTitleRow || reApprovedTitleRow.status !== "approved") {
+    throw new Error("Re-approving an edited translation did not succeed");
+  }
+
+  const translationEmployee = await createEmployee(managerContext, {
+    primaryLocationId: seedIds.locations.downtown,
+    employeeNumber: "9301",
+    displayName: "Casey Bilingual",
+    jobRole: "Bartender",
+    language: "es",
+    pin: "9301",
+    status: "active",
+  });
+  const caseyContext = await loginNewEmployee("9301", "9301", "phase13-casey");
+  if (translationEmployee.primaryLocationId !== seedIds.locations.downtown) {
+    throw new Error(
+      "The Phase 13 translation employee fixture was not created at the expected location",
+    );
+  }
+
+  const englishEmployeeView = await getLocalizedSopForEmployee(
+    caseyContext,
+    translationPublished.id,
+    "en",
+  );
+  if (
+    englishEmployeeView.version.title.text !== "Simple Syrup" ||
+    englishEmployeeView.version.title.translated
+  ) {
+    throw new Error("Requesting the English SOP view returned translated content");
+  }
+
+  const spanishEmployeeView = await getLocalizedSopForEmployee(
+    caseyContext,
+    translationPublished.id,
+    "es",
+  );
+  if (
+    spanishEmployeeView.version.title.text !== "Jarabe simple (actualizado)" ||
+    !spanishEmployeeView.version.title.translated
+  ) {
+    throw new Error("The approved Spanish title translation was not applied for the employee view");
+  }
+  if (
+    spanishEmployeeView.version.description.text !== "A basic 1:1 sugar syrup for the bar." ||
+    spanishEmployeeView.version.description.translated
+  ) {
+    throw new Error(
+      "An unapproved translation was shown to the employee instead of the original text",
+    );
+  }
+  const spanishStep = spanishEmployeeView.steps[0];
+  if (
+    !spanishStep ||
+    spanishStep.quantity !== "2" ||
+    spanishStep.unit !== "cups" ||
+    spanishStep.equipmentSetting !== "Medium heat" ||
+    spanishStep.timerSeconds !== 300
+  ) {
+    throw new Error("Switching locale altered a protected measurement field");
+  }
+  const spanishMaterial = spanishEmployeeView.materials[0];
+  if (!spanishMaterial || spanishMaterial.quantity !== "2" || spanishMaterial.unit !== "cups") {
+    throw new Error("Switching locale altered a protected material measurement");
+  }
+
+  await getDb()
+    .update(translationsTable)
+    .set({ sourceTextHash: "stale-hash-for-verification" })
+    .where(eq(translationsTable.id, savedTitleRow.translationId));
+  const staleMatrix = await getTranslationMatrix(managerContext, translationPublished.id, "es");
+  const staleTitleRow = staleMatrix.rows.find(
+    (row) => row.translationId === savedTitleRow.translationId,
+  );
+  if (!staleTitleRow || !staleTitleRow.stale) {
+    throw new Error("A translation with a mismatched source hash was not flagged as stale");
+  }
+  let approveStaleRejected = false;
+  try {
+    await approveTranslation(
+      managerContext,
+      translationPublished.id,
+      savedTitleRow.translationId,
+      "verify-phase13-approve-stale-rejected",
+    );
+  } catch {
+    approveStaleRejected = true;
+  }
+  if (!approveStaleRejected) {
+    throw new Error("A stale translation was approved without being re-saved");
+  }
+
   const actions = new Set(
     (await getDb().select({ action: auditEvents.action }).from(auditEvents)).map(
       (event) => event.action,
@@ -5310,6 +5643,8 @@ async function verifyDatabase(): Promise<void> {
     "checklist_run.approval_decided",
     "checklist_run.correction_requested",
     "checklist_run.correction_resubmitted",
+    "translation.updated",
+    "translation.approved",
   ];
   if (requiredAuditActions.some((action) => !actions.has(action))) {
     throw new Error(
@@ -5320,7 +5655,7 @@ async function verifyDatabase(): Promise<void> {
   await verifyUpgradeMigration();
 
   process.stdout.write(
-    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, migrationConcurrencyLock: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true, employeeStationReader: true, employeeSopReader: true, employeeCategoryLibrary: true, employeeRecentViews: true, employeeMediaAuthorization: true, qrCreationAndTargetValidation: true, qrLocationScoping: true, qrRevocation: true, qrRotation: true, qrScanResolution: true, qrUnavailableTarget: true, qrEnumerationRateLimit: true, trainingConfigDefaultsAndScoping: true, trainingConfigStaleWriteRejection: true, trainingStepRequirementGuards: true, trainingQuestionCrudAndReorder: true, trainingPublishReadinessRules: true, trainingPublishedImmutability: true, trainingDraftCloning: true, trainingAssignmentCreationAndScoping: true, trainingSessionStartAndResume: true, trainingSequentialStepEnforcement: true, trainingWatchTimerQuestionEvidenceEnforcement: true, trainingDuplicateActionRejection: true, trainingScoringAndApprovalRouting: true, trainingSubmitIdempotency: true, trainingAttemptLimitsAndRetraining: true, bulkAssignmentAuthorizationScoping: true, bulkAssignmentByEmployeeListWithDueDate: true, bulkAssignmentByJobRole: true, bulkAssignmentByLocation: true, bulkAssignmentIndependentDuplicateSkip: true, approvalQueueLocationScoping: true, approvalEvidenceAuthorization: true, approvalDecisionNoteRules: true, approvalApprovedDecision: true, approvalRejectedDecision: true, approvalCorrectionRequest: true, approvalDecisionImmutability: true, correctionOwnershipEnforcement: true, correctionAppendOnlyEvidence: true, correctionResubmitIdempotency: true, approvalDecisionHistoryRetention: true, trainingPathAuthorizationScoping: true, trainingPathItemValidation: true, trainingPathOrderedBlocking: true, qualificationAward: true, qualificationRenewal: true, qualificationOverviewClassification: true, qualificationEmployeeView: true, qualificationRevocation: true, trainingPathArchiveStopsAwards: true, checklistAuthorizationScoping: true, checklistDuplicateTitleRejection: true, checklistRunStartAndResume: true, checklistAutoRequirementGuardsManualTick: true, checklistTimerPhotoNoteEnforcement: true, checklistSubmitRequiresAllRequiredItems: true, checklistDuplicateOccurrencePrevention: true, checklistApprovalRouting: true, checklistApprovalUnauthorizedRejection: true, checklistCorrectionRequestAndResubmit: true, checklistCorrectionResubmitIdempotency: true, checklistApprovalDecisionCompletesRun: true, checklistSubmitIdempotency: true, checklistRunListLocationScoping: true, checklistItemRemovalDisablesRatherThanDeletes: true, checklistHistoricalRunRetainsRemovedItem: true })}\n`,
+    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, migrationConcurrencyLock: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true, employeeStationReader: true, employeeSopReader: true, employeeCategoryLibrary: true, employeeRecentViews: true, employeeMediaAuthorization: true, qrCreationAndTargetValidation: true, qrLocationScoping: true, qrRevocation: true, qrRotation: true, qrScanResolution: true, qrUnavailableTarget: true, qrEnumerationRateLimit: true, trainingConfigDefaultsAndScoping: true, trainingConfigStaleWriteRejection: true, trainingStepRequirementGuards: true, trainingQuestionCrudAndReorder: true, trainingPublishReadinessRules: true, trainingPublishedImmutability: true, trainingDraftCloning: true, trainingAssignmentCreationAndScoping: true, trainingSessionStartAndResume: true, trainingSequentialStepEnforcement: true, trainingWatchTimerQuestionEvidenceEnforcement: true, trainingDuplicateActionRejection: true, trainingScoringAndApprovalRouting: true, trainingSubmitIdempotency: true, trainingAttemptLimitsAndRetraining: true, bulkAssignmentAuthorizationScoping: true, bulkAssignmentByEmployeeListWithDueDate: true, bulkAssignmentByJobRole: true, bulkAssignmentByLocation: true, bulkAssignmentIndependentDuplicateSkip: true, approvalQueueLocationScoping: true, approvalEvidenceAuthorization: true, approvalDecisionNoteRules: true, approvalApprovedDecision: true, approvalRejectedDecision: true, approvalCorrectionRequest: true, approvalDecisionImmutability: true, correctionOwnershipEnforcement: true, correctionAppendOnlyEvidence: true, correctionResubmitIdempotency: true, approvalDecisionHistoryRetention: true, trainingPathAuthorizationScoping: true, trainingPathItemValidation: true, trainingPathOrderedBlocking: true, qualificationAward: true, qualificationRenewal: true, qualificationOverviewClassification: true, qualificationEmployeeView: true, qualificationRevocation: true, trainingPathArchiveStopsAwards: true, checklistAuthorizationScoping: true, checklistDuplicateTitleRejection: true, checklistRunStartAndResume: true, checklistAutoRequirementGuardsManualTick: true, checklistTimerPhotoNoteEnforcement: true, checklistSubmitRequiresAllRequiredItems: true, checklistDuplicateOccurrencePrevention: true, checklistApprovalRouting: true, checklistApprovalUnauthorizedRejection: true, checklistCorrectionRequestAndResubmit: true, checklistCorrectionResubmitIdempotency: true, checklistApprovalDecisionCompletesRun: true, checklistSubmitIdempotency: true, checklistRunListLocationScoping: true, checklistItemRemovalDisablesRatherThanDeletes: true, checklistHistoricalRunRetainsRemovedItem: true, translationMatrixExcludesProtectedFields: true, translationLocationScoping: true, translationEntityOwnershipGuard: true, translationEmptyApprovalRejected: true, translationEditResetsApproval: true, translationStaleSourceDetection: true, translationEmployeeLocaleSwitchPreservesProtectedFields: true, translationUnapprovedFallsBackToOriginal: true })}\n`,
   );
 }
 

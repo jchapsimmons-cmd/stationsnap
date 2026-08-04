@@ -264,3 +264,51 @@ export type StepTrainingRequirementsInput = z.infer<typeof stepTrainingRequireme
 export type TrainingQuestionCreateInput = z.infer<typeof trainingQuestionCreateSchema>;
 export type TrainingQuestionUpdateInput = z.infer<typeof trainingQuestionUpdateSchema>;
 export type TrainingQuestionReorderInput = z.infer<typeof trainingQuestionReorderSchema>;
+
+// Manual translations are English-source, Spanish-target only for this phase; AI-assisted
+// drafting and additional target locales are deferred to Phase 20.
+export const translationSourceLocaleValues = ["en"] as const;
+export const translationTargetLocaleValues = ["es"] as const;
+
+export const translationUpsertSchema = z.discriminatedUnion("entityType", [
+  z.object({
+    entityType: z.literal("sop_version"),
+    entityId: z.uuid(),
+    field: z.enum(["title", "description"]),
+    targetLocale: z.enum(translationTargetLocaleValues),
+    translatedText: z.string().trim().max(4_000),
+  }),
+  z.object({
+    entityType: z.literal("sop_material"),
+    entityId: z.uuid(),
+    field: z.literal("name"),
+    targetLocale: z.enum(translationTargetLocaleValues),
+    translatedText: z.string().trim().max(160),
+  }),
+  z.object({
+    entityType: z.literal("sop_warning"),
+    entityId: z.uuid(),
+    field: z.literal("text"),
+    targetLocale: z.enum(translationTargetLocaleValues),
+    translatedText: z.string().trim().max(500),
+  }),
+  z.object({
+    entityType: z.literal("sop_step"),
+    entityId: z.uuid(),
+    field: z.enum(["title", "instruction", "warning"]),
+    targetLocale: z.enum(translationTargetLocaleValues),
+    translatedText: z.string().trim().max(4_000),
+  }),
+]);
+
+export const translationMatrixQuerySchema = z.object({
+  targetLocale: z.enum(translationTargetLocaleValues).default("es"),
+});
+
+export const employeeSopLocaleQuerySchema = z.object({
+  lang: z.enum(["en", ...translationTargetLocaleValues]).default("en"),
+});
+
+export type TranslationUpsertInput = z.infer<typeof translationUpsertSchema>;
+export type TranslationMatrixQuery = z.infer<typeof translationMatrixQuerySchema>;
+export type EmployeeSopLocaleQuery = z.infer<typeof employeeSopLocaleQuerySchema>;
