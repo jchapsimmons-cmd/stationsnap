@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { RestoreVersionButton } from "@/components/sops/restore-version-button";
 import { categoryLabel, difficultyLabel } from "@/components/sops/options";
 import { Card, PageHeader, StatusBadge } from "@/components/ui";
@@ -35,9 +36,16 @@ export default async function SopVersionDetailPage({
         title={`v${version.version.versionNumber} · ${version.version.title}`}
         description={`${categoryLabel(version.category)} · ${version.locationName}${version.stationName ? ` · ${version.stationName}` : ""}`}
         actions={
-          <StatusBadge tone={statusTone(version.version.status)}>
-            {version.version.status}
-          </StatusBadge>
+          <div className="action-row">
+            <StatusBadge tone={statusTone(version.version.status)}>
+              {version.version.status}
+            </StatusBadge>
+            {version.version.status !== "draft" && (
+              <Link className="button button--secondary" href={`/manager/print/sops/${versionId}`}>
+                Print
+              </Link>
+            )}
+          </div>
         }
       />
       {version.version.changeSummary && (

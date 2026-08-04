@@ -59,6 +59,14 @@ export default async function ChecklistCompletionReportPage({
       <PageHeader
         title="Checklist completion"
         description="Run status by checklist and location, newest first."
+        actions={
+          <a
+            className="button button--secondary"
+            href={`/api/management/reports/checklists/export${buildQueryString(raw, {})}`}
+          >
+            Export CSV
+          </a>
+        }
       />
       <form className="filter-bar" action="/manager/reports/checklists">
         <label>

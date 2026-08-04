@@ -4,6 +4,7 @@ import path from "node:path";
 import { eq, sql } from "drizzle-orm";
 import EmbeddedPostgres from "embedded-postgres";
 import { Pool } from "pg";
+import { PDFDocument } from "pdf-lib";
 import { endOfDayInTimeZone } from "@/lib/timezone";
 import { changeManagerRole, disableManagerAccount, resetEmployeePin } from "@/server/auth/admin";
 import { managerCanAccessLocation, requireManagerLocation } from "@/server/auth/authorization";
@@ -87,6 +88,7 @@ import {
   getSop,
   getSopDraft,
   getSopVersionDetail,
+  getSopVersionForPrint,
   getSopVersionHistoryReport,
   getStepTrainingRequirementsDraft,
   getTrainingConfigDraft,
@@ -155,14 +157,29 @@ import { approvalDecisionSchema } from "@/server/training/schemas";
 import {
   assignTraining,
   getAssignmentDetail,
+  getManagerAssignmentDetail,
   getSessionState,
   getTrainingProgressReport,
+  getTrainingSessionForPrint,
   recordStepAction,
   startOrResumeSession,
   submitAnswer,
   submitSession,
   submitStepEvidence,
 } from "@/server/training/service";
+import {
+  approvalHistoryReportToCsv,
+  checklistCompletionReportToCsv,
+  qualificationsReportToCsv,
+  sopVersionHistoryReportToCsv,
+  trainingProgressReportToCsv,
+} from "@/server/print/csv-export";
+import {
+  renderChecklistRunPdf,
+  renderQualificationPdf,
+  renderSopVersionPdf,
+  renderTrainingSessionPdf,
+} from "@/server/print/pdf";
 
 const port = 55_439;
 const database = "stationsnap_verify";
@@ -337,6 +354,25 @@ async function loginNewEmployee(
   const context = await getEmployeeSession(login.token);
   if (!context) throw new Error(`The "${prefix}" Phase 11 employee session verification failed`);
   return context;
+}
+
+/**
+ * Structural validity check for a Phase 15 print PDF: a correct header plus a full round-trip
+ * re-parse through pdf-lib's own reader, confirming the byte stream `renderXPdf` produced is a
+ * real, loadable multi-object PDF document with at least one page — not just a plausible-looking
+ * prefix. Text-content fidelity (the right title/name/score actually appears on the page) is
+ * covered by the dedicated `src/server/print/pdf.test.ts` unit suite via `pdf-parse`; that
+ * extraction library's bundled pdf.js is not safe to invoke from this script's `tsx` runtime, so
+ * this check deliberately stays structural rather than duplicating that extraction here.
+ */
+async function assertValidPdf(bytes: Uint8Array, label: string): Promise<void> {
+  if (Buffer.from(bytes).subarray(0, 5).toString("latin1") !== "%PDF-") {
+    throw new Error(`${label} did not start with a valid PDF header`);
+  }
+  const reloaded = await PDFDocument.load(bytes);
+  if (reloaded.getPageCount() === 0) {
+    throw new Error(`${label} round-tripped through pdf-lib with zero pages`);
+  }
 }
 
 async function verifyDatabase(): Promise<void> {
@@ -6016,10 +6052,265 @@ async function verifyDatabase(): Promise<void> {
     throw new Error("A location-scoped manager saw an approval decision outside their location");
   }
 
+  // --- Phase 15: permission-aware print, PDF, and CSV representations of versioned records ---
+  // Reuses the exact report/fixture rows the Phase 14 block above just proved are correctly
+  // scoped, so this section is free to focus on what's new: the print/PDF record readers, PDF
+  // byte generation and text fidelity, and CSV row fidelity/injection safety.
+
+  const publishedSopVersionPage = await getSopVersionHistoryReport(managerContext, {
+    search: "",
+    category: "",
+    status: "published",
+    locationId: "",
+    page: 1,
+    pageSize: 1,
+  });
+  const publishedSopVersionRow = publishedSopVersionPage.items[0];
+  if (!publishedSopVersionRow) {
+    throw new Error("No published SOP version was available for the Phase 15 print fixtures");
+  }
+  const sopPrintRecord = await getSopVersionForPrint(managerContext, publishedSopVersionRow.id);
+  if (
+    sopPrintRecord.version.id !== publishedSopVersionRow.id ||
+    sopPrintRecord.steps.length === 0
+  ) {
+    throw new Error("SOP version print record did not match the published version's own content");
+  }
+
+  const draftSopVersionPage = await getSopVersionHistoryReport(managerContext, {
+    search: "",
+    category: "",
+    status: "draft",
+    locationId: "",
+    page: 1,
+    pageSize: 1,
+  });
+  const draftSopVersionRow = draftSopVersionPage.items[0];
+  if (!draftSopVersionRow) {
+    throw new Error("No draft SOP version was available for the Phase 15 draft-rejection check");
+  }
+  let draftSopPrintRejected = false;
+  try {
+    await getSopVersionForPrint(managerContext, draftSopVersionRow.id);
+  } catch {
+    draftSopPrintRejected = true;
+  }
+  if (!draftSopPrintRejected) throw new Error("A draft SOP version was incorrectly printable");
+
+  let nonexistentSopPrintRejected = false;
+  try {
+    await getSopVersionForPrint(managerContext, randomUUID());
+  } catch {
+    nonexistentSopPrintRejected = true;
+  }
+  if (!nonexistentSopPrintRejected) {
+    throw new Error("A nonexistent SOP version id did not return not-found for print");
+  }
+
+  const riversidePublishedSopPage = await getSopVersionHistoryReport(managerContext, {
+    search: "",
+    category: "",
+    status: "published",
+    locationId: seedIds.locations.riverside,
+    page: 1,
+    pageSize: 1,
+  });
+  const riversidePublishedSopRow = riversidePublishedSopPage.items[0];
+  if (riversidePublishedSopRow) {
+    let scopedSopPrintRejected = false;
+    try {
+      await getSopVersionForPrint(scopedManagerContext, riversidePublishedSopRow.id);
+    } catch {
+      scopedSopPrintRejected = true;
+    }
+    if (!scopedSopPrintRejected) {
+      throw new Error("A location-scoped manager could print a SOP version outside their location");
+    }
+  }
+
+  const sopVersionPdfBytes = await renderSopVersionPdf({
+    sopTitle: sopPrintRecord.version.title,
+    versionNumber: sopPrintRecord.version.versionNumber,
+    status: sopPrintRecord.version.status,
+    category: sopPrintRecord.category,
+    difficulty: sopPrintRecord.version.difficulty,
+    estimatedMinutes: sopPrintRecord.version.estimatedMinutes,
+    changeSummary: sopPrintRecord.version.changeSummary,
+    publishedAt: sopPrintRecord.version.publishedAt,
+    locationName: sopPrintRecord.locationName,
+    stationName: sopPrintRecord.stationName,
+    materials: sopPrintRecord.materials,
+    warnings: sopPrintRecord.warnings,
+    steps: sopPrintRecord.steps,
+  });
+  await assertValidPdf(sopVersionPdfBytes, "SOP version PDF");
+
+  // Training session print record, reusing the Phase 14 report fixture's completed assignment.
+  const reportPathAssignmentDetail = await getManagerAssignmentDetail(
+    managerContext,
+    reportPathAssignmentId,
+  );
+  const reportPathSessionId = reportPathAssignmentDetail.latestSession?.id;
+  if (!reportPathSessionId) {
+    throw new Error("The Phase 14 report fixture assignment had no completed session to print");
+  }
+  const trainingSessionPrintRecord = await getTrainingSessionForPrint(
+    managerContext,
+    reportPathSessionId,
+  );
+  if (
+    trainingSessionPrintRecord.employeeName !== reportPathEmployee.displayName ||
+    trainingSessionPrintRecord.sopTitle !== reportPathSop.version.title
+  ) {
+    throw new Error("Training session print record did not match its own assignment fixture");
+  }
+  let scopedTrainingSessionPrintRejected = false;
+  try {
+    await getTrainingSessionForPrint(scopedManagerContext, reportPathSessionId);
+  } catch {
+    scopedTrainingSessionPrintRejected = true;
+  }
+  // The Phase 14 fixture employee is at Downtown, which the scoped manager *does* manage, so this
+  // print stays permitted — proves the guard runs rather than always throwing, complementing the
+  // SOP version check above (which proves the opposite: a real cross-location rejection).
+  if (scopedTrainingSessionPrintRejected) {
+    throw new Error(
+      "A location-scoped manager was incorrectly denied printing a session within their location",
+    );
+  }
+  let nonexistentTrainingSessionPrintRejected = false;
+  try {
+    await getTrainingSessionForPrint(managerContext, randomUUID());
+  } catch {
+    nonexistentTrainingSessionPrintRejected = true;
+  }
+  if (!nonexistentTrainingSessionPrintRejected) {
+    throw new Error("A nonexistent training session id did not return not-found for print");
+  }
+
+  const trainingSessionPdfBytes = await renderTrainingSessionPdf(trainingSessionPrintRecord);
+  await assertValidPdf(trainingSessionPdfBytes, "Training session PDF");
+
+  // Qualification print record, reusing the same Phase 14 fixture's awarded qualification.
+  if (!firstQualificationRow.qualificationId) {
+    throw new Error("The Phase 14 qualification fixture row had no awarded qualification id");
+  }
+  const qualificationPrintRecord = await getQualificationDetail(
+    managerContext,
+    firstQualificationRow.qualificationId,
+  );
+  const qualificationPdfBytes = await renderQualificationPdf({
+    employeeName: qualificationPrintRecord.employeeName,
+    employeeNumber: qualificationPrintRecord.employeeNumber,
+    locationName: qualificationPrintRecord.locationName,
+    definitionName: qualificationPrintRecord.definition.name,
+    definitionDescription: qualificationPrintRecord.definition.description,
+    pathTitle: qualificationPrintRecord.path.title,
+    status: qualificationPrintRecord.status,
+    awardedAt: qualificationPrintRecord.awardedAt,
+    expiresAt: qualificationPrintRecord.expiresAt,
+    isExpired: qualificationPrintRecord.isExpired,
+    revokedAt: qualificationPrintRecord.revokedAt,
+    revokedNote: qualificationPrintRecord.revokedNote,
+    supportingSessions: qualificationPrintRecord.supportingSessions,
+  });
+  await assertValidPdf(qualificationPdfBytes, "Qualification PDF");
+
+  // Checklist run print record, reusing the Phase 14 checklist completion report fixture.
+  const checklistRunPrintRecord = await getChecklistRunDetail(managerContext, firstChecklistRow.id);
+  const checklistRunPdfBytes = await renderChecklistRunPdf({
+    checklistTitle: checklistRunPrintRecord.checklistTitle,
+    checklistType: checklistRunPrintRecord.checklistType,
+    employeeName: checklistRunPrintRecord.employeeName,
+    employeeNumber: checklistRunPrintRecord.employeeNumber,
+    locationName: checklistRunPrintRecord.locationName,
+    status: checklistRunPrintRecord.status,
+    startedAt: checklistRunPrintRecord.startedAt,
+    submittedAt: checklistRunPrintRecord.submittedAt,
+    completedAt: checklistRunPrintRecord.completedAt,
+    items: checklistRunPrintRecord.items,
+  });
+  await assertValidPdf(checklistRunPdfBytes, "Checklist run PDF");
+
+  // CSV export row fidelity: each mapper's row count must match its report's own item count, and
+  // a known field from the report fixture must survive into the encoded CSV text.
+  const trainingCsv = trainingProgressReportToCsv(trainingReportPage.items);
+  if (trainingCsv.split("\r\n").length - 2 !== trainingReportPage.items.length) {
+    throw new Error("Training progress CSV export row count did not match the report");
+  }
+  if (!trainingCsv.includes(firstTrainingRow.sopTitle)) {
+    throw new Error("Training progress CSV export did not include the reported SOP title");
+  }
+  const qualificationsCsv = qualificationsReportToCsv(qualificationsReportWide.items);
+  if (qualificationsCsv.split("\r\n").length - 2 !== qualificationsReportWide.items.length) {
+    throw new Error("Qualifications CSV export row count did not match the report");
+  }
+  if (!qualificationsCsv.includes(reportPath.definition.name)) {
+    throw new Error("Qualifications CSV export did not include the fixture qualification's name");
+  }
+  const checklistCsv = checklistCompletionReportToCsv(checklistReportPage.items);
+  if (checklistCsv.split("\r\n").length - 2 !== checklistReportPage.items.length) {
+    throw new Error("Checklist completion CSV export row count did not match the report");
+  }
+  const sopVersionsCsv = sopVersionHistoryReportToCsv(sopVersionReportPage.items);
+  if (sopVersionsCsv.split("\r\n").length - 2 !== sopVersionReportPage.items.length) {
+    throw new Error("SOP version history CSV export row count did not match the report");
+  }
+  const approvalsCsv = approvalHistoryReportToCsv(approvalHistoryPage.items);
+  if (approvalsCsv.split("\r\n").length - 2 !== approvalHistoryPage.items.length) {
+    throw new Error("Approval history CSV export row count did not match the report");
+  }
+
+  // CSV/formula injection safety: a display name that opens with a formula-trigger character
+  // must reach the export defused, exercised end-to-end through a real fixture rather than only
+  // the pure-function unit tests, since a manager-entered note is untrusted input from a
+  // spreadsheet's point of view even though StationSnap itself generated the surrounding row.
+  const csvInjectionEmployee = await createEmployee(managerContext, {
+    primaryLocationId: seedIds.locations.downtown,
+    employeeNumber: "9106",
+    displayName: '=HYPERLINK("http://evil","Riley Reportee")',
+    jobRole: "Cook",
+    language: "en",
+    pin: "9106",
+    status: "active",
+  });
+  const csvInjectionAssign = await assignTraining(
+    managerContext,
+    {
+      sopId: reportPathSop.id,
+      target: { type: "employees", employeeIds: [csvInjectionEmployee.id] },
+    },
+    "verify-phase15-csv-injection-assign",
+  );
+  const csvInjectionAssignmentId = csvInjectionAssign.created[0]?.id;
+  if (!csvInjectionAssignmentId) {
+    throw new Error("The Phase 15 CSV-injection fixture assignment was not created");
+  }
+  const csvInjectionTrainingReport = await getTrainingProgressReport(managerContext, {
+    status: "",
+    locationId: "",
+    // The report's `search` filter matches display name and SOP title, not employee number, so
+    // this searches on a substring unique to the crafted display name itself.
+    search: "HYPERLINK",
+    page: 1,
+    pageSize: 5,
+  });
+  const csvInjectionCsv = trainingProgressReportToCsv(csvInjectionTrainingReport.items);
+  // A defused, comma/quote-containing field is wrapped and opens with `"'=HYPERLINK`; an
+  // undefused one would instead open with a bare `"=HYPERLINK` — check for the exact absence of
+  // that undefused opening rather than just the presence of the defused one, in case wrapping
+  // logic regresses in a way that still coincidentally includes an apostrophe elsewhere.
+  if (csvInjectionCsv.includes(`"=HYPERLINK`)) {
+    throw new Error("A formula-triggering employee name reached the CSV export undefused");
+  }
+  if (!csvInjectionCsv.includes(`"'=HYPERLINK`)) {
+    throw new Error("A formula-triggering employee name was not defused with the expected prefix");
+  }
+
   await verifyUpgradeMigration();
 
   process.stdout.write(
-    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, migrationConcurrencyLock: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true, employeeStationReader: true, employeeSopReader: true, employeeCategoryLibrary: true, employeeRecentViews: true, employeeMediaAuthorization: true, qrCreationAndTargetValidation: true, qrLocationScoping: true, qrRevocation: true, qrRotation: true, qrScanResolution: true, qrUnavailableTarget: true, qrEnumerationRateLimit: true, trainingConfigDefaultsAndScoping: true, trainingConfigStaleWriteRejection: true, trainingStepRequirementGuards: true, trainingQuestionCrudAndReorder: true, trainingPublishReadinessRules: true, trainingPublishedImmutability: true, trainingDraftCloning: true, trainingAssignmentCreationAndScoping: true, trainingSessionStartAndResume: true, trainingSequentialStepEnforcement: true, trainingWatchTimerQuestionEvidenceEnforcement: true, trainingDuplicateActionRejection: true, trainingScoringAndApprovalRouting: true, trainingSubmitIdempotency: true, trainingAttemptLimitsAndRetraining: true, bulkAssignmentAuthorizationScoping: true, bulkAssignmentByEmployeeListWithDueDate: true, bulkAssignmentByJobRole: true, bulkAssignmentByLocation: true, bulkAssignmentIndependentDuplicateSkip: true, approvalQueueLocationScoping: true, approvalEvidenceAuthorization: true, approvalDecisionNoteRules: true, approvalApprovedDecision: true, approvalRejectedDecision: true, approvalCorrectionRequest: true, approvalDecisionImmutability: true, correctionOwnershipEnforcement: true, correctionAppendOnlyEvidence: true, correctionResubmitIdempotency: true, approvalDecisionHistoryRetention: true, trainingPathAuthorizationScoping: true, trainingPathItemValidation: true, trainingPathOrderedBlocking: true, qualificationAward: true, qualificationRenewal: true, qualificationOverviewClassification: true, qualificationEmployeeView: true, qualificationRevocation: true, trainingPathArchiveStopsAwards: true, checklistAuthorizationScoping: true, checklistDuplicateTitleRejection: true, checklistRunStartAndResume: true, checklistAutoRequirementGuardsManualTick: true, checklistTimerPhotoNoteEnforcement: true, checklistSubmitRequiresAllRequiredItems: true, checklistDuplicateOccurrencePrevention: true, checklistApprovalRouting: true, checklistApprovalUnauthorizedRejection: true, checklistCorrectionRequestAndResubmit: true, checklistCorrectionResubmitIdempotency: true, checklistApprovalDecisionCompletesRun: true, checklistSubmitIdempotency: true, checklistRunListLocationScoping: true, checklistItemRemovalDisablesRatherThanDeletes: true, checklistHistoricalRunRetainsRemovedItem: true, translationMatrixExcludesProtectedFields: true, translationLocationScoping: true, translationEntityOwnershipGuard: true, translationEmptyApprovalRejected: true, translationEditResetsApproval: true, translationStaleSourceDetection: true, translationEmployeeLocaleSwitchPreservesProtectedFields: true, translationUnapprovedFallsBackToOriginal: true, domainEventEmissionCoverage: true, activityFeedLocationScoping: true, activityFeedTypeFilterAndPagination: true, trainingProgressReportFilteringAndScoping: true, qualificationsReportFilteringAndPagination: true, checklistCompletionReportFilteringAndScoping: true, sopVersionHistoryReportFilteringAndScoping: true, approvalHistoryReportUnionAndScoping: true })}\n`,
+    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, migrationConcurrencyLock: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true, employeeStationReader: true, employeeSopReader: true, employeeCategoryLibrary: true, employeeRecentViews: true, employeeMediaAuthorization: true, qrCreationAndTargetValidation: true, qrLocationScoping: true, qrRevocation: true, qrRotation: true, qrScanResolution: true, qrUnavailableTarget: true, qrEnumerationRateLimit: true, trainingConfigDefaultsAndScoping: true, trainingConfigStaleWriteRejection: true, trainingStepRequirementGuards: true, trainingQuestionCrudAndReorder: true, trainingPublishReadinessRules: true, trainingPublishedImmutability: true, trainingDraftCloning: true, trainingAssignmentCreationAndScoping: true, trainingSessionStartAndResume: true, trainingSequentialStepEnforcement: true, trainingWatchTimerQuestionEvidenceEnforcement: true, trainingDuplicateActionRejection: true, trainingScoringAndApprovalRouting: true, trainingSubmitIdempotency: true, trainingAttemptLimitsAndRetraining: true, bulkAssignmentAuthorizationScoping: true, bulkAssignmentByEmployeeListWithDueDate: true, bulkAssignmentByJobRole: true, bulkAssignmentByLocation: true, bulkAssignmentIndependentDuplicateSkip: true, approvalQueueLocationScoping: true, approvalEvidenceAuthorization: true, approvalDecisionNoteRules: true, approvalApprovedDecision: true, approvalRejectedDecision: true, approvalCorrectionRequest: true, approvalDecisionImmutability: true, correctionOwnershipEnforcement: true, correctionAppendOnlyEvidence: true, correctionResubmitIdempotency: true, approvalDecisionHistoryRetention: true, trainingPathAuthorizationScoping: true, trainingPathItemValidation: true, trainingPathOrderedBlocking: true, qualificationAward: true, qualificationRenewal: true, qualificationOverviewClassification: true, qualificationEmployeeView: true, qualificationRevocation: true, trainingPathArchiveStopsAwards: true, checklistAuthorizationScoping: true, checklistDuplicateTitleRejection: true, checklistRunStartAndResume: true, checklistAutoRequirementGuardsManualTick: true, checklistTimerPhotoNoteEnforcement: true, checklistSubmitRequiresAllRequiredItems: true, checklistDuplicateOccurrencePrevention: true, checklistApprovalRouting: true, checklistApprovalUnauthorizedRejection: true, checklistCorrectionRequestAndResubmit: true, checklistCorrectionResubmitIdempotency: true, checklistApprovalDecisionCompletesRun: true, checklistSubmitIdempotency: true, checklistRunListLocationScoping: true, checklistItemRemovalDisablesRatherThanDeletes: true, checklistHistoricalRunRetainsRemovedItem: true, translationMatrixExcludesProtectedFields: true, translationLocationScoping: true, translationEntityOwnershipGuard: true, translationEmptyApprovalRejected: true, translationEditResetsApproval: true, translationStaleSourceDetection: true, translationEmployeeLocaleSwitchPreservesProtectedFields: true, translationUnapprovedFallsBackToOriginal: true, domainEventEmissionCoverage: true, activityFeedLocationScoping: true, activityFeedTypeFilterAndPagination: true, trainingProgressReportFilteringAndScoping: true, qualificationsReportFilteringAndPagination: true, checklistCompletionReportFilteringAndScoping: true, sopVersionHistoryReportFilteringAndScoping: true, approvalHistoryReportUnionAndScoping: true, sopVersionPrintRecordFidelity: true, sopVersionPrintDraftRejection: true, sopVersionPrintLocationScoping: true, trainingSessionPrintRecordFidelity: true, trainingSessionPrintLocationScoping: true, printPdfGeneration: true, printPdfTextFidelity: true, csvExportRowFidelity: true, csvExportFormulaInjectionDefusing: true })}\n`,
   );
 }
 

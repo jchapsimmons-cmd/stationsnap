@@ -53,6 +53,14 @@ export default async function ApprovalHistoryReportPage({
       <PageHeader
         title="Approval decisions"
         description="Training and checklist approval history across your permitted locations, newest first."
+        actions={
+          <a
+            className="button button--secondary"
+            href={`/api/management/reports/approvals/export${buildQueryString(raw, {})}`}
+          >
+            Export CSV
+          </a>
+        }
       />
       <form className="filter-bar" action="/manager/reports/approvals">
         <label>

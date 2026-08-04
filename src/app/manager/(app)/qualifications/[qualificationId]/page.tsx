@@ -51,6 +51,14 @@ export default async function ManagerQualificationDetailPage({
       <PageHeader
         title={detail.definition.name}
         description={`${detail.employeeName} · #${detail.employeeNumber} · ${detail.locationName}`}
+        actions={
+          <Link
+            className="button button--secondary"
+            href={`/manager/print/qualifications/${qualificationId}`}
+          >
+            Print
+          </Link>
+        }
       />
 
       <Card>
