@@ -1,22 +1,26 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq } from "drizzle-orm";
+import { and, asc, desc, eq, inArray } from "drizzle-orm";
 import { AppError } from "@/lib/errors";
+import { endOfDayInTimeZone } from "@/lib/timezone";
 import { writeAuditEvent } from "@/server/audit";
 import { requireManagerManagedLocation } from "@/server/auth/authorization";
 import type { EmployeeSessionContext, ManagerSessionContext } from "@/server/auth/sessions";
 import { getDb } from "@/server/db/client";
 import {
   approvalSubmissions,
+  employees,
+  locations,
   sops,
   sopSteps,
   sopVersions,
-  trainingAnswers,
   trainingAssignments,
+  trainingAnswers,
+  trainingConfigs,
   trainingEvidence,
   trainingSessions,
   trainingStepProgress,
 } from "@/server/db/schema";
-import { getEmployee } from "@/server/management/service";
+import { getManagedLocationIds } from "@/server/management/service";
 import {
   defaultStepRequirementValues,
   loadStepTrainingRequirementsMap,
@@ -25,12 +29,16 @@ import {
 } from "@/server/sops/service";
 import type {
   TrainingAssignmentCreateInput,
+  TrainingAssignmentQuery,
+  TrainingAssignmentSkipReason,
+  TrainingAssignmentTargetInput,
   TrainingEvidenceUploadFormInput,
 } from "@/server/training/schemas";
 import { uploadEmployeeMedia } from "@/server/storage/media-service";
 
 type Tx = Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0];
 type StepRequirements = ReturnType<typeof defaultStepRequirementValues>;
+type TrainingAssignmentRow = typeof trainingAssignments.$inferSelect;
 
 async function auditTraining(
   session: EmployeeSessionContext,
@@ -276,17 +284,158 @@ async function bumpSessionRevision(
   return row.revision;
 }
 
-/** Creates a single-employee training assignment for a published SOP version. Bulk targeting, due dates, and full duplicate-active resolution are Phase 9 scope; this enforces a minimal duplicate guard. */
+export interface AssignmentSkip {
+  employeeId: string;
+  reason: TrainingAssignmentSkipReason;
+}
+
+export interface BulkAssignResult {
+  created: TrainingAssignmentRow[];
+  skipped: AssignmentSkip[];
+}
+
+/**
+ * Resolves a bulk target into the set of active employee ids to assign, all implicitly scoped
+ * to `locationId` (the SOP's own location). `employees` targets are resolved against the full
+ * employee list so mismatches produce a distinguishable skip reason instead of silently
+ * disappearing; `jobRoles` and `location` targets only ever consider active employees already
+ * at that location, so they never produce a skip at this stage.
+ */
+async function resolveTargetEmployeeIds(
+  organizationId: string,
+  locationId: string,
+  target: TrainingAssignmentTargetInput,
+): Promise<{ employeeIds: string[]; skipped: AssignmentSkip[] }> {
+  if (target.type === "location") {
+    const rows = await getDb()
+      .select({ id: employees.id })
+      .from(employees)
+      .where(
+        and(
+          eq(employees.organizationId, organizationId),
+          eq(employees.primaryLocationId, locationId),
+          eq(employees.status, "active"),
+        ),
+      );
+    return { employeeIds: rows.map((row) => row.id), skipped: [] };
+  }
+
+  if (target.type === "jobRoles") {
+    const wantedRoles = new Set(target.jobRoles.map((role) => role.toLowerCase()));
+    const rows = await getDb()
+      .select({ id: employees.id, jobRole: employees.jobRole })
+      .from(employees)
+      .where(
+        and(
+          eq(employees.organizationId, organizationId),
+          eq(employees.primaryLocationId, locationId),
+          eq(employees.status, "active"),
+        ),
+      );
+    return {
+      employeeIds: rows
+        .filter((row) => wantedRoles.has(row.jobRole.toLowerCase()))
+        .map((row) => row.id),
+      skipped: [],
+    };
+  }
+
+  const rows = await getDb()
+    .select({
+      id: employees.id,
+      primaryLocationId: employees.primaryLocationId,
+      status: employees.status,
+    })
+    .from(employees)
+    .where(
+      and(eq(employees.organizationId, organizationId), inArray(employees.id, target.employeeIds)),
+    );
+  const byId = new Map(rows.map((row) => [row.id, row]));
+  const employeeIds: string[] = [];
+  const skipped: AssignmentSkip[] = [];
+  for (const employeeId of target.employeeIds) {
+    const row = byId.get(employeeId);
+    if (!row) {
+      skipped.push({ employeeId, reason: "not_found" });
+    } else if (row.primaryLocationId !== locationId) {
+      skipped.push({ employeeId, reason: "location_mismatch" });
+    } else if (row.status !== "active") {
+      skipped.push({ employeeId, reason: "employee_inactive" });
+    } else {
+      employeeIds.push(employeeId);
+    }
+  }
+  return { employeeIds, skipped };
+}
+
+/**
+ * Creates or skips one employee's assignment inside its own transaction, so a duplicate-active
+ * rejection for one employee never blocks the rest of the batch. Mirrors the duplicate-active
+ * guard and retraining-generation bump the single-employee path used before Phase 9.
+ */
+async function createAssignmentForEmployee(
+  actor: ManagerSessionContext,
+  employeeId: string,
+  locationId: string,
+  sopVersionId: string,
+  requiredMode: TrainingAssignmentRow["requiredMode"],
+  dueAt: Date | null,
+  dueTimezone: string | null,
+): Promise<{ created: TrainingAssignmentRow } | { skipped: AssignmentSkip }> {
+  return getDb().transaction(async (tx) => {
+    const [existing] = await tx
+      .select({
+        id: trainingAssignments.id,
+        status: trainingAssignments.status,
+        retrainingGeneration: trainingAssignments.retrainingGeneration,
+      })
+      .from(trainingAssignments)
+      .where(
+        and(
+          eq(trainingAssignments.employeeId, employeeId),
+          eq(trainingAssignments.sopVersionId, sopVersionId),
+        ),
+      )
+      .orderBy(desc(trainingAssignments.retrainingGeneration))
+      .limit(1);
+    if (existing && existing.status !== "failed" && existing.status !== "cancelled") {
+      return { skipped: { employeeId, reason: "duplicate_active" } };
+    }
+    const retrainingGeneration = existing ? existing.retrainingGeneration + 1 : 0;
+
+    const [row] = await tx
+      .insert(trainingAssignments)
+      .values({
+        id: randomUUID(),
+        organizationId: actor.organizationId,
+        locationId,
+        employeeId,
+        sopVersionId,
+        requiredMode,
+        status: "assigned",
+        assignedByManagerUserId: actor.managerUserId,
+        dueAt,
+        dueTimezone,
+        retrainingGeneration,
+      })
+      .returning();
+    if (!row) throw new AppError("INTERNAL_ERROR", "The assignment could not be created.");
+    return { created: row };
+  });
+}
+
+/**
+ * Resolves a bulk target (explicit employees, job roles, or the whole location — all implicitly
+ * scoped to the SOP's own location) into independent per-employee training assignments. Each
+ * employee is created or skipped on its own; a duplicate-active assignment for one employee
+ * never blocks the rest of the batch. Preserves the `training.assigned` audit event per created
+ * assignment.
+ */
 export async function assignTraining(
   actor: ManagerSessionContext,
   input: TrainingAssignmentCreateInput,
   requestId?: string,
-) {
-  const employee = await getEmployee(actor, input.employeeId);
-  if (employee.status !== "active") {
-    throw new AppError("CONFLICT", "This employee is disabled.");
-  }
-
+): Promise<BulkAssignResult> {
   const [sopRow] = await getDb()
     .select({
       id: sops.id,
@@ -301,67 +450,349 @@ export async function assignTraining(
     throw new AppError("NOT_FOUND", "SOP not found.");
   }
   await requireManagerManagedLocation(actor, sopRow.locationId, requestId);
-  if (sopRow.locationId !== employee.primaryLocationId) {
-    throw new AppError("BAD_REQUEST", "This SOP is not available at the employee's location.");
-  }
+
+  const [locationRow] = await getDb()
+    .select({ timezone: locations.timezone })
+    .from(locations)
+    .where(
+      and(eq(locations.id, sopRow.locationId), eq(locations.organizationId, actor.organizationId)),
+    )
+    .limit(1);
+  if (!locationRow) throw new AppError("NOT_FOUND", "Location not found.");
 
   const config = await loadTrainingConfig(actor.organizationId, sopRow.currentVersionId);
   if (config.requirementState === "disabled") {
     throw new AppError("BAD_REQUEST", "This SOP does not have training enabled.");
   }
   const requiredMode = input.requiredMode ?? config.defaultMode;
+  const dueAt = input.dueDate ? endOfDayInTimeZone(input.dueDate, locationRow.timezone) : null;
+  const dueTimezone = input.dueDate ? locationRow.timezone : null;
 
-  const [existing] = await getDb()
+  const { employeeIds, skipped: preResolutionSkips } = await resolveTargetEmployeeIds(
+    actor.organizationId,
+    sopRow.locationId,
+    input.target,
+  );
+
+  const created: TrainingAssignmentRow[] = [];
+  const skipped: AssignmentSkip[] = [...preResolutionSkips];
+
+  for (const employeeId of employeeIds) {
+    const outcome = await createAssignmentForEmployee(
+      actor,
+      employeeId,
+      sopRow.locationId,
+      sopRow.currentVersionId,
+      requiredMode,
+      dueAt,
+      dueTimezone,
+    );
+    if ("created" in outcome) {
+      created.push(outcome.created);
+      await writeAuditEvent({
+        organizationId: actor.organizationId,
+        locationId: sopRow.locationId,
+        actorKind: "manager",
+        actorId: actor.managerUserId,
+        action: "training.assigned",
+        targetType: "training_assignment",
+        targetId: outcome.created.id,
+        requestId,
+      });
+    } else {
+      skipped.push(outcome.skipped);
+    }
+  }
+
+  return { created, skipped };
+}
+
+/** Published, training-enabled SOPs at a manager's permitted locations, as bulk-assignment candidates. */
+export async function listTrainableSops(actor: ManagerSessionContext) {
+  const managedIds = await getManagedLocationIds(actor);
+  if (managedIds.length === 0) return [];
+  const rows = await getDb()
+    .select({
+      id: sops.id,
+      title: sopVersions.title,
+      locationId: sops.locationId,
+      locationName: locations.name,
+      requirementState: trainingConfigs.requirementState,
+    })
+    .from(sops)
+    .innerJoin(
+      sopVersions,
+      and(
+        eq(sopVersions.id, sops.currentVersionId),
+        eq(sopVersions.organizationId, sops.organizationId),
+      ),
+    )
+    .innerJoin(
+      locations,
+      and(eq(locations.id, sops.locationId), eq(locations.organizationId, sops.organizationId)),
+    )
+    .leftJoin(
+      trainingConfigs,
+      and(
+        eq(trainingConfigs.sopVersionId, sops.currentVersionId),
+        eq(trainingConfigs.organizationId, sops.organizationId),
+      ),
+    )
+    .where(
+      and(
+        eq(sops.organizationId, actor.organizationId),
+        inArray(sops.locationId, managedIds),
+        eq(sops.status, "published"),
+      ),
+    )
+    .orderBy(asc(sopVersions.title));
+  return rows
+    .filter((row) => (row.requirementState ?? "disabled") !== "disabled")
+    .map((row) => ({
+      id: row.id,
+      title: row.title,
+      locationId: row.locationId,
+      locationName: row.locationName,
+    }));
+}
+
+/** Assignments across a manager's permitted locations, newest first, optionally filtered by status tab or location. */
+export async function listAssignments(
+  actor: ManagerSessionContext,
+  query: TrainingAssignmentQuery,
+) {
+  const managedIds = await getManagedLocationIds(actor);
+  if (managedIds.length === 0) return [];
+  if (query.locationId && !managedIds.includes(query.locationId)) return [];
+
+  const conditions = [
+    eq(trainingAssignments.organizationId, actor.organizationId),
+    inArray(trainingAssignments.locationId, query.locationId ? [query.locationId] : managedIds),
+  ];
+  if (query.status) conditions.push(eq(trainingAssignments.status, query.status));
+
+  return getDb()
     .select({
       id: trainingAssignments.id,
       status: trainingAssignments.status,
-      retrainingGeneration: trainingAssignments.retrainingGeneration,
+      requiredMode: trainingAssignments.requiredMode,
+      dueAt: trainingAssignments.dueAt,
+      dueTimezone: trainingAssignments.dueTimezone,
+      employeeId: trainingAssignments.employeeId,
+      employeeName: employees.displayName,
+      locationId: trainingAssignments.locationId,
+      locationName: locations.name,
+      sopId: sopVersions.sopId,
+      sopTitle: sopVersions.title,
+      createdAt: trainingAssignments.createdAt,
     })
     .from(trainingAssignments)
-    .where(
+    .innerJoin(
+      employees,
       and(
-        eq(trainingAssignments.employeeId, employee.id),
-        eq(trainingAssignments.sopVersionId, sopRow.currentVersionId),
+        eq(employees.id, trainingAssignments.employeeId),
+        eq(employees.organizationId, trainingAssignments.organizationId),
       ),
     )
-    .orderBy(desc(trainingAssignments.retrainingGeneration))
-    .limit(1);
-  if (existing && existing.status !== "failed" && existing.status !== "cancelled") {
-    throw new AppError(
-      "CONFLICT",
-      "This employee already has an active or completed assignment for this SOP version.",
-    );
-  }
-  const retrainingGeneration = existing ? existing.retrainingGeneration + 1 : 0;
+    .innerJoin(
+      locations,
+      and(
+        eq(locations.id, trainingAssignments.locationId),
+        eq(locations.organizationId, trainingAssignments.organizationId),
+      ),
+    )
+    .innerJoin(
+      sopVersions,
+      and(
+        eq(sopVersions.id, trainingAssignments.sopVersionId),
+        eq(sopVersions.organizationId, trainingAssignments.organizationId),
+      ),
+    )
+    .where(and(...conditions))
+    .orderBy(desc(trainingAssignments.createdAt))
+    .limit(300);
+}
 
+/** A single assignment's detail for the assigning manager: employee, SOP/version, status, due date, and attempt summary. */
+export async function getManagerAssignmentDetail(
+  actor: ManagerSessionContext,
+  assignmentId: string,
+) {
   const [row] = await getDb()
-    .insert(trainingAssignments)
-    .values({
-      id: randomUUID(),
-      organizationId: actor.organizationId,
-      locationId: employee.primaryLocationId,
-      employeeId: employee.id,
-      sopVersionId: sopRow.currentVersionId,
-      requiredMode,
-      status: "assigned",
-      assignedByManagerUserId: actor.managerUserId,
-      retrainingGeneration,
+    .select({
+      id: trainingAssignments.id,
+      status: trainingAssignments.status,
+      requiredMode: trainingAssignments.requiredMode,
+      dueAt: trainingAssignments.dueAt,
+      dueTimezone: trainingAssignments.dueTimezone,
+      retrainingGeneration: trainingAssignments.retrainingGeneration,
+      createdAt: trainingAssignments.createdAt,
+      employeeId: trainingAssignments.employeeId,
+      employeeName: employees.displayName,
+      employeeNumber: employees.employeeNumber,
+      locationId: trainingAssignments.locationId,
+      locationName: locations.name,
+      sopVersionId: trainingAssignments.sopVersionId,
+      sopId: sopVersions.sopId,
+      sopTitle: sopVersions.title,
     })
-    .returning();
-  if (!row) throw new AppError("INTERNAL_ERROR", "The assignment could not be created.");
+    .from(trainingAssignments)
+    .innerJoin(
+      employees,
+      and(
+        eq(employees.id, trainingAssignments.employeeId),
+        eq(employees.organizationId, trainingAssignments.organizationId),
+      ),
+    )
+    .innerJoin(
+      locations,
+      and(
+        eq(locations.id, trainingAssignments.locationId),
+        eq(locations.organizationId, trainingAssignments.organizationId),
+      ),
+    )
+    .innerJoin(
+      sopVersions,
+      and(
+        eq(sopVersions.id, trainingAssignments.sopVersionId),
+        eq(sopVersions.organizationId, trainingAssignments.organizationId),
+      ),
+    )
+    .where(
+      and(
+        eq(trainingAssignments.id, assignmentId),
+        eq(trainingAssignments.organizationId, actor.organizationId),
+      ),
+    )
+    .limit(1);
+  if (!row) throw new AppError("NOT_FOUND", "Assignment not found.");
+  await requireManagerManagedLocation(actor, row.locationId);
 
-  await writeAuditEvent({
-    organizationId: actor.organizationId,
-    locationId: employee.primaryLocationId,
-    actorKind: "manager",
-    actorId: actor.managerUserId,
-    action: "training.assigned",
-    targetType: "training_assignment",
-    targetId: row.id,
-    requestId,
-  });
+  const sessions = await getDb()
+    .select()
+    .from(trainingSessions)
+    .where(eq(trainingSessions.assignmentId, row.id))
+    .orderBy(desc(trainingSessions.attemptNumber));
+  const latestSession = sessions[0] ?? null;
 
-  return row;
+  return {
+    ...row,
+    attemptsUsed: sessions.length,
+    latestSession: latestSession
+      ? {
+          id: latestSession.id,
+          attemptNumber: latestSession.attemptNumber,
+          status: latestSession.status,
+          scorePercent: latestSession.scorePercent,
+        }
+      : null,
+  };
+}
+
+export type EmployeeAssignmentSummary = {
+  id: string;
+  sopId: string;
+  sopTitle: string;
+  status: TrainingAssignmentRow["status"];
+  dueAt: Date | null;
+  dueTimezone: string | null;
+  createdAt: Date;
+};
+
+export interface EmployeeAssignmentSections {
+  active: EmployeeAssignmentSummary[];
+  overdue: EmployeeAssignmentSummary[];
+  due: EmployeeAssignmentSummary[];
+  assigned: EmployeeAssignmentSummary[];
+  completed: EmployeeAssignmentSummary[];
+  failed: EmployeeAssignmentSummary[];
+}
+
+/**
+ * The signed-in employee's own assignments, grouped into the sections the Phase 9 training
+ * list needs: currently active (an in-progress session is open), overdue, due, freshly
+ * assigned, completed, and failed. Ordering within a section and cross-assignment prioritization
+ * (paths, qualifications) are Phase 11 scope.
+ */
+export async function listAssignmentsForEmployee(
+  session: EmployeeSessionContext,
+): Promise<EmployeeAssignmentSections> {
+  const rows = await getDb()
+    .select({
+      id: trainingAssignments.id,
+      status: trainingAssignments.status,
+      dueAt: trainingAssignments.dueAt,
+      dueTimezone: trainingAssignments.dueTimezone,
+      createdAt: trainingAssignments.createdAt,
+      sopId: sopVersions.sopId,
+      sopTitle: sopVersions.title,
+    })
+    .from(trainingAssignments)
+    .innerJoin(
+      sopVersions,
+      and(
+        eq(sopVersions.id, trainingAssignments.sopVersionId),
+        eq(sopVersions.organizationId, trainingAssignments.organizationId),
+      ),
+    )
+    .where(
+      and(
+        eq(trainingAssignments.organizationId, session.organizationId),
+        eq(trainingAssignments.employeeId, session.employeeId),
+      ),
+    )
+    .orderBy(desc(trainingAssignments.createdAt));
+
+  const sections: EmployeeAssignmentSections = {
+    active: [],
+    overdue: [],
+    due: [],
+    assigned: [],
+    completed: [],
+    failed: [],
+  };
+  if (rows.length === 0) return sections;
+
+  const activeAssignmentRows = await getDb()
+    .select({ assignmentId: trainingSessions.assignmentId })
+    .from(trainingSessions)
+    .where(
+      and(
+        inArray(
+          trainingSessions.assignmentId,
+          rows.map((row) => row.id),
+        ),
+        eq(trainingSessions.status, "in_progress"),
+      ),
+    );
+  const activeAssignmentIds = new Set(activeAssignmentRows.map((row) => row.assignmentId));
+  const now = Date.now();
+
+  for (const row of rows) {
+    if (row.status === "cancelled") continue;
+    if (row.status === "completed") {
+      sections.completed.push(row);
+      continue;
+    }
+    if (row.status === "failed") {
+      sections.failed.push(row);
+      continue;
+    }
+    if (activeAssignmentIds.has(row.id)) {
+      sections.active.push(row);
+      continue;
+    }
+    if (row.dueAt && row.dueAt.getTime() < now) {
+      sections.overdue.push(row);
+      continue;
+    }
+    if (row.dueAt) {
+      sections.due.push(row);
+      continue;
+    }
+    sections.assigned.push(row);
+  }
+  return sections;
 }
 
 /** Assignment summary for the owning employee: config, attempt budget, active/latest session, and awareness of a newer published SOP version. */
