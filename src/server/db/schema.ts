@@ -110,6 +110,11 @@ export const approvalDecisionType = pgEnum("approval_decision_type", [
   "rejected",
   "needs_correction",
 ]);
+export const qualificationStatus = pgEnum("qualification_status", ["active", "revoked"]);
+export const trainingPathVersionPolicy = pgEnum("training_path_version_policy", [
+  "current_version",
+  "any_passed_version",
+]);
 
 const timestamps = {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -1221,5 +1226,228 @@ export const correctionRequests = pgTable(
       .on(table.submissionId)
       .where(sql`resolved_at is null`),
     index("correction_requests_org_submission_idx").on(table.organizationId, table.submissionId),
+  ],
+);
+
+/**
+ * One row per awardable qualification. Deliberately no standalone manager route: a definition is
+ * always created and edited together with its one owning `training_paths` row, in the same
+ * request. `locationId`/`stationId` are copied from the owning path at creation and never change.
+ */
+export const qualificationDefinitions = pgTable(
+  "qualification_definitions",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    locationId: uuid("location_id").notNull(),
+    stationId: uuid("station_id"),
+    name: text("name").notNull(),
+    description: text("description").notNull().default(""),
+    defaultValidityDays: integer("default_validity_days"),
+    status: recordStatus("status").notNull().default("active"),
+    ...timestamps,
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.locationId, table.organizationId],
+      foreignColumns: [locations.id, locations.organizationId],
+      name: "qualification_definitions_location_org_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.stationId, table.organizationId, table.locationId],
+      foreignColumns: [stations.id, stations.organizationId, stations.locationId],
+      name: "qualification_definitions_station_org_location_fk",
+    }).onDelete("restrict"),
+    unique("qualification_definitions_id_org_unique").on(table.id, table.organizationId),
+    uniqueIndex("qualification_definitions_org_name_uidx").on(table.organizationId, table.name),
+    index("qualification_definitions_org_location_status_idx").on(
+      table.organizationId,
+      table.locationId,
+      table.status,
+    ),
+  ],
+);
+
+/**
+ * A manager-composed ordered list of SOPs, scoped to one location (and optionally one station
+ * within it), that awards its 1:1 `qualificationDefinitionId` once every required item is
+ * satisfied. `locationId`/`stationId` are immutable after creation, unlike stations, which do
+ * allow moving location.
+ */
+export const trainingPaths = pgTable(
+  "training_paths",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    locationId: uuid("location_id").notNull(),
+    stationId: uuid("station_id"),
+    qualificationDefinitionId: uuid("qualification_definition_id").notNull(),
+    title: text("title").notNull(),
+    description: text("description").notNull().default(""),
+    enforceOrder: boolean("enforce_order").notNull().default(true),
+    status: recordStatus("status").notNull().default("active"),
+    ...timestamps,
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.locationId, table.organizationId],
+      foreignColumns: [locations.id, locations.organizationId],
+      name: "training_paths_location_org_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.stationId, table.organizationId, table.locationId],
+      foreignColumns: [stations.id, stations.organizationId, stations.locationId],
+      name: "training_paths_station_org_location_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.qualificationDefinitionId, table.organizationId],
+      foreignColumns: [qualificationDefinitions.id, qualificationDefinitions.organizationId],
+      name: "training_paths_definition_org_fk",
+    }).onDelete("restrict"),
+    unique("training_paths_id_org_unique").on(table.id, table.organizationId),
+    unique("training_paths_definition_uidx").on(table.qualificationDefinitionId),
+    uniqueIndex("training_paths_org_location_title_uidx").on(
+      table.organizationId,
+      table.locationId,
+      table.title,
+    ),
+    index("training_paths_org_location_status_idx").on(
+      table.organizationId,
+      table.locationId,
+      table.status,
+    ),
+  ],
+);
+
+/**
+ * One ordered SOP entry within a training path. Application-level rules (enforced in the service
+ * layer, not here) require every referenced SOP to be published and to belong to the same
+ * location as the owning path.
+ */
+export const trainingPathItems = pgTable(
+  "training_path_items",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    pathId: uuid("path_id").notNull(),
+    sopId: uuid("sop_id").notNull(),
+    isRequired: boolean("is_required").notNull().default(true),
+    displayOrder: integer("display_order").notNull(),
+    versionPolicy: trainingPathVersionPolicy("version_policy").notNull().default("current_version"),
+    ...timestamps,
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.pathId, table.organizationId],
+      foreignColumns: [trainingPaths.id, trainingPaths.organizationId],
+      name: "training_path_items_path_org_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.sopId, table.organizationId],
+      foreignColumns: [sops.id, sops.organizationId],
+      name: "training_path_items_sop_org_fk",
+    }).onDelete("restrict"),
+    unique("training_path_items_id_org_unique").on(table.id, table.organizationId),
+    unique("training_path_items_path_sop_uidx").on(table.pathId, table.sopId),
+    unique("training_path_items_path_order_uidx").on(table.pathId, table.displayOrder),
+  ],
+);
+
+/**
+ * One row per qualification "episode": a fresh award after expiry or revocation gets a new row,
+ * so history is retained and never overwritten, mirroring `sop_versions`/`approval_decisions`
+ * immutability. `status` deliberately only ever holds `active`/`revoked` — expiry is always
+ * derived at read time by comparing `expiresAt` to `now()`, never stored as a status, per
+ * data-model.md's "cached status only if transactionally maintained" rule. The partial unique
+ * index below is the DB-enforced half of the "at most one active episode per employee+definition"
+ * lifecycle rule; the award algorithm in `qualifications.ts` is the other half.
+ */
+export const employeeQualifications = pgTable(
+  "employee_qualifications",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    employeeId: uuid("employee_id").notNull(),
+    definitionId: uuid("definition_id").notNull(),
+    sourcePathId: uuid("source_path_id").notNull(),
+    awardedAt: timestamp("awarded_at", { withTimezone: true }).notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    status: qualificationStatus("status").notNull().default("active"),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    revokedByManagerUserId: uuid("revoked_by_manager_user_id").references(() => managerUsers.id, {
+      onDelete: "restrict",
+    }),
+    revokedNote: text("revoked_note").notNull().default(""),
+    ...timestamps,
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.employeeId, table.organizationId],
+      foreignColumns: [employees.id, employees.organizationId],
+      name: "employee_qualifications_employee_org_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.definitionId, table.organizationId],
+      foreignColumns: [qualificationDefinitions.id, qualificationDefinitions.organizationId],
+      name: "employee_qualifications_definition_org_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.sourcePathId, table.organizationId],
+      foreignColumns: [trainingPaths.id, trainingPaths.organizationId],
+      name: "employee_qualifications_source_path_org_fk",
+    }).onDelete("restrict"),
+    unique("employee_qualifications_id_org_unique").on(table.id, table.organizationId),
+    uniqueIndex("employee_qualifications_active_employee_definition_uidx")
+      .on(table.employeeId, table.definitionId)
+      .where(sql`status = 'active'`),
+    index("employee_qualifications_org_status_expiry_idx").on(
+      table.organizationId,
+      table.status,
+      table.expiresAt,
+    ),
+    index("employee_qualifications_employee_status_idx").on(table.employeeId, table.status),
+  ],
+);
+
+/**
+ * Links a qualification episode to the specific passed `training_sessions` rows that proved it —
+ * one per required path item satisfied. Renewing a still-active episode replaces these rows
+ * (delete + reinsert) rather than accumulating stale proof.
+ */
+export const qualificationSupportingSessions = pgTable(
+  "qualification_supporting_sessions",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    qualificationId: uuid("qualification_id").notNull(),
+    sessionId: uuid("session_id").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.qualificationId, table.organizationId],
+      foreignColumns: [employeeQualifications.id, employeeQualifications.organizationId],
+      name: "qualification_supporting_sessions_qualification_org_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.sessionId, table.organizationId],
+      foreignColumns: [trainingSessions.id, trainingSessions.organizationId],
+      name: "qualification_supporting_sessions_session_org_fk",
+    }).onDelete("restrict"),
+    unique("qualification_supporting_sessions_qualification_session_uidx").on(
+      table.qualificationId,
+      table.sessionId,
+    ),
+    index("qualification_supporting_sessions_qualification_idx").on(table.qualificationId),
   ],
 );
