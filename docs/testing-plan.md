@@ -59,14 +59,14 @@ Testing must prove business invariants, tenant/location isolation, server-enforc
 10. Phase 10: queue scope, evidence authorization, all decisions, note rules, PIN confirmation, corrections/history, notifications and audit.
 11. Phase 11: ordered path blocking, award prerequisites, validity/expiry/expiring/revocation and historical support.
 12. Phase 12: definitions/recurrence, runs, timers/photos/notes, pause/resume, idempotent submit, approval/correction and filter scope.
-13. Phase 13: upload/job lifecycle, schema rejection, retry/stuck recovery, single-step regeneration, preserved original, manual fallback and never-auto-publish assertion.
-14. Phase 14: field/step generation, review/approval, untranslated flags, protected names/measurements and language switching during active progress.
-15. Phase 15: aggregate accuracy, filters, tenant/location scope, pagination, query count/plan and empty states.
-16. Phase 16: permission scope, exact version/data, multi-page layout, QR scan verification, PDF extraction checks and CSV injection safety.
-17. Phase 17: recipient/destination accuracy, dedupe, retries, read state, timezone boundaries, disabled recipients and safe email content.
-18. Phase 18: regression for each finding, upload/media abuse, IDOR matrix, CSRF, secrets/errors, indexes/query plans and mobile budgets.
-19. Phase 19: full specified lifecycle and exception matrix on small phone, large phone, tablet, and desktop.
-20. Phase 20: clean production build/migrate, missing-config failure, health checks, no test credentials/data, worker/provider configuration and rollback rehearsal documentation.
+13. Phase 13 (manual translations): field/step entry and review/approval, untranslated flags, protected names/measurements and language switching during active progress. No AI generation to validate in this phase; see Phase 20.
+14. Phase 14: aggregate accuracy, filters, tenant/location scope, pagination, query count/plan and empty states.
+15. Phase 15: permission scope, exact version/data, multi-page layout, QR scan verification, PDF extraction checks and CSV injection safety.
+16. Phase 16 (email/in-app notifications): recipient/destination accuracy, dedupe, retries, read state, timezone boundaries, disabled recipients and safe email content. No SMS channel to validate in this phase; see Phase 20.
+17. Phase 17: regression for each finding, upload/media abuse, IDOR matrix, CSRF, secrets/errors, indexes/query plans and mobile budgets.
+18. Phase 18: full specified lifecycle and exception matrix on small phone, large phone, tablet, and desktop.
+19. Phase 19: missing-config failure, health checks, no test credentials/data, backup/retention rehearsal and rollback rehearsal documentation against the already-live Vercel/Neon/Blob production configuration.
+20. Phase 20 (deferred; requires provider decisions first): upload/job lifecycle, schema rejection, retry/stuck recovery, single-step regeneration, preserved original, manual fallback and never-auto-publish assertion for AI video-to-draft; AI-assisted translation acceptance; SMS delivery, opt-out and safe content.
 
 ## E2E critical path
 

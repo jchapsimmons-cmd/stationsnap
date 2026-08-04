@@ -12,22 +12,22 @@ The handoff's API prototype states that employee PINs are completion signatures 
 | --------- | ------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
 | `1a`      | Employee QR, station, procedure, proof, PIN, completion | `/q/[token]`, `/employee/stations/[stationId]`, `/employee/sops/[sopId]`; Phases 6 and 12 |
 | `1b`      | Employee scrolling procedure checklist                  | Employee SOP/checklist presentation variant; Phases 6 and 12                              |
-| `1c`      | Manager dashboard, review, record, AI draft             | `/manager`, approvals and SOP AI routes; Phases 10, 13, and 15                            |
+| `1c`      | Manager dashboard, review, record, AI draft             | `/manager`, approvals and SOP AI routes; Phases 10, 14, and 20 (deferred)                 |
 | `2a`      | Employee correction and resubmission                    | `/employee/approvals/[submissionId]`; Phase 10                                            |
-| `2b`      | Station QR card and printable SOP sheet                 | Manager QR/print routes; Phases 6 and 16                                                  |
-| `2c`      | Manager completion history                              | `/manager/activity` and reports; Phase 15                                                 |
+| `2b`      | Station QR card and printable SOP sheet                 | Manager QR/print routes; Phases 6 and 15                                                  |
+| `2c`      | Manager completion history                              | `/manager/activity` and reports; Phase 14                                                 |
 | `3a`      | Organization, location, and station setup               | `/manager/settings/*`; Phase 3                                                            |
 | `3b`      | Employee roster and PIN management                      | `/manager/employees*`; Phase 3                                                            |
 | `3c`      | Task assignment                                         | `/manager/training/assignments/new`; Phase 9                                              |
-| `3d`      | Spanish translation review                              | SOP translation routes; Phase 14                                                          |
+| `3d`      | Spanish translation review                              | SOP translation routes; Phase 13 (manual); AI-assisted drafting is Phase 20 (deferred)    |
 | `3e`      | Training question builder and taker                     | SOP training editor and employee runner; Phases 7 and 8                                   |
 | `3f`      | Employee home                                           | `/employee`; Phase 6                                                                      |
-| `3g`      | Notifications                                           | Manager/employee notification routes; Phase 17                                            |
+| `3g`      | Notifications                                           | Manager/employee notification routes; Phase 16 (email/in-app); SMS is Phase 20 (deferred) |
 | `4a`      | Employee training list and station path                 | `/employee/training`; Phases 9 and 11                                                     |
 | `4b`      | Learn, Guided, Test, and Demonstration runner           | Employee training session route; Phase 8                                                  |
 | `4c`      | Per-SOP training settings                               | `/manager/sops/[sopId]/training`; Phase 7                                                 |
 | `4d`      | Station training-path builder                           | `/manager/training/paths*`; Phase 11                                                      |
-| `4e`      | Manager training dashboard                              | `/manager/training` and reports; Phases 9 and 15                                          |
+| `4e`      | Manager training dashboard                              | `/manager/training` and reports; Phases 9 and 14                                          |
 | `5a`      | Manager demonstration verification                      | Approval review route; Phase 10                                                           |
 | `5b`      | Mid-training SOP update review                          | Employee “What Changed” route; Phases 5 and 8                                             |
 

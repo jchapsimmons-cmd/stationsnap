@@ -152,4 +152,4 @@ Dashboards and reports should query canonical tables with tenant predicates, bou
 - Notification recipient/read/created and unique dedupe keys.
 - Job status/retry/lease timestamps and unique idempotency keys.
 
-Final indexes must be justified with actual query plans during Phases 15 and 18 rather than added indiscriminately.
+Final indexes must be justified with actual query plans during Phases 14 and 17 rather than added indiscriminately.

@@ -39,14 +39,14 @@ Exact package versions and providers must be selected in Phase 1 from maintained
 
 ## Missing dependencies and decisions
 
-1. Approved design source files, screen exports, breakpoints, tokens, and interaction states.
-2. Framework, package manager, supported Node runtime, and dependency versions.
-3. Typed PostgreSQL query/migration layer and local database workflow.
-4. Manager identity provider or self-hosted session approach, including email delivery.
-5. Private object-storage provider and upload limits.
-6. Durable job runner and scheduled-job host.
-7. AI, transcription, translation, email, and monitoring providers for later phases.
-8. Production host, region, domain, backup objectives, retention policy, and privacy requirements.
+1. Approved design source files, screen exports, breakpoints, tokens, and interaction states. Resolved in Phase 0/1.
+2. Framework, package manager, supported Node runtime, and dependency versions. Resolved in Phase 1.
+3. Typed PostgreSQL query/migration layer and local database workflow. Resolved in Phase 1.
+4. Manager identity provider or self-hosted session approach, including email delivery. Resolved in Phase 2 (self-hosted sessions; SMTP for email).
+5. Private object-storage provider and upload limits. Resolved: local disk for development, Vercel Blob in production (selected and configured directly against the live deployment).
+6. Durable job runner and scheduled-job host. Still open; not required until Phase 20 automation needs it, since no phase before Phase 20 depends on background jobs.
+7. Production host, region, domain, backup objectives, retention policy, and privacy requirements. Hosting (Vercel) and the production database (Neon Postgres) are resolved and live; remaining items (backup/retention policy, privacy documentation) are covered in Phase 19.
+8. AI/transcription provider, AI-assisted translation provider, and SMS provider. Still open and deliberately deferred; required only for Phase 20, which must not start without an explicit decision from the project owner.
 
 ## Design conflicts
 
@@ -104,14 +104,14 @@ The exact technical order preserves the numbered phases because each later capab
 10. Phase 10: add immutable approval decisions and correction evidence history.
 11. Phase 11: compose completed training into ordered paths and qualification lifecycle rules.
 12. Phase 12: implement checklists as a separate aggregate while reusing media, timer, and approval primitives.
-13. Phase 13: add the durable, schema-validated video-to-draft AI workflow only after manual SOP authoring is stable.
-14. Phase 14: add separately stored, reviewable translations without altering progress identity.
-15. Phase 15: build aggregates, paginated reports, and activity history from real domain events.
-16. Phase 16: add permission-aware print, PDF, and CSV representations of versioned records.
-17. Phase 17: turn domain events and time calculations into idempotent in-app and configured email notifications.
-18. Phase 18: audit every boundary; fix high/medium security and performance findings and add regressions.
-19. Phase 19: automate the complete cross-role lifecycle on clean databases and representative viewports.
-20. Phase 20: configure production providers, operations, backups, rollback, PWA metadata, and a production-like release verification.
+13. Phase 13: add separately stored, reviewable translations entered and approved manually by managers, without altering progress identity. AI-assisted translation drafting is not part of this phase; see Phase 20.
+14. Phase 14: build aggregates, paginated reports, and activity history from real domain events.
+15. Phase 15: add permission-aware print, PDF, and CSV representations of versioned records.
+16. Phase 16: turn domain events and time calculations into idempotent in-app and SMTP-backed email notifications, reusing the existing Phase 2 email delivery mechanism. SMS is explicitly out of scope for this phase, matching the approved design's v1 notification scope; see Phase 20.
+17. Phase 17: audit every boundary; fix high/medium security and performance findings and add regressions.
+18. Phase 18: automate the complete cross-role lifecycle on clean databases and representative viewports.
+19. Phase 19: harden the already-live production deployment: PWA metadata, backup/retention policy, rollback rehearsal, and a production-like release verification. Hosting (Vercel), the production database (Neon Postgres), and object storage (Vercel Blob) were already selected and configured directly against production ahead of schedule, so this phase covers the remaining operational work rather than initial provider selection.
+20. Phase 20 (deferred; requires explicit provider decisions from the project owner before starting): add the durable, schema-validated video-to-draft AI workflow, upgrade Phase 13's manual translations with AI-assisted drafting, and add an SMS notification channel alongside Phase 16's email/in-app channels. Do not attempt automatically. An automated pipeline reaching this point must stop, record exactly which provider decisions are needed, and wait rather than guessing.
 
 ## Phase gates
 
