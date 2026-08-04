@@ -41,7 +41,7 @@ import type {
 
 type Tx = Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0];
 
-function defaultTrainingConfigValues() {
+export function defaultTrainingConfigValues() {
   return {
     requirementState: "disabled" as const,
     defaultMode: "learn" as const,
@@ -56,7 +56,7 @@ function defaultTrainingConfigValues() {
   };
 }
 
-function defaultStepRequirementValues() {
+export function defaultStepRequirementValues() {
   return {
     requireFullVideo: false,
     requireConfirmation: false,
@@ -775,7 +775,7 @@ export async function reorderSteps(
   return getSopDraft(actor, sopId);
 }
 
-async function loadTrainingConfig(organizationId: string, sopVersionId: string) {
+export async function loadTrainingConfig(organizationId: string, sopVersionId: string) {
   const [row] = await getDb()
     .select()
     .from(trainingConfigs)
@@ -848,7 +848,7 @@ export async function updateTrainingConfig(
   return getTrainingConfigDraft(actor, sopId);
 }
 
-async function loadStepTrainingRequirementsMap(sopVersionId: string) {
+export async function loadStepTrainingRequirementsMap(sopVersionId: string) {
   const steps = await getDb()
     .select({ id: sopSteps.id })
     .from(sopSteps)
@@ -946,7 +946,7 @@ function questionGroupCondition(sopVersionId: string, stepId: string | null) {
     : and(eq(trainingQuestions.sopVersionId, sopVersionId), isNull(trainingQuestions.stepId));
 }
 
-async function loadTrainingQuestions(sopVersionId: string) {
+export async function loadTrainingQuestions(sopVersionId: string) {
   const questions = await getDb()
     .select()
     .from(trainingQuestions)

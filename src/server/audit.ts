@@ -37,7 +37,14 @@ export type AuditAction =
   | "qr.created"
   | "qr.revoked"
   | "qr.rotated"
-  | "qr.scanned";
+  | "qr.scanned"
+  | "training.assigned"
+  | "training.session_started"
+  | "training.session_resumed"
+  | "training.step_progress_recorded"
+  | "training.answer_submitted"
+  | "training.evidence_submitted"
+  | "training.session_submitted";
 
 export interface AuditEventInput {
   organizationId?: string;
