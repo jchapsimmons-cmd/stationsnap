@@ -30,3 +30,26 @@ export const ASSIGNMENT_SKIP_REASON_LABELS: Record<string, string> = {
   location_mismatch: "This employee is not at the SOP's location",
   not_found: "Employee not found",
 };
+
+export const APPROVAL_STATUS_TONE: Record<
+  string,
+  "neutral" | "success" | "warning" | "danger" | "info"
+> = {
+  pending: "warning",
+  approved: "success",
+  rejected: "danger",
+  needs_correction: "info",
+};
+
+export const APPROVAL_STATUS_LABELS: Record<string, string> = {
+  pending: "Awaiting review",
+  approved: "Approved",
+  rejected: "Rejected",
+  needs_correction: "Needs correction",
+};
+
+export const APPROVAL_DECISION_LABELS: Record<string, string> = {
+  approved: "Approved",
+  rejected: "Rejected",
+  needs_correction: "Correction requested",
+};
