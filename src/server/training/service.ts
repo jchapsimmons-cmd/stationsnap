@@ -27,6 +27,10 @@ import {
   loadTrainingConfig,
   loadTrainingQuestions,
 } from "@/server/sops/service";
+import {
+  evaluateAndAwardQualifications,
+  type QualificationAwardOutcome,
+} from "@/server/training/qualifications";
 import type {
   TrainingAssignmentCreateInput,
   TrainingAssignmentQuery,
@@ -1399,6 +1403,7 @@ export async function submitSession(
   const scorePercent = computeScorePercent(computation);
   const needsApproval = assignmentNeedsApproval(computation);
   const now = new Date();
+  let awardOutcomes: QualificationAwardOutcome[] = [];
 
   await getDb().transaction(async (tx) => {
     if (needsApproval) {
@@ -1430,9 +1435,43 @@ export async function submitSession(
           updatedAt: now,
         })
         .where(eq(trainingAssignments.id, assignment.id));
+
+      if (passed) {
+        const [sopVersionRow] = await tx
+          .select({ sopId: sopVersions.sopId })
+          .from(sopVersions)
+          .where(
+            and(
+              eq(sopVersions.id, assignment.sopVersionId),
+              eq(sopVersions.organizationId, session.organizationId),
+            ),
+          )
+          .limit(1);
+        if (sopVersionRow) {
+          awardOutcomes = await evaluateAndAwardQualifications(
+            tx,
+            session.organizationId,
+            assignment.employeeId,
+            sopVersionRow.sopId,
+          );
+        }
+      }
     }
   });
 
   await auditTraining(session, "training.session_submitted", sessionId, requestId);
+  for (const outcome of awardOutcomes) {
+    await writeAuditEvent({
+      organizationId: session.organizationId,
+      locationId: session.locationId,
+      actorKind: "employee",
+      actorId: session.employeeId,
+      action: "qualification.awarded",
+      targetType: "employee_qualification",
+      targetId: outcome.qualificationId,
+      metadata: { definitionId: outcome.definitionId, isNewAward: outcome.isNewAward },
+      requestId,
+    });
+  }
   return getSessionState(session, assignmentId, sessionId);
 }

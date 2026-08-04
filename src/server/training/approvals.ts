@@ -20,6 +20,10 @@ import {
 import { getManagedLocationIds } from "@/server/management/service";
 import { loadTrainingConfig } from "@/server/sops/service";
 import { uploadEmployeeMedia } from "@/server/storage/media-service";
+import {
+  evaluateAndAwardQualifications,
+  type QualificationAwardOutcome,
+} from "@/server/training/qualifications";
 import type {
   ApprovalDecisionInput,
   ApprovalQueueQuery,
@@ -379,6 +383,7 @@ export async function decideApprovalSubmission(
   const config = await loadTrainingConfig(actor.organizationId, context.assignment.sopVersionId);
   const attemptsRemaining = context.session.attemptNumber < config.maxAttempts;
   const now = new Date();
+  let awardOutcomes: QualificationAwardOutcome[] = [];
 
   const decisionId = randomUUID();
   await getDb().transaction(async (tx) => {
@@ -420,6 +425,25 @@ export async function decideApprovalSubmission(
         .update(trainingAssignments)
         .set({ status: "completed", updatedAt: now })
         .where(eq(trainingAssignments.id, context.assignment.id));
+
+      const [sopVersionRow] = await tx
+        .select({ sopId: sopVersions.sopId })
+        .from(sopVersions)
+        .where(
+          and(
+            eq(sopVersions.id, context.assignment.sopVersionId),
+            eq(sopVersions.organizationId, actor.organizationId),
+          ),
+        )
+        .limit(1);
+      if (sopVersionRow) {
+        awardOutcomes = await evaluateAndAwardQualifications(
+          tx,
+          actor.organizationId,
+          context.assignment.employeeId,
+          sopVersionRow.sopId,
+        );
+      }
     } else if (input.decision === "rejected") {
       await bumpSessionRevision(
         tx,
@@ -470,6 +494,19 @@ export async function decideApprovalSubmission(
       targetType: "approval_submission",
       targetId: submissionId,
       metadata: { replacementGeneration: context.submission.submissionGeneration + 1 },
+      requestId,
+    });
+  }
+  for (const outcome of awardOutcomes) {
+    await writeAuditEvent({
+      organizationId: actor.organizationId,
+      locationId: context.assignment.locationId,
+      actorKind: "manager",
+      actorId: actor.managerUserId,
+      action: "qualification.awarded",
+      targetType: "employee_qualification",
+      targetId: outcome.qualificationId,
+      metadata: { definitionId: outcome.definitionId, isNewAward: outcome.isNewAward },
       requestId,
     });
   }

@@ -47,7 +47,11 @@ export type AuditAction =
   | "training.session_submitted"
   | "training.approval_decided"
   | "training.correction_requested"
-  | "training.correction_resubmitted";
+  | "training.correction_resubmitted"
+  | "training_path.created"
+  | "training_path.updated"
+  | "qualification.awarded"
+  | "qualification.revoked";
 
 export interface AuditEventInput {
   organizationId?: string;
