@@ -520,6 +520,39 @@ async function assertPathItemsValid(
   }
 }
 
+/** Published SOPs at a manager's permitted locations, as training-path-item candidates. */
+export async function listPublishedSopsForPathBuilder(actor: ManagerSessionContext) {
+  const managedIds = await getManagedLocationIds(actor);
+  if (managedIds.length === 0) return [];
+  return getDb()
+    .select({
+      id: sops.id,
+      title: sopVersions.title,
+      locationId: sops.locationId,
+      locationName: locations.name,
+    })
+    .from(sops)
+    .innerJoin(
+      sopVersions,
+      and(
+        eq(sopVersions.id, sops.currentVersionId),
+        eq(sopVersions.organizationId, sops.organizationId),
+      ),
+    )
+    .innerJoin(
+      locations,
+      and(eq(locations.id, sops.locationId), eq(locations.organizationId, sops.organizationId)),
+    )
+    .where(
+      and(
+        eq(sops.organizationId, actor.organizationId),
+        inArray(sops.locationId, managedIds),
+        eq(sops.status, "published"),
+      ),
+    )
+    .orderBy(asc(sopVersions.title));
+}
+
 export async function listPaths(actor: ManagerSessionContext, query: TrainingPathQuery) {
   const managedIds = await getManagedLocationIds(actor);
   if (managedIds.length === 0) return [];

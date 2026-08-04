@@ -53,3 +53,51 @@ export const APPROVAL_DECISION_LABELS: Record<string, string> = {
   rejected: "Rejected",
   needs_correction: "Correction requested",
 };
+
+export const TRAINING_PATH_STATUS_TONE: Record<
+  string,
+  "neutral" | "success" | "warning" | "danger" | "info"
+> = {
+  active: "success",
+  disabled: "neutral",
+};
+
+export const TRAINING_PATH_STATUS_LABELS: Record<string, string> = {
+  active: "Active",
+  disabled: "Disabled",
+};
+
+export const VERSION_POLICY_LABELS: Record<string, string> = {
+  current_version: "Current version only",
+  any_passed_version: "Any passed version",
+};
+
+export const QUALIFICATION_CLASSIFICATION_TONE: Record<
+  string,
+  "neutral" | "success" | "warning" | "danger" | "info"
+> = {
+  qualified: "success",
+  training: "info",
+  missing: "neutral",
+  expired: "danger",
+};
+
+export const QUALIFICATION_CLASSIFICATION_LABELS: Record<string, string> = {
+  qualified: "Qualified",
+  training: "In training",
+  missing: "Missing",
+  expired: "Expired",
+};
+
+export const QUALIFICATION_STATUS_TONE: Record<
+  string,
+  "neutral" | "success" | "warning" | "danger" | "info"
+> = {
+  active: "success",
+  revoked: "neutral",
+};
+
+export const QUALIFICATION_STATUS_LABELS: Record<string, string> = {
+  active: "Active",
+  revoked: "Revoked",
+};
