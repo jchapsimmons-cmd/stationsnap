@@ -128,6 +128,9 @@ async function verifyUpgradeMigration(): Promise<void> {
   const pool = new Pool({
     connectionString: `postgresql://${user}:${password}@localhost:${port}/${upgradeDatabase}`,
   });
+  // See the matching comment in src/server/db/client.ts: an unhandled 'error' event on a
+  // pg Pool crashes the process, so every ad-hoc Pool needs its own listener too.
+  pool.on("error", () => undefined);
   try {
     await pool.query(
       await readFile(path.resolve("drizzle", "0000_colossal_sugar_man.sql"), "utf8"),
