@@ -2982,7 +2982,7 @@ async function verifyDatabase(): Promise<void> {
       description: "Quick knife safety comprehension check",
       category: "safety",
       locationId: seedIds.locations.downtown,
-      stationId: seedIds.stations.prep,
+      stationId: seedIds.stations.fry,
       estimatedMinutes: 3,
       difficulty: "beginner",
       coverImageFileId: null,

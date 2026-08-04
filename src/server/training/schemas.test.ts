@@ -28,15 +28,16 @@ describe("Phase 8 training session schemas", () => {
 
   it("rejects a malformed employee or SOP id", () => {
     expect(() =>
-      trainingAssignmentCreateSchema.parse({ employeeId: "not-a-uuid", sopId: crypto.randomUUID() }),
+      trainingAssignmentCreateSchema.parse({
+        employeeId: "not-a-uuid",
+        sopId: crypto.randomUUID(),
+      }),
     ).toThrow();
   });
 
   it("accepts every known step action", () => {
     for (const action of ["viewed", "confirmed", "video_watched", "timer_completed"]) {
-      expect(() =>
-        trainingStepActionSchema.parse({ action, expectedRevision: 1 }),
-      ).not.toThrow();
+      expect(() => trainingStepActionSchema.parse({ action, expectedRevision: 1 })).not.toThrow();
     }
   });
 
