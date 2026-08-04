@@ -18,6 +18,7 @@ import {
   createManagerSession,
   getEmployeeSession,
   getManagerSession,
+  type EmployeeSessionContext,
   type ManagerSessionContext,
 } from "@/server/auth/sessions";
 import { closeDatabase, getDb, getPool } from "@/server/db/client";
@@ -51,8 +52,10 @@ import {
   approvalDecisions,
   approvalSubmissions,
   correctionRequests,
+  employeeQualifications,
   files as filesTable,
   qrScanEvents,
+  qualificationSupportingSessions,
   trainingAssignments,
 } from "@/server/db/schema";
 import {
@@ -106,6 +109,17 @@ import {
   listApprovalQueue,
   resubmitCorrection,
 } from "@/server/training/approvals";
+import {
+  createPath,
+  getPathDetail,
+  getQualificationDetail,
+  getQualificationDetailForEmployee,
+  listPaths,
+  listQualificationsForEmployee,
+  listQualificationsOverview,
+  revokeQualification,
+  updatePath,
+} from "@/server/training/qualifications";
 import { approvalDecisionSchema } from "@/server/training/schemas";
 import {
   assignTraining,
@@ -173,6 +187,119 @@ async function verifyUpgradeMigration(): Promise<void> {
   } finally {
     await pool.end();
   }
+}
+
+/**
+ * Creates and publishes a minimal SOP that auto-passes: one step with no per-step requirements
+ * and no questions, `required`/`learn`/no evidence-approval training. An employee who starts a
+ * session against it can submit immediately (every default step requirement is already
+ * satisfied), which is exactly what the Phase 11 qualification fixtures need — bare completions
+ * to feed the award algorithm without exercising the Phase 8 requirement engine again.
+ */
+async function createMinimalPublishedSop(
+  actor: ManagerSessionContext,
+  title: string,
+  locationId: string,
+  prefix: string,
+) {
+  const draft = await createSop(
+    actor,
+    {
+      title,
+      description: `${title} minimal auto-pass fixture`,
+      category: "general_procedure",
+      locationId,
+      stationId: null,
+      estimatedMinutes: 5,
+      difficulty: "beginner",
+      coverImageFileId: null,
+      sourceVideoFileId: null,
+      materials: [],
+      warnings: [],
+    },
+    `${prefix}-sop-create`,
+  );
+  const stepDraft = await createStep(
+    actor,
+    draft.id,
+    {
+      title: "Complete the procedure",
+      instruction: `Complete ${title}.`,
+      imageFileId: null,
+      videoFileId: null,
+      warning: "",
+      quantity: "",
+      unit: "",
+      equipmentSetting: "",
+      timerSeconds: null,
+      isRequired: true,
+      expectedRevision: draft.version.revision,
+    },
+    `${prefix}-step-create`,
+  );
+  const config = await updateTrainingConfig(
+    actor,
+    draft.id,
+    {
+      requirementState: "required",
+      defaultMode: "learn",
+      allowBacktracking: true,
+      requireSequentialProgress: true,
+      requireFullVideoWatch: false,
+      requireEvidenceApproval: false,
+      passingScorePercent: 80,
+      maxAttempts: 3,
+      qualificationValidityDays: null,
+      retrainingGraceDays: null,
+      expectedRevision: stepDraft.version.revision,
+    },
+    `${prefix}-config-save`,
+  );
+  const published = await publishSop(
+    actor,
+    draft.id,
+    { expectedRevision: config.revision, changeSummary: "", retrainingRule: { type: "none" } },
+    `${prefix}-publish`,
+  );
+  if (published.status !== "published" || !published.currentVersionId) {
+    throw new Error(`Publishing the "${title}" Phase 11 fixture did not succeed`);
+  }
+  return published;
+}
+
+/** Starts and immediately submits a session against a `createMinimalPublishedSop` assignment. */
+async function completeMinimalAssignment(
+  session: EmployeeSessionContext,
+  assignmentId: string,
+  prefix: string,
+) {
+  const started = await startOrResumeSession(session, assignmentId, `${prefix}-start`);
+  const submitted = await submitSession(
+    session,
+    assignmentId,
+    started.id,
+    started.revision,
+    `${prefix}-submit`,
+  );
+  if (submitted.status !== "passed") {
+    throw new Error(`The "${prefix}" Phase 11 fixture assignment did not pass`);
+  }
+  return submitted;
+}
+
+/** Logs an employee in by number/PIN, used to build fresh employee sessions for Phase 11 fixtures. */
+async function loginNewEmployee(
+  employeeNumber: string,
+  pin: string,
+  prefix: string,
+): Promise<EmployeeSessionContext> {
+  const login = await loginEmployee(
+    { organizationSlug: "stationsnap-demo", locationSlug: "downtown", employeeNumber, pin },
+    { ipHash: `verify-ip-${prefix}`, requestId: `verify-${prefix}-login` },
+  );
+  const context = await getEmployeeSession(login.token);
+  if (!context) throw new Error(`The "${prefix}" Phase 11 employee session verification failed`);
+  return context;
 }
 
 async function verifyDatabase(): Promise<void> {
@@ -3948,6 +4075,650 @@ async function verifyDatabase(): Promise<void> {
     throw new Error("A rejection did not record its manager, note, and decision permanently");
   }
 
+  // --- Phase 11: ordered training paths and qualification lifecycle ---
+
+  const pathSopA = await createMinimalPublishedSop(
+    managerContext,
+    "Grill Safety Basics",
+    seedIds.locations.downtown,
+    "verify-phase11-sop-a",
+  );
+  const pathSopB = await createMinimalPublishedSop(
+    managerContext,
+    "Grill Safety Advanced",
+    seedIds.locations.downtown,
+    "verify-phase11-sop-b",
+  );
+
+  let unauthorizedPathCreateRejected = false;
+  try {
+    await createPath(
+      riversideManagerContext,
+      {
+        title: "Grill Certification",
+        description: "",
+        locationId: seedIds.locations.downtown,
+        stationId: null,
+        enforceOrder: true,
+        status: "active",
+        definition: { name: "Grill Certified", description: "", defaultValidityDays: 90 },
+        items: [
+          { sopId: pathSopA.id, isRequired: true, versionPolicy: "current_version" },
+          { sopId: pathSopB.id, isRequired: true, versionPolicy: "any_passed_version" },
+        ],
+      },
+      "verify-phase11-path-create-unauthorized-rejected",
+    );
+  } catch {
+    unauthorizedPathCreateRejected = true;
+  }
+  if (!unauthorizedPathCreateRejected) {
+    throw new Error("A manager without access to the location created a training path");
+  }
+
+  const unpublishedDraft = await createSop(
+    managerContext,
+    {
+      title: "Still A Draft",
+      description: "",
+      category: "general_procedure",
+      locationId: seedIds.locations.downtown,
+      stationId: null,
+      estimatedMinutes: 5,
+      difficulty: "beginner",
+      coverImageFileId: null,
+      sourceVideoFileId: null,
+      materials: [],
+      warnings: [],
+    },
+    "verify-phase11-unpublished-sop-create",
+  );
+  let unpublishedItemRejected = false;
+  try {
+    await createPath(
+      managerContext,
+      {
+        title: "Invalid Path Unpublished",
+        description: "",
+        locationId: seedIds.locations.downtown,
+        stationId: null,
+        enforceOrder: true,
+        status: "active",
+        definition: { name: "Invalid Unpublished", description: "", defaultValidityDays: null },
+        items: [{ sopId: unpublishedDraft.id, isRequired: true, versionPolicy: "current_version" }],
+      },
+      "verify-phase11-path-create-unpublished-rejected",
+    );
+  } catch {
+    unpublishedItemRejected = true;
+  }
+  if (!unpublishedItemRejected) {
+    throw new Error("A training path accepted an unpublished SOP as an item");
+  }
+
+  let wrongLocationItemRejected = false;
+  try {
+    await createPath(
+      managerContext,
+      {
+        title: "Invalid Path Wrong Location",
+        description: "",
+        locationId: seedIds.locations.riverside,
+        stationId: null,
+        enforceOrder: true,
+        status: "active",
+        definition: { name: "Invalid Wrong Location", description: "", defaultValidityDays: null },
+        items: [{ sopId: pathSopA.id, isRequired: true, versionPolicy: "current_version" }],
+      },
+      "verify-phase11-path-create-wrong-location-rejected",
+    );
+  } catch {
+    wrongLocationItemRejected = true;
+  }
+  if (!wrongLocationItemRejected) {
+    throw new Error("A training path accepted an SOP from another location as an item");
+  }
+
+  const grillPath = await createPath(
+    managerContext,
+    {
+      title: "Grill Certification",
+      description: "Two-step grill certification path",
+      locationId: seedIds.locations.downtown,
+      stationId: null,
+      enforceOrder: true,
+      status: "active",
+      definition: { name: "Grill Certified", description: "", defaultValidityDays: 90 },
+      items: [
+        { sopId: pathSopA.id, isRequired: true, versionPolicy: "current_version" },
+        { sopId: pathSopB.id, isRequired: true, versionPolicy: "any_passed_version" },
+      ],
+    },
+    "verify-phase11-path-create",
+  );
+  if (
+    grillPath.enforceOrder !== true ||
+    grillPath.items.length !== 2 ||
+    grillPath.items[0]?.sopId !== pathSopA.id ||
+    grillPath.items[0]?.displayOrder !== 1 ||
+    grillPath.items[1]?.sopId !== pathSopB.id ||
+    grillPath.items[1]?.displayOrder !== 2 ||
+    grillPath.definition.defaultValidityDays !== 90
+  ) {
+    throw new Error("Creating a training path did not persist its ordered items and definition");
+  }
+
+  const foreignPaths = await listPaths(riversideManagerContext, { locationId: "", status: "" });
+  if (foreignPaths.some((row) => row.id === grillPath.id)) {
+    throw new Error("A manager saw a training path outside their permitted locations");
+  }
+  let foreignPathDetailRejected = false;
+  try {
+    await getPathDetail(riversideManagerContext, grillPath.id);
+  } catch {
+    foreignPathDetailRejected = true;
+  }
+  if (!foreignPathDetailRejected) {
+    throw new Error("A manager opened a training path outside their permitted locations");
+  }
+
+  // Completing the required items out of order must never award the qualification, even once
+  // every item individually has a passing completion.
+  const outOfOrderAssignA = await assignTraining(
+    managerContext,
+    { sopId: pathSopA.id, target: { type: "employees", employeeIds: [employeeSeed[0].id] } },
+    "verify-phase11-outoforder-assign-a",
+  );
+  const outOfOrderAssignB = await assignTraining(
+    managerContext,
+    { sopId: pathSopB.id, target: { type: "employees", employeeIds: [employeeSeed[0].id] } },
+    "verify-phase11-outoforder-assign-b",
+  );
+  const outOfOrderAssignmentA = outOfOrderAssignA.created[0];
+  const outOfOrderAssignmentB = outOfOrderAssignB.created[0];
+  if (!outOfOrderAssignmentA || !outOfOrderAssignmentB) {
+    throw new Error("The out-of-order Phase 11 fixture assignments were not created");
+  }
+  await completeMinimalAssignment(
+    employeeContext,
+    outOfOrderAssignmentB.id,
+    "verify-phase11-outoforder-complete-b-first",
+  );
+  await completeMinimalAssignment(
+    employeeContext,
+    outOfOrderAssignmentA.id,
+    "verify-phase11-outoforder-complete-a-second",
+  );
+  const outOfOrderQualifications = await getDb()
+    .select()
+    .from(employeeQualifications)
+    .where(eq(employeeQualifications.employeeId, employeeSeed[0].id));
+  if (outOfOrderQualifications.length !== 0) {
+    throw new Error(
+      "An ordered path awarded a qualification despite its required items completing out of order",
+    );
+  }
+
+  // Completing the same required items in order awards the qualification, with expiresAt derived
+  // from the definition's defaultValidityDays.
+  const inOrderAssignA = await assignTraining(
+    managerContext,
+    { sopId: pathSopA.id, target: { type: "employees", employeeIds: [employeeSeed[1].id] } },
+    "verify-phase11-inorder-assign-a",
+  );
+  const inOrderAssignB = await assignTraining(
+    managerContext,
+    { sopId: pathSopB.id, target: { type: "employees", employeeIds: [employeeSeed[1].id] } },
+    "verify-phase11-inorder-assign-b",
+  );
+  const inOrderAssignmentA = inOrderAssignA.created[0];
+  const inOrderAssignmentB = inOrderAssignB.created[0];
+  if (!inOrderAssignmentA || !inOrderAssignmentB) {
+    throw new Error("The in-order Phase 11 fixture assignments were not created");
+  }
+  const inOrderCompletedA = await completeMinimalAssignment(
+    secondEmployeeContext,
+    inOrderAssignmentA.id,
+    "verify-phase11-inorder-complete-a",
+  );
+  const inOrderCompletedB = await completeMinimalAssignment(
+    secondEmployeeContext,
+    inOrderAssignmentB.id,
+    "verify-phase11-inorder-complete-b",
+  );
+
+  const [luisQualification] = await getDb()
+    .select()
+    .from(employeeQualifications)
+    .where(eq(employeeQualifications.employeeId, employeeSeed[1].id));
+  if (!luisQualification || luisQualification.status !== "active") {
+    throw new Error(
+      "Completing an ordered path's required items in order did not award a qualification",
+    );
+  }
+  const expectedExpiresAt = new Date(
+    luisQualification.awardedAt.getTime() + 90 * 24 * 60 * 60 * 1000,
+  );
+  if (
+    !luisQualification.expiresAt ||
+    Math.abs(luisQualification.expiresAt.getTime() - expectedExpiresAt.getTime()) > 1_000
+  ) {
+    throw new Error(
+      "The awarded qualification's expiresAt was not derived from defaultValidityDays",
+    );
+  }
+  const luisSupportingSessions = await getDb()
+    .select()
+    .from(qualificationSupportingSessions)
+    .where(eq(qualificationSupportingSessions.qualificationId, luisQualification.id));
+  if (luisSupportingSessions.length !== 2) {
+    throw new Error(
+      "The awarded qualification did not link exactly one supporting session per required item",
+    );
+  }
+
+  // Renewal: republishing the second SOP and passing the new version (the item's policy is
+  // any_passed_version) must update the same still-active episode in place — new awardedAt and
+  // expiresAt, and its supporting sessions replaced rather than duplicated — never a second row.
+  const pathSopBDraft = await createDraftFromCurrentVersion(
+    managerContext,
+    pathSopB.id,
+    "verify-phase11-sopb-draft",
+  );
+  const pathSopBRepublished = await publishSop(
+    managerContext,
+    pathSopB.id,
+    {
+      expectedRevision: pathSopBDraft.version.revision,
+      changeSummary: "Refreshed the grill advanced procedure wording.",
+      retrainingRule: { type: "none" },
+    },
+    "verify-phase11-sopb-v2-publish",
+  );
+  if (
+    pathSopBRepublished.currentVersionId === null ||
+    pathSopBRepublished.currentVersionId === pathSopB.currentVersionId
+  ) {
+    throw new Error("Republishing the Phase 11 fixture SOP did not produce a new current version");
+  }
+  const renewAssignResult = await assignTraining(
+    managerContext,
+    { sopId: pathSopB.id, target: { type: "employees", employeeIds: [employeeSeed[1].id] } },
+    "verify-phase11-renew-assign",
+  );
+  const renewAssignment = renewAssignResult.created[0];
+  if (!renewAssignment) throw new Error("The renewal Phase 11 fixture assignment was not created");
+  const renewCompleted = await completeMinimalAssignment(
+    secondEmployeeContext,
+    renewAssignment.id,
+    "verify-phase11-renew-complete",
+  );
+
+  const allLuisQualifications = await getDb()
+    .select()
+    .from(employeeQualifications)
+    .where(eq(employeeQualifications.employeeId, employeeSeed[1].id));
+  if (allLuisQualifications.length !== 1 || allLuisQualifications[0]?.id !== luisQualification.id) {
+    throw new Error(
+      "Renewal opened a new qualification episode instead of updating the existing active one",
+    );
+  }
+  if (allLuisQualifications[0]!.awardedAt.getTime() <= luisQualification.awardedAt.getTime()) {
+    throw new Error("Renewal did not advance the qualification's awardedAt");
+  }
+  const luisSupportingSessionsAfterRenewal = await getDb()
+    .select()
+    .from(qualificationSupportingSessions)
+    .where(eq(qualificationSupportingSessions.qualificationId, luisQualification.id));
+  const renewedSessionIds = new Set(luisSupportingSessionsAfterRenewal.map((row) => row.sessionId));
+  if (
+    luisSupportingSessionsAfterRenewal.length !== 2 ||
+    !renewedSessionIds.has(inOrderCompletedA.id) ||
+    !renewedSessionIds.has(renewCompleted.id) ||
+    renewedSessionIds.has(inOrderCompletedB.id)
+  ) {
+    throw new Error(
+      "Renewal did not replace exactly the superseded item's supporting session while keeping the other",
+    );
+  }
+
+  // Overview classification: training (assigned but not completed), missing (no assignment or
+  // episode), qualified/expiring (an active episode within/outside the 30-day window), and
+  // expired (an active-status episode whose expiry has passed).
+  const trainingTabAssign = await assignTraining(
+    managerContext,
+    { sopId: pathSopA.id, target: { type: "employees", employeeIds: [employeeSeed[2].id] } },
+    "verify-phase11-training-tab-assign",
+  );
+  if (trainingTabAssign.created.length !== 1) {
+    throw new Error("The training-tab Phase 11 fixture assignment was not created");
+  }
+
+  const missingTabEmployee = await createEmployee(managerContext, {
+    primaryLocationId: seedIds.locations.downtown,
+    employeeNumber: "9101",
+    displayName: "Riley Missing",
+    jobRole: "Dishwasher",
+    language: "en",
+    pin: "9101",
+    status: "active",
+  });
+
+  const expiringSoonEmployee = await createEmployee(managerContext, {
+    primaryLocationId: seedIds.locations.downtown,
+    employeeNumber: "9102",
+    displayName: "Sam Soon",
+    jobRole: "Cook",
+    language: "en",
+    pin: "9102",
+    status: "active",
+  });
+  const expiringAssignA = await assignTraining(
+    managerContext,
+    { sopId: pathSopA.id, target: { type: "employees", employeeIds: [expiringSoonEmployee.id] } },
+    "verify-phase11-expiring-assign-a",
+  );
+  const expiringAssignB = await assignTraining(
+    managerContext,
+    { sopId: pathSopB.id, target: { type: "employees", employeeIds: [expiringSoonEmployee.id] } },
+    "verify-phase11-expiring-assign-b",
+  );
+  const expiringAssignmentA = expiringAssignA.created[0];
+  const expiringAssignmentB = expiringAssignB.created[0];
+  if (!expiringAssignmentA || !expiringAssignmentB) {
+    throw new Error("The expiring-soon Phase 11 fixture assignments were not created");
+  }
+  const samContext = await loginNewEmployee("9102", "9102", "phase11-sam");
+  await completeMinimalAssignment(
+    samContext,
+    expiringAssignmentA.id,
+    "verify-phase11-expiring-complete-a",
+  );
+  await completeMinimalAssignment(
+    samContext,
+    expiringAssignmentB.id,
+    "verify-phase11-expiring-complete-b",
+  );
+  const [samQualification] = await getDb()
+    .select()
+    .from(employeeQualifications)
+    .where(eq(employeeQualifications.employeeId, expiringSoonEmployee.id));
+  if (!samQualification) throw new Error("Sam's in-order completion did not award a qualification");
+  // Simulate the passage of time: move this episode's expiry into the 30-day "expiring soon" window.
+  await getDb()
+    .update(employeeQualifications)
+    .set({ expiresAt: new Date(Date.now() + 10 * 24 * 60 * 60 * 1000) })
+    .where(eq(employeeQualifications.id, samQualification.id));
+
+  const lapsedEmployee = await createEmployee(managerContext, {
+    primaryLocationId: seedIds.locations.downtown,
+    employeeNumber: "9103",
+    displayName: "Jamie Lapsed",
+    jobRole: "Cook",
+    language: "en",
+    pin: "9103",
+    status: "active",
+  });
+  const lapsedAssignA = await assignTraining(
+    managerContext,
+    { sopId: pathSopA.id, target: { type: "employees", employeeIds: [lapsedEmployee.id] } },
+    "verify-phase11-lapsed-assign-a",
+  );
+  const lapsedAssignB = await assignTraining(
+    managerContext,
+    { sopId: pathSopB.id, target: { type: "employees", employeeIds: [lapsedEmployee.id] } },
+    "verify-phase11-lapsed-assign-b",
+  );
+  const lapsedAssignmentA = lapsedAssignA.created[0];
+  const lapsedAssignmentB = lapsedAssignB.created[0];
+  if (!lapsedAssignmentA || !lapsedAssignmentB) {
+    throw new Error("The lapsed Phase 11 fixture assignments were not created");
+  }
+  const jamieContext = await loginNewEmployee("9103", "9103", "phase11-jamie");
+  await completeMinimalAssignment(
+    jamieContext,
+    lapsedAssignmentA.id,
+    "verify-phase11-lapsed-complete-a",
+  );
+  await completeMinimalAssignment(
+    jamieContext,
+    lapsedAssignmentB.id,
+    "verify-phase11-lapsed-complete-b",
+  );
+  const [jamieQualification] = await getDb()
+    .select()
+    .from(employeeQualifications)
+    .where(eq(employeeQualifications.employeeId, lapsedEmployee.id));
+  if (!jamieQualification) {
+    throw new Error("Jamie's in-order completion did not award a qualification");
+  }
+  await getDb()
+    .update(employeeQualifications)
+    .set({ expiresAt: new Date(Date.now() - 24 * 60 * 60 * 1000) })
+    .where(eq(employeeQualifications.id, jamieQualification.id));
+
+  const overviewAll = await listQualificationsOverview(managerContext, {
+    locationId: seedIds.locations.downtown,
+    tab: "",
+  });
+  const findOverviewRow = (employeeId: string) =>
+    overviewAll.find(
+      (row) => row.employeeId === employeeId && row.definitionId === grillPath.definition.id,
+    );
+  const mayaRow = findOverviewRow(employeeSeed[0].id);
+  if (!mayaRow || mayaRow.classification !== "missing") {
+    throw new Error(
+      "The overview did not classify the out-of-order employee as missing (no episode, no non-terminal assignment)",
+    );
+  }
+  const luisRow = findOverviewRow(employeeSeed[1].id);
+  if (!luisRow || luisRow.classification !== "qualified" || luisRow.isExpiringSoon) {
+    throw new Error("The overview did not classify the renewed employee as qualified");
+  }
+  const taylorRow = findOverviewRow(employeeSeed[2].id);
+  if (!taylorRow || taylorRow.classification !== "training") {
+    throw new Error("The overview did not classify the in-progress employee as training");
+  }
+  const rileyRow = findOverviewRow(missingTabEmployee.id);
+  if (!rileyRow || rileyRow.classification !== "missing") {
+    throw new Error("The overview did not classify the untouched employee as missing");
+  }
+  const samRow = findOverviewRow(expiringSoonEmployee.id);
+  if (!samRow || samRow.classification !== "qualified" || !samRow.isExpiringSoon) {
+    throw new Error(
+      "The overview did not classify the near-expiry employee as qualified and expiring soon",
+    );
+  }
+  const jamieRow = findOverviewRow(lapsedEmployee.id);
+  if (!jamieRow || jamieRow.classification !== "expired") {
+    throw new Error("The overview did not classify the lapsed employee as expired");
+  }
+  const expiringTabOnly = await listQualificationsOverview(managerContext, {
+    locationId: seedIds.locations.downtown,
+    tab: "expiring",
+  });
+  if (
+    !expiringTabOnly.some((row) => row.employeeId === expiringSoonEmployee.id) ||
+    expiringTabOnly.some((row) => row.employeeId === lapsedEmployee.id)
+  ) {
+    throw new Error("The expiring tab did not select exactly the near-expiry employee");
+  }
+
+  const luisSections = await listQualificationsForEmployee(secondEmployeeContext);
+  if (!luisSections.earned.some((row) => row.definitionId === grillPath.definition.id)) {
+    throw new Error("The employee qualification view did not list the earned qualification");
+  }
+  const samSections = await listQualificationsForEmployee(samContext);
+  if (!samSections.expiring.some((row) => row.definitionId === grillPath.definition.id)) {
+    throw new Error(
+      "The employee qualification view did not list the near-expiry qualification as expiring",
+    );
+  }
+  const taylorContext = await loginNewEmployee(
+    employeeSeed[2].employeeNumber,
+    employeePin,
+    "phase11-taylor",
+  );
+  const taylorSections = await listQualificationsForEmployee(taylorContext);
+  if (!taylorSections.inProgress.some((row) => row.definitionId === grillPath.definition.id)) {
+    throw new Error("The employee qualification view did not list the in-progress path");
+  }
+
+  let foreignEmployeeQualificationRejected = false;
+  try {
+    await getQualificationDetailForEmployee(employeeContext, luisQualification.id);
+  } catch {
+    foreignEmployeeQualificationRejected = true;
+  }
+  if (!foreignEmployeeQualificationRejected) {
+    throw new Error("An employee viewed another employee's qualification detail");
+  }
+  const luisOwnDetail = await getQualificationDetailForEmployee(
+    secondEmployeeContext,
+    luisQualification.id,
+  );
+  if (luisOwnDetail.id !== luisQualification.id || luisOwnDetail.supportingSessions.length !== 2) {
+    throw new Error("An employee could not view their own qualification detail");
+  }
+
+  // Revocation: permanent, rejects a second attempt, and its history remains readable.
+  let unauthorizedRevokeRejected = false;
+  try {
+    await revokeQualification(
+      riversideManagerContext,
+      samQualification.id,
+      "",
+      "verify-phase11-revoke-unauthorized-rejected",
+    );
+  } catch {
+    unauthorizedRevokeRejected = true;
+  }
+  if (!unauthorizedRevokeRejected) {
+    throw new Error("A manager without access to the location revoked a qualification");
+  }
+
+  const revokeNote = "Employee transferred to a different role.";
+  const revoked = await revokeQualification(
+    managerContext,
+    samQualification.id,
+    revokeNote,
+    "verify-phase11-revoke",
+  );
+  if (
+    revoked.status !== "revoked" ||
+    revoked.revokedNote !== revokeNote ||
+    revoked.revokedByManagerUserId !== managerContext.managerUserId
+  ) {
+    throw new Error(
+      "Revoking a qualification did not persist its status, note, and revoking manager",
+    );
+  }
+
+  let doubleQualificationRevokeRejected = false;
+  try {
+    await revokeQualification(
+      managerContext,
+      samQualification.id,
+      "",
+      "verify-phase11-revoke-double-rejected",
+    );
+  } catch {
+    doubleQualificationRevokeRejected = true;
+  }
+  if (!doubleQualificationRevokeRejected) {
+    throw new Error("An already-revoked qualification was revoked a second time");
+  }
+
+  const revokedHistory = await getQualificationDetail(managerContext, samQualification.id);
+  if (revokedHistory.status !== "revoked" || revokedHistory.canRevoke) {
+    throw new Error(
+      "A revoked qualification's history was not readable, or it falsely reported as revocable",
+    );
+  }
+  const overviewAfterRevoke = await listQualificationsOverview(managerContext, {
+    locationId: seedIds.locations.downtown,
+    tab: "",
+  });
+  const samRowAfterRevoke = overviewAfterRevoke.find(
+    (row) =>
+      row.employeeId === expiringSoonEmployee.id && row.definitionId === grillPath.definition.id,
+  );
+  if (!samRowAfterRevoke || samRowAfterRevoke.classification !== "missing") {
+    throw new Error("The overview did not reclassify a revoked employee as missing");
+  }
+
+  // Archiving a path (status: disabled) disables its 1:1 definition too, and stops the award
+  // algorithm from ever awarding it again, even when every required item still passes.
+  const archivedPath = await updatePath(
+    managerContext,
+    grillPath.id,
+    {
+      title: grillPath.title,
+      description: grillPath.description,
+      enforceOrder: grillPath.enforceOrder,
+      status: "disabled",
+      definition: {
+        name: grillPath.definition.name,
+        description: grillPath.definition.description,
+        defaultValidityDays: grillPath.definition.defaultValidityDays,
+      },
+      items: grillPath.items.map((item) => ({
+        sopId: item.sopId,
+        isRequired: item.isRequired,
+        versionPolicy: item.versionPolicy,
+      })),
+    },
+    "verify-phase11-path-archive",
+  );
+  if (archivedPath.status !== "disabled" || archivedPath.definition.status !== "disabled") {
+    throw new Error("Archiving a training path did not disable it and its 1:1 definition together");
+  }
+
+  const archivedEmployee = await createEmployee(managerContext, {
+    primaryLocationId: seedIds.locations.downtown,
+    employeeNumber: "9104",
+    displayName: "Devon Archived",
+    jobRole: "Cook",
+    language: "en",
+    pin: "9104",
+    status: "active",
+  });
+  const archivedAssignA = await assignTraining(
+    managerContext,
+    { sopId: pathSopA.id, target: { type: "employees", employeeIds: [archivedEmployee.id] } },
+    "verify-phase11-archived-assign-a",
+  );
+  const archivedAssignB = await assignTraining(
+    managerContext,
+    { sopId: pathSopB.id, target: { type: "employees", employeeIds: [archivedEmployee.id] } },
+    "verify-phase11-archived-assign-b",
+  );
+  const archivedAssignmentA = archivedAssignA.created[0];
+  const archivedAssignmentB = archivedAssignB.created[0];
+  if (!archivedAssignmentA || !archivedAssignmentB) {
+    throw new Error("The archived-path Phase 11 fixture assignments were not created");
+  }
+  const devonContext = await loginNewEmployee("9104", "9104", "phase11-devon");
+  await completeMinimalAssignment(
+    devonContext,
+    archivedAssignmentA.id,
+    "verify-phase11-archived-complete-a",
+  );
+  await completeMinimalAssignment(
+    devonContext,
+    archivedAssignmentB.id,
+    "verify-phase11-archived-complete-b",
+  );
+  const devonQualifications = await getDb()
+    .select()
+    .from(employeeQualifications)
+    .where(eq(employeeQualifications.employeeId, archivedEmployee.id));
+  if (devonQualifications.length !== 0) {
+    throw new Error(
+      "Completing every required item on an archived path still awarded a qualification",
+    );
+  }
+
   const actions = new Set(
     (await getDb().select({ action: auditEvents.action }).from(auditEvents)).map(
       (event) => event.action,
@@ -3991,6 +4762,10 @@ async function verifyDatabase(): Promise<void> {
     "training.approval_decided",
     "training.correction_requested",
     "training.correction_resubmitted",
+    "training_path.created",
+    "training_path.updated",
+    "qualification.awarded",
+    "qualification.revoked",
   ];
   if (requiredAuditActions.some((action) => !actions.has(action))) {
     throw new Error(
@@ -4001,7 +4776,7 @@ async function verifyDatabase(): Promise<void> {
   await verifyUpgradeMigration();
 
   process.stdout.write(
-    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, migrationConcurrencyLock: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true, employeeStationReader: true, employeeSopReader: true, employeeCategoryLibrary: true, employeeRecentViews: true, employeeMediaAuthorization: true, qrCreationAndTargetValidation: true, qrLocationScoping: true, qrRevocation: true, qrRotation: true, qrScanResolution: true, qrUnavailableTarget: true, qrEnumerationRateLimit: true, trainingConfigDefaultsAndScoping: true, trainingConfigStaleWriteRejection: true, trainingStepRequirementGuards: true, trainingQuestionCrudAndReorder: true, trainingPublishReadinessRules: true, trainingPublishedImmutability: true, trainingDraftCloning: true, trainingAssignmentCreationAndScoping: true, trainingSessionStartAndResume: true, trainingSequentialStepEnforcement: true, trainingWatchTimerQuestionEvidenceEnforcement: true, trainingDuplicateActionRejection: true, trainingScoringAndApprovalRouting: true, trainingSubmitIdempotency: true, trainingAttemptLimitsAndRetraining: true, bulkAssignmentAuthorizationScoping: true, bulkAssignmentByEmployeeListWithDueDate: true, bulkAssignmentByJobRole: true, bulkAssignmentByLocation: true, bulkAssignmentIndependentDuplicateSkip: true, approvalQueueLocationScoping: true, approvalEvidenceAuthorization: true, approvalDecisionNoteRules: true, approvalApprovedDecision: true, approvalRejectedDecision: true, approvalCorrectionRequest: true, approvalDecisionImmutability: true, correctionOwnershipEnforcement: true, correctionAppendOnlyEvidence: true, correctionResubmitIdempotency: true, approvalDecisionHistoryRetention: true })}\n`,
+    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, migrationConcurrencyLock: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true, employeeStationReader: true, employeeSopReader: true, employeeCategoryLibrary: true, employeeRecentViews: true, employeeMediaAuthorization: true, qrCreationAndTargetValidation: true, qrLocationScoping: true, qrRevocation: true, qrRotation: true, qrScanResolution: true, qrUnavailableTarget: true, qrEnumerationRateLimit: true, trainingConfigDefaultsAndScoping: true, trainingConfigStaleWriteRejection: true, trainingStepRequirementGuards: true, trainingQuestionCrudAndReorder: true, trainingPublishReadinessRules: true, trainingPublishedImmutability: true, trainingDraftCloning: true, trainingAssignmentCreationAndScoping: true, trainingSessionStartAndResume: true, trainingSequentialStepEnforcement: true, trainingWatchTimerQuestionEvidenceEnforcement: true, trainingDuplicateActionRejection: true, trainingScoringAndApprovalRouting: true, trainingSubmitIdempotency: true, trainingAttemptLimitsAndRetraining: true, bulkAssignmentAuthorizationScoping: true, bulkAssignmentByEmployeeListWithDueDate: true, bulkAssignmentByJobRole: true, bulkAssignmentByLocation: true, bulkAssignmentIndependentDuplicateSkip: true, approvalQueueLocationScoping: true, approvalEvidenceAuthorization: true, approvalDecisionNoteRules: true, approvalApprovedDecision: true, approvalRejectedDecision: true, approvalCorrectionRequest: true, approvalDecisionImmutability: true, correctionOwnershipEnforcement: true, correctionAppendOnlyEvidence: true, correctionResubmitIdempotency: true, approvalDecisionHistoryRetention: true, trainingPathAuthorizationScoping: true, trainingPathItemValidation: true, trainingPathOrderedBlocking: true, qualificationAward: true, qualificationRenewal: true, qualificationOverviewClassification: true, qualificationEmployeeView: true, qualificationRevocation: true, trainingPathArchiveStopsAwards: true })}\n`,
   );
 }
 
