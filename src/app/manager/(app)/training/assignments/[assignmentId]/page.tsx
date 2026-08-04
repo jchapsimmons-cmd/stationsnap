@@ -76,7 +76,15 @@ export default async function ManagerTrainingAssignmentDetailPage({
 
       {assignment.latestSession && (
         <Card>
-          <h2>Latest attempt</h2>
+          <div className="action-row">
+            <h2>Latest attempt</h2>
+            <Link
+              className="button button--secondary"
+              href={`/manager/print/training/${assignment.latestSession.id}`}
+            >
+              Print
+            </Link>
+          </div>
           <div className="detail-grid">
             <div>
               <p className="eyebrow">Attempt number</p>

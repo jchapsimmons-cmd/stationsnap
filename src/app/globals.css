@@ -982,6 +982,34 @@ h2 {
 .qr-print-card__url code {
   word-break: break-all;
 }
+.print-sheet__section {
+  display: grid;
+  gap: var(--space-2);
+}
+.print-sheet__steps {
+  display: grid;
+  gap: var(--space-4);
+  list-style: none;
+  padding: 0;
+}
+.print-sheet__step {
+  border-top: 1px solid var(--color-border);
+  padding-top: var(--space-3);
+}
+.print-sheet__step-title {
+  font-weight: 700;
+  margin-bottom: var(--space-1);
+}
+.print-sheet__step-image {
+  max-width: 16rem;
+  width: 100%;
+  height: auto;
+  border-radius: var(--radius-md);
+  margin: var(--space-2) 0;
+}
+.print-sheet__step-warning {
+  color: var(--color-danger);
+}
 @media print {
   .app-bar,
   .side-nav,
@@ -992,6 +1020,22 @@ h2 {
   }
   .app-content {
     padding: 0;
+  }
+  /* A `.print-sheet` page's header carries the printed record's own title, unlike every other
+     manager page where the header is app chrome — restore it, then hide only its Print/PDF
+     action buttons, which have no meaning on paper. */
+  .print-sheet .page-header {
+    display: flex !important;
+  }
+  .print-sheet .page-header__actions {
+    display: none !important;
+  }
+  .print-sheet .print-sheet__step {
+    break-inside: avoid;
+  }
+  .print-sheet .card {
+    box-shadow: none;
+    border: none;
   }
 }
 .checkbox-list {

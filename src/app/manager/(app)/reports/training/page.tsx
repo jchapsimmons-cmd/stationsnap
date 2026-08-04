@@ -50,6 +50,14 @@ export default async function TrainingProgressReportPage({
       <PageHeader
         title="Training progress"
         description="Assignment status across employees and SOPs, newest first."
+        actions={
+          <a
+            className="button button--secondary"
+            href={`/api/management/reports/training/export${buildQueryString(raw, {})}`}
+          >
+            Export CSV
+          </a>
+        }
       />
       <form className="filter-bar" action="/manager/reports/training">
         <label>

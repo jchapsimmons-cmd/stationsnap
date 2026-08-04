@@ -34,9 +34,14 @@ export default async function ManagerChecklistRunReviewPage({
         title={detail.employeeName}
         description={`${detail.checklistTitle} · ${CHECKLIST_TYPE_LABELS[detail.checklistType] ?? detail.checklistType} · ${detail.locationName}`}
         actions={
-          <Link className="button button--secondary" href="/manager/checklist-runs">
-            Back to runs
-          </Link>
+          <div className="action-row">
+            <Link className="button button--secondary" href={`/manager/print/checklists/${runId}`}>
+              Print
+            </Link>
+            <Link className="button button--secondary" href="/manager/checklist-runs">
+              Back to runs
+            </Link>
+          </div>
         }
       />
 

@@ -8,9 +8,11 @@ import type { EmployeeSessionContext, ManagerSessionContext } from "@/server/aut
 import { getDb } from "@/server/db/client";
 import { writeDomainEvent } from "@/server/events";
 import {
+  approvalDecisions,
   approvalSubmissions,
   employees,
   locations,
+  managerUsers,
   sops,
   sopSteps,
   sopVersions,
@@ -802,6 +804,148 @@ export async function getManagerAssignmentDetail(
           scorePercent: latestSession.scorePercent,
         }
       : null,
+  };
+}
+
+/**
+ * The permission-aware print/PDF record for `/manager/print/training/[sessionId]` (Phase 15):
+ * one attempt, its quiz summary, every evidence item it ever produced, and the most recent
+ * approval decision against it, if any. Scoped through the assignment's own location exactly
+ * like `getManagerAssignmentDetail` and the approval queue — never through a client-supplied
+ * location claim.
+ */
+export async function getTrainingSessionForPrint(actor: ManagerSessionContext, sessionId: string) {
+  const [row] = await getDb()
+    .select({
+      session: trainingSessions,
+      assignment: trainingAssignments,
+      employeeName: employees.displayName,
+      employeeNumber: employees.employeeNumber,
+      locationName: locations.name,
+      sopTitle: sopVersions.title,
+      sopVersionNumber: sopVersions.versionNumber,
+      passingScorePercent: trainingConfigs.passingScorePercent,
+    })
+    .from(trainingSessions)
+    .innerJoin(
+      trainingAssignments,
+      and(
+        eq(trainingAssignments.id, trainingSessions.assignmentId),
+        eq(trainingAssignments.organizationId, trainingSessions.organizationId),
+      ),
+    )
+    .innerJoin(
+      employees,
+      and(
+        eq(employees.id, trainingAssignments.employeeId),
+        eq(employees.organizationId, trainingAssignments.organizationId),
+      ),
+    )
+    .innerJoin(
+      locations,
+      and(
+        eq(locations.id, trainingAssignments.locationId),
+        eq(locations.organizationId, trainingAssignments.organizationId),
+      ),
+    )
+    .innerJoin(
+      sopVersions,
+      and(
+        eq(sopVersions.id, trainingAssignments.sopVersionId),
+        eq(sopVersions.organizationId, trainingAssignments.organizationId),
+      ),
+    )
+    .innerJoin(
+      trainingConfigs,
+      and(
+        eq(trainingConfigs.sopVersionId, sopVersions.id),
+        eq(trainingConfigs.organizationId, sopVersions.organizationId),
+      ),
+    )
+    .where(
+      and(
+        eq(trainingSessions.id, sessionId),
+        eq(trainingSessions.organizationId, actor.organizationId),
+      ),
+    )
+    .limit(1);
+  if (!row) throw new AppError("NOT_FOUND", "Training session not found.");
+  await requireManagerManagedLocation(actor, row.assignment.locationId);
+
+  const [questions, correctCount, evidenceRows, [latestDecision]] = await Promise.all([
+    loadTrainingQuestions(row.assignment.sopVersionId),
+    getDb()
+      .select({ count: sql<number>`count(*)::int` })
+      .from(trainingAnswers)
+      .where(and(eq(trainingAnswers.sessionId, sessionId), eq(trainingAnswers.isCorrect, true))),
+    getDb()
+      .select({
+        stepId: trainingEvidence.stepId,
+        stepTitle: sopSteps.title,
+        evidenceType: trainingEvidence.evidenceType,
+        employeeNote: trainingEvidence.employeeNote,
+        createdAt: trainingEvidence.createdAt,
+      })
+      .from(trainingEvidence)
+      .leftJoin(sopSteps, eq(sopSteps.id, trainingEvidence.stepId))
+      .where(
+        and(
+          eq(trainingEvidence.organizationId, actor.organizationId),
+          eq(trainingEvidence.sessionId, sessionId),
+        ),
+      )
+      .orderBy(asc(trainingEvidence.createdAt)),
+    getDb()
+      .select({
+        decision: approvalDecisions.decision,
+        note: approvalDecisions.note,
+        decidedAt: approvalDecisions.decidedAt,
+        decidedByName: managerUsers.displayName,
+      })
+      .from(approvalDecisions)
+      .innerJoin(
+        approvalSubmissions,
+        and(
+          eq(approvalSubmissions.id, approvalDecisions.submissionId),
+          eq(approvalSubmissions.organizationId, approvalDecisions.organizationId),
+        ),
+      )
+      .innerJoin(managerUsers, eq(managerUsers.id, approvalDecisions.decidedByManagerUserId))
+      .where(
+        and(
+          eq(approvalDecisions.organizationId, actor.organizationId),
+          eq(approvalSubmissions.sessionId, sessionId),
+        ),
+      )
+      .orderBy(desc(approvalDecisions.decidedAt))
+      .limit(1),
+  ]);
+
+  return {
+    id: row.session.id,
+    attemptNumber: row.session.attemptNumber,
+    mode: row.session.mode,
+    sessionStatus: row.session.status,
+    assignmentStatus: row.assignment.status,
+    scorePercent: row.session.scorePercent,
+    passingScorePercent: row.passingScorePercent,
+    startedAt: row.session.startedAt,
+    submittedAt: row.session.submittedAt,
+    completedAt: row.session.completedAt,
+    employeeName: row.employeeName,
+    employeeNumber: row.employeeNumber,
+    locationName: row.locationName,
+    sopTitle: row.sopTitle,
+    sopVersionNumber: row.sopVersionNumber,
+    quizTotalQuestions: questions.length,
+    quizCorrectAnswers: correctCount[0]?.count ?? 0,
+    evidence: evidenceRows.map((item) => ({
+      stepTitle: item.stepTitle,
+      evidenceType: item.evidenceType,
+      employeeNote: item.employeeNote,
+      createdAt: item.createdAt,
+    })),
+    latestDecision: latestDecision ?? null,
   };
 }
 

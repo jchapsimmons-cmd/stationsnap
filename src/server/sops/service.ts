@@ -1915,6 +1915,26 @@ export async function getSopVersionDetail(
   return { ...detail, isCurrent: version.id === base.sop.currentVersionId, retrainingRule };
 }
 
+/**
+ * The permission-aware print/PDF record for `/manager/print/sops/[versionId]` (Phase 15). Unlike
+ * `getSopVersionDetail`, the route only carries a version id, so this resolves the owning SOP
+ * first and applies the same location authorization; only `published` or `archived` versions are
+ * printable since a `draft` is still mutable and was never a finished, immutable record.
+ */
+export async function getSopVersionForPrint(actor: ManagerSessionContext, versionId: string) {
+  const [version] = await getDb()
+    .select()
+    .from(sopVersions)
+    .where(and(eq(sopVersions.id, versionId), eq(sopVersions.organizationId, actor.organizationId)))
+    .limit(1);
+  if (!version) throw new AppError("NOT_FOUND", "SOP version not found.");
+  const base = await requireManageableSop(actor, version.sopId);
+  if (version.status === "draft") {
+    throw new AppError("CONFLICT", "Only a published version can be printed.");
+  }
+  return buildSopDetail(actor, { ...base, version });
+}
+
 async function loadRetrainingRule(organizationId: string, sopVersionId: string) {
   const [rule] = await getDb()
     .select({ id: sopRetrainingRules.id, ruleType: sopRetrainingRules.ruleType })

@@ -53,6 +53,14 @@ export default async function QualificationsReportPage({
       <PageHeader
         title="Qualifications"
         description="Qualification status by employee across your permitted locations."
+        actions={
+          <a
+            className="button button--secondary"
+            href={`/api/management/reports/qualifications/export${buildQueryString(raw, {})}`}
+          >
+            Export CSV
+          </a>
+        }
       />
       <form className="filter-bar" action="/manager/reports/qualifications">
         <label>

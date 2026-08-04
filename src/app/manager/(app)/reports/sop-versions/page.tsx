@@ -49,6 +49,14 @@ export default async function SopVersionHistoryReportPage({
       <PageHeader
         title="SOP version history"
         description="Every draft, published, and archived version across your SOPs, newest first."
+        actions={
+          <a
+            className="button button--secondary"
+            href={`/api/management/reports/sop-versions/export${buildQueryString(raw, {})}`}
+          >
+            Export CSV
+          </a>
+        }
       />
       <form className="filter-bar" action="/manager/reports/sop-versions">
         <label>
