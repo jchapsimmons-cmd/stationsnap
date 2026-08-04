@@ -1,5 +1,7 @@
+import { sql } from "drizzle-orm";
 import {
   boolean,
+  check,
   foreignKey,
   index,
   integer,
@@ -72,6 +74,35 @@ export const trainingExplanationPolicy = pgEnum("training_explanation_policy", [
   "never",
   "on_incorrect",
   "always",
+]);
+export const trainingAssignmentStatus = pgEnum("training_assignment_status", [
+  "assigned",
+  "in_progress",
+  "completed",
+  "failed",
+  "cancelled",
+]);
+export const trainingSessionStatus = pgEnum("training_session_status", [
+  "in_progress",
+  "awaiting_approval",
+  "passed",
+  "failed",
+]);
+export const trainingStepProgressStatus = pgEnum("training_step_progress_status", [
+  "pending",
+  "in_progress",
+  "completed",
+]);
+export const trainingEvidenceType = pgEnum("training_evidence_type", ["photo", "video"]);
+export const trainingEvidenceStatus = pgEnum("training_evidence_status", [
+  "pending",
+  "approved",
+  "rejected",
+]);
+export const approvalSubmissionStatus = pgEnum("approval_submission_status", [
+  "pending",
+  "approved",
+  "rejected",
 ]);
 
 const timestamps = {
@@ -397,9 +428,10 @@ export const files = pgTable(
     organizationId: uuid("organization_id")
       .notNull()
       .references(() => organizations.id, { onDelete: "restrict" }),
-    uploaderManagerUserId: uuid("uploader_manager_user_id")
-      .notNull()
-      .references(() => managerUsers.id, { onDelete: "restrict" }),
+    uploaderManagerUserId: uuid("uploader_manager_user_id").references(() => managerUsers.id, {
+      onDelete: "restrict",
+    }),
+    uploaderEmployeeId: uuid("uploader_employee_id"),
     objectKey: text("object_key").notNull(),
     originalName: text("original_name").notNull(),
     mediaType: fileMediaType("media_type").notNull(),
@@ -413,6 +445,15 @@ export const files = pgTable(
     ...timestamps,
   },
   (table) => [
+    foreignKey({
+      columns: [table.uploaderEmployeeId, table.organizationId],
+      foreignColumns: [employees.id, employees.organizationId],
+      name: "files_uploader_employee_org_fk",
+    }).onDelete("restrict"),
+    check(
+      "files_uploader_actor_check",
+      sql`(uploader_manager_user_id is not null) <> (uploader_employee_id is not null)`,
+    ),
     uniqueIndex("files_object_key_uidx").on(table.objectKey),
     unique("files_id_org_unique").on(table.id, table.organizationId),
     index("files_org_status_idx").on(table.organizationId, table.status),
@@ -868,5 +909,221 @@ export const trainingQuestionChoices = pgTable(
       name: "training_question_choices_question_org_fk",
     }).onDelete("cascade"),
     index("training_question_choices_question_order_idx").on(table.questionId, table.displayOrder),
+  ],
+);
+
+export const trainingAssignments = pgTable(
+  "training_assignments",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    locationId: uuid("location_id").notNull(),
+    employeeId: uuid("employee_id").notNull(),
+    sopVersionId: uuid("sop_version_id").notNull(),
+    requiredMode: trainingMode("required_mode").notNull(),
+    status: trainingAssignmentStatus("status").notNull().default("assigned"),
+    assignedByManagerUserId: uuid("assigned_by_manager_user_id").references(() => managerUsers.id, {
+      onDelete: "restrict",
+    }),
+    dueAt: timestamp("due_at", { withTimezone: true }),
+    dueTimezone: text("due_timezone"),
+    retrainingGeneration: integer("retraining_generation").notNull().default(0),
+    ...timestamps,
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.locationId, table.organizationId],
+      foreignColumns: [locations.id, locations.organizationId],
+      name: "training_assignments_location_org_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.employeeId, table.organizationId, table.locationId],
+      foreignColumns: [employees.id, employees.organizationId, employees.primaryLocationId],
+      name: "training_assignments_employee_org_location_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.sopVersionId, table.organizationId],
+      foreignColumns: [sopVersions.id, sopVersions.organizationId],
+      name: "training_assignments_version_org_fk",
+    }).onDelete("restrict"),
+    unique("training_assignments_id_org_unique").on(table.id, table.organizationId),
+    unique("training_assignments_employee_version_generation_uidx").on(
+      table.employeeId,
+      table.sopVersionId,
+      table.retrainingGeneration,
+    ),
+    index("training_assignments_org_location_status_idx").on(
+      table.organizationId,
+      table.locationId,
+      table.status,
+    ),
+    index("training_assignments_employee_status_idx").on(table.employeeId, table.status),
+  ],
+);
+
+export const trainingSessions = pgTable(
+  "training_sessions",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    assignmentId: uuid("assignment_id").notNull(),
+    attemptNumber: integer("attempt_number").notNull(),
+    mode: trainingMode("mode").notNull(),
+    status: trainingSessionStatus("status").notNull().default("in_progress"),
+    currentStepId: uuid("current_step_id"),
+    scorePercent: integer("score_percent"),
+    revision: integer("revision").notNull().default(1),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    lastResumedAt: timestamp("last_resumed_at", { withTimezone: true }).notNull().defaultNow(),
+    submittedAt: timestamp("submitted_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.assignmentId, table.organizationId],
+      foreignColumns: [trainingAssignments.id, trainingAssignments.organizationId],
+      name: "training_sessions_assignment_org_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.currentStepId, table.organizationId],
+      foreignColumns: [sopSteps.id, sopSteps.organizationId],
+      name: "training_sessions_current_step_org_fk",
+    }).onDelete("set null"),
+    unique("training_sessions_id_org_unique").on(table.id, table.organizationId),
+    unique("training_sessions_assignment_attempt_uidx").on(table.assignmentId, table.attemptNumber),
+    index("training_sessions_assignment_status_idx").on(table.assignmentId, table.status),
+  ],
+);
+
+export const trainingStepProgress = pgTable(
+  "training_step_progress",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    sessionId: uuid("session_id").notNull(),
+    stepId: uuid("step_id").notNull(),
+    status: trainingStepProgressStatus("status").notNull().default("pending"),
+    confirmed: boolean("confirmed").notNull().default(false),
+    videoWatchedFully: boolean("video_watched_fully").notNull().default(false),
+    timerCompleted: boolean("timer_completed").notNull().default(false),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.sessionId, table.organizationId],
+      foreignColumns: [trainingSessions.id, trainingSessions.organizationId],
+      name: "training_step_progress_session_org_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.stepId, table.organizationId],
+      foreignColumns: [sopSteps.id, sopSteps.organizationId],
+      name: "training_step_progress_step_org_fk",
+    }).onDelete("cascade"),
+    unique("training_step_progress_session_step_uidx").on(table.sessionId, table.stepId),
+  ],
+);
+
+export const trainingAnswers = pgTable(
+  "training_answers",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    sessionId: uuid("session_id").notNull(),
+    questionId: uuid("question_id").notNull(),
+    selectedChoiceIds: jsonb("selected_choice_ids").$type<string[]>().notNull().default([]),
+    isCorrect: boolean("is_correct").notNull().default(false),
+    pointsAwarded: integer("points_awarded").notNull().default(0),
+    answeredAt: timestamp("answered_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.sessionId, table.organizationId],
+      foreignColumns: [trainingSessions.id, trainingSessions.organizationId],
+      name: "training_answers_session_org_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.questionId, table.organizationId],
+      foreignColumns: [trainingQuestions.id, trainingQuestions.organizationId],
+      name: "training_answers_question_org_fk",
+    }).onDelete("cascade"),
+    unique("training_answers_session_question_uidx").on(table.sessionId, table.questionId),
+  ],
+);
+
+export const trainingEvidence = pgTable(
+  "training_evidence",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    sessionId: uuid("session_id").notNull(),
+    stepId: uuid("step_id"),
+    fileId: uuid("file_id").notNull(),
+    evidenceType: trainingEvidenceType("evidence_type").notNull(),
+    submissionGeneration: integer("submission_generation").notNull().default(1),
+    status: trainingEvidenceStatus("status").notNull().default("pending"),
+    employeeNote: text("employee_note").notNull().default(""),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.sessionId, table.organizationId],
+      foreignColumns: [trainingSessions.id, trainingSessions.organizationId],
+      name: "training_evidence_session_org_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.stepId, table.organizationId],
+      foreignColumns: [sopSteps.id, sopSteps.organizationId],
+      name: "training_evidence_step_org_fk",
+    }).onDelete("cascade"),
+    foreignKey({
+      columns: [table.fileId, table.organizationId],
+      foreignColumns: [files.id, files.organizationId],
+      name: "training_evidence_file_org_fk",
+    }).onDelete("restrict"),
+    unique("training_evidence_session_step_generation_uidx").on(
+      table.sessionId,
+      table.stepId,
+      table.submissionGeneration,
+    ),
+    index("training_evidence_session_idx").on(table.sessionId),
+  ],
+);
+
+export const approvalSubmissions = pgTable(
+  "approval_submissions",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    sessionId: uuid("session_id").notNull(),
+    submissionGeneration: integer("submission_generation").notNull().default(1),
+    status: approvalSubmissionStatus("status").notNull().default("pending"),
+    submittedAt: timestamp("submitted_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.sessionId, table.organizationId],
+      foreignColumns: [trainingSessions.id, trainingSessions.organizationId],
+      name: "approval_submissions_session_org_fk",
+    }).onDelete("cascade"),
+    unique("approval_submissions_session_generation_uidx").on(
+      table.sessionId,
+      table.submissionGeneration,
+    ),
+    index("approval_submissions_org_status_idx").on(table.organizationId, table.status),
   ],
 );

@@ -4,7 +4,7 @@ import { AppError } from "@/lib/errors";
 import { writeAuditEvent } from "@/server/audit";
 import type { EmployeeSessionContext, ManagerSessionContext } from "@/server/auth/sessions";
 import { getDb } from "@/server/db/client";
-import { files, sops, sopSteps, sopVersions } from "@/server/db/schema";
+import { files, sops, sopSteps, sopVersions, trainingAssignments } from "@/server/db/schema";
 import { maxBytesForMediaType, mediaTypeForMime } from "@/server/storage/constants";
 import { createObjectKey, readStoredObject, writeStoredObject } from "@/server/storage/driver";
 
@@ -13,11 +13,18 @@ function sanitizeFileName(name: string): string {
   return cleaned.length > 0 ? cleaned.slice(0, 200) : "upload";
 }
 
-export async function uploadMedia(
-  actor: ManagerSessionContext,
+async function storeUploadedFile(
   formData: FormData,
-  requestId?: string,
-) {
+  organizationId: string,
+  uploader: { managerUserId: string } | { employeeId: string },
+): Promise<{
+  id: string;
+  mediaType: "image" | "video";
+  originalName: string;
+  mimeType: string;
+  byteSize: number;
+  status: "processing" | "ready" | "failed";
+}> {
   const entry = formData.get("file");
   if (!(entry instanceof File)) {
     throw new AppError("BAD_REQUEST", "A file is required.");
@@ -38,15 +45,16 @@ export async function uploadMedia(
     throw new AppError("BAD_REQUEST", "The file is empty.");
   }
   const checksum = createHash("sha256").update(buffer).digest("hex");
-  const objectKey = createObjectKey(actor.organizationId);
+  const objectKey = createObjectKey(organizationId);
   await writeStoredObject(objectKey, buffer);
 
   const [row] = await getDb()
     .insert(files)
     .values({
       id: randomUUID(),
-      organizationId: actor.organizationId,
-      uploaderManagerUserId: actor.managerUserId,
+      organizationId,
+      uploaderManagerUserId: "managerUserId" in uploader ? uploader.managerUserId : null,
+      uploaderEmployeeId: "employeeId" in uploader ? uploader.employeeId : null,
       objectKey,
       originalName: sanitizeFileName(entry.name),
       mediaType,
@@ -57,6 +65,17 @@ export async function uploadMedia(
     })
     .returning();
   if (!row) throw new AppError("INTERNAL_ERROR", "The upload could not be saved.");
+  return row;
+}
+
+export async function uploadMedia(
+  actor: ManagerSessionContext,
+  formData: FormData,
+  requestId?: string,
+) {
+  const row = await storeUploadedFile(formData, actor.organizationId, {
+    managerUserId: actor.managerUserId,
+  });
 
   await writeAuditEvent({
     organizationId: actor.organizationId,
@@ -65,7 +84,38 @@ export async function uploadMedia(
     action: "media.uploaded",
     targetType: "file",
     targetId: row.id,
-    metadata: { mediaType, byteSize: row.byteSize },
+    metadata: { mediaType: row.mediaType, byteSize: row.byteSize },
+    requestId,
+  });
+
+  return {
+    id: row.id,
+    mediaType: row.mediaType,
+    originalName: row.originalName,
+    mimeType: row.mimeType,
+    byteSize: row.byteSize,
+    status: row.status,
+  };
+}
+
+export async function uploadEmployeeMedia(
+  session: EmployeeSessionContext,
+  formData: FormData,
+  requestId?: string,
+) {
+  const row = await storeUploadedFile(formData, session.organizationId, {
+    employeeId: session.employeeId,
+  });
+
+  await writeAuditEvent({
+    organizationId: session.organizationId,
+    locationId: session.locationId,
+    actorKind: "employee",
+    actorId: session.employeeId,
+    action: "media.uploaded",
+    targetType: "file",
+    targetId: row.id,
+    metadata: { mediaType: row.mediaType, byteSize: row.byteSize },
     requestId,
   });
 
@@ -139,7 +189,31 @@ export async function getMediaFileForEmployee(session: EmployeeSessionContext, f
           ),
         )
         .limit(1);
-  if (!versionMatch && !stepMatch) throw new AppError("NOT_FOUND", "File not found.");
+  const [assignedVersionStepMatch] =
+    versionMatch || stepMatch
+      ? []
+      : await getDb()
+          .select({ id: sopSteps.id })
+          .from(trainingAssignments)
+          .innerJoin(
+            sopSteps,
+            and(
+              eq(sopSteps.sopVersionId, trainingAssignments.sopVersionId),
+              eq(sopSteps.organizationId, trainingAssignments.organizationId),
+            ),
+          )
+          .where(
+            and(
+              eq(trainingAssignments.organizationId, session.organizationId),
+              eq(trainingAssignments.employeeId, session.employeeId),
+              or(eq(sopSteps.imageFileId, fileId), eq(sopSteps.videoFileId, fileId)),
+            ),
+          )
+          .limit(1);
+  const isOwnEvidence = row.uploaderEmployeeId === session.employeeId;
+  if (!versionMatch && !stepMatch && !assignedVersionStepMatch && !isOwnEvidence) {
+    throw new AppError("NOT_FOUND", "File not found.");
+  }
 
   const buffer = await readStoredObject(row.objectKey);
   return { buffer, mimeType: row.mimeType, originalName: row.originalName };
