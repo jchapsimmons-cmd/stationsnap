@@ -2,10 +2,9 @@
 
 import { useMemo, useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowDown, ArrowUp, Trash } from "@phosphor-icons/react";
-import { VERSION_POLICY_LABELS } from "@/components/training/status";
-import { Button, Card, Input, Select, Textarea, Toggle } from "@/components/ui";
-import { trainingPathVersionPolicyValues } from "@/server/training/paths-schemas";
+import { ArrowDown, ArrowUp, Plus, Trash } from "@phosphor-icons/react";
+import { TRAINING_PATH_VERSION_POLICY_LABELS } from "@/components/training/status";
+import { Button, Card, Checkbox, Input, Select, Textarea } from "@/components/ui";
 
 interface ApiResult<T> {
   ok: boolean;
@@ -13,24 +12,27 @@ interface ApiResult<T> {
   error?: { message: string };
 }
 
-export interface LocationOption {
-  id: string;
-  name: string;
-}
+export type PathItemVersionPolicy = "current_version" | "any_passed_version";
 
-export interface StationOption {
-  id: string;
-  locationId: string;
-  name: string;
-}
-
-export interface PublishedSopOption {
+export interface PathSopOption {
   id: string;
   title: string;
   locationId: string;
+  locationName: string;
 }
 
-export interface TrainingPathInitial {
+export interface PathLocationOption {
+  id: string;
+  name: string;
+}
+
+export interface PathStationOption {
+  id: string;
+  locationId: string;
+  name: string;
+}
+
+export interface PathDetailForForm {
   id: string;
   title: string;
   description: string;
@@ -45,46 +47,46 @@ export interface TrainingPathInitial {
     description: string;
     defaultValidityDays: number | null;
   };
-  items: readonly {
+  items: ReadonlyArray<{
     sopId: string;
     sopTitle: string | null;
     isRequired: boolean;
-    versionPolicy: (typeof trainingPathVersionPolicyValues)[number];
-  }[];
+    versionPolicy: PathItemVersionPolicy;
+  }>;
 }
 
-type VersionPolicy = (typeof trainingPathVersionPolicyValues)[number];
-
-interface ItemRow {
+interface PathItemDraft {
   sopId: string;
+  sopTitle: string;
   isRequired: boolean;
-  versionPolicy: VersionPolicy;
+  versionPolicy: PathItemVersionPolicy;
 }
 
-function itemsFromInitial(path?: TrainingPathInitial): ItemRow[] {
+function initialItems(path?: PathDetailForForm): PathItemDraft[] {
   if (!path) return [];
   return path.items.map((item) => ({
     sopId: item.sopId,
+    sopTitle: item.sopTitle ?? "Untitled SOP",
     isRequired: item.isRequired,
     versionPolicy: item.versionPolicy,
   }));
 }
 
 /**
- * Shared between the training-paths create and edit pages. Location and station are only
- * editable on create — `updatePath` has no fields for them, so in edit mode they render as
- * read-only text instead of controls.
+ * Creates or edits a training path and its 1:1 qualification definition. Location and station are
+ * fixed at creation and never editable afterward, so this component only renders those pickers when
+ * `path` is absent.
  */
-export function TrainingPathForm({
+export function PathForm({
+  path,
   locations,
   stations,
   sops,
-  path,
 }: {
-  locations: readonly LocationOption[];
-  stations: readonly StationOption[];
-  sops: readonly PublishedSopOption[];
-  path?: TrainingPathInitial;
+  path?: PathDetailForForm;
+  locations: readonly PathLocationOption[];
+  stations: readonly PathStationOption[];
+  sops: readonly PathSopOption[];
 }) {
   const router = useRouter();
   const isEdit = Boolean(path);
@@ -94,105 +96,114 @@ export function TrainingPathForm({
   const [locationId, setLocationId] = useState(path?.locationId ?? locations[0]?.id ?? "");
   const [stationId, setStationId] = useState(path?.stationId ?? "");
   const [enforceOrder, setEnforceOrder] = useState(path?.enforceOrder ?? true);
-  const [status, setStatus] = useState<"active" | "disabled">(path?.status ?? "active");
-  const [defName, setDefName] = useState(path?.definition.name ?? "");
-  const [defDescription, setDefDescription] = useState(path?.definition.description ?? "");
-  const [defValidityDays, setDefValidityDays] = useState(
+  const [definitionName, setDefinitionName] = useState(path?.definition.name ?? "");
+  const [definitionDescription, setDefinitionDescription] = useState(
+    path?.definition.description ?? "",
+  );
+  const [defaultValidityDays, setDefaultValidityDays] = useState(
     path?.definition.defaultValidityDays != null ? String(path.definition.defaultValidityDays) : "",
   );
-  const [items, setItems] = useState<ItemRow[]>(itemsFromInitial(path));
+  const [items, setItems] = useState<PathItemDraft[]>(() => initialItems(path));
+
+  const [addSopId, setAddSopId] = useState("");
+  const [addIsRequired, setAddIsRequired] = useState(true);
+  const [addVersionPolicy, setAddVersionPolicy] =
+    useState<PathItemVersionPolicy>("current_version");
+
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
 
-  const sopsById = useMemo(() => new Map(sops.map((sop) => [sop.id, sop])), [sops]);
-  const candidateStations = useMemo(
+  const effectiveLocationId = path?.locationId ?? locationId;
+
+  const sopsAtLocation = useMemo(
+    () => sops.filter((sop) => sop.locationId === effectiveLocationId),
+    [sops, effectiveLocationId],
+  );
+  const stationsAtLocation = useMemo(
     () => stations.filter((station) => station.locationId === locationId),
     [stations, locationId],
   );
   const candidateSops = useMemo(
-    () => sops.filter((sop) => sop.locationId === locationId),
-    [sops, locationId],
-  );
-  const availableSops = useMemo(
-    () => candidateSops.filter((sop) => !items.some((item) => item.sopId === sop.id)),
-    [candidateSops, items],
+    () => sopsAtLocation.filter((sop) => !items.some((item) => item.sopId === sop.id)),
+    [sopsAtLocation, items],
   );
 
   function selectLocation(nextLocationId: string) {
     setLocationId(nextLocationId);
     setStationId("");
     setItems([]);
+    setAddSopId("");
   }
 
-  function addItem(sopId: string) {
-    if (!sopId) return;
-    setItems((prev) => [...prev, { sopId, isRequired: true, versionPolicy: "current_version" }]);
+  function addItem() {
+    const sop = candidateSops.find((row) => row.id === addSopId);
+    if (!sop) return;
+    setItems((prev) => [
+      ...prev,
+      {
+        sopId: sop.id,
+        sopTitle: sop.title,
+        isRequired: addIsRequired,
+        versionPolicy: addVersionPolicy,
+      },
+    ]);
+    setAddSopId("");
+    setAddIsRequired(true);
+    setAddVersionPolicy("current_version");
   }
 
-  function removeItem(index: number) {
-    setItems((prev) => prev.filter((_, rowIndex) => rowIndex !== index));
-  }
-
-  function updateItem(index: number, patch: Partial<ItemRow>) {
-    setItems((prev) =>
-      prev.map((row, rowIndex) => (rowIndex === index ? { ...row, ...patch } : row)),
-    );
+  function removeItem(sopId: string) {
+    setItems((prev) => prev.filter((item) => item.sopId !== sopId));
   }
 
   function moveItem(index: number, direction: -1 | 1) {
     const targetIndex = index + direction;
     if (targetIndex < 0 || targetIndex >= items.length) return;
     setItems((prev) => {
-      const reordered = [...prev];
-      const [moved] = reordered.splice(index, 1);
+      const next = [...prev];
+      const [moved] = next.splice(index, 1);
       if (!moved) return prev;
-      reordered.splice(targetIndex, 0, moved);
-      return reordered;
+      next.splice(targetIndex, 0, moved);
+      return next;
     });
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(undefined);
-
-    if (title.trim().length === 0) {
-      setError("Title is required.");
-      return;
-    }
-    if (defName.trim().length === 0) {
-      setError("Qualification name is required.");
-      return;
-    }
     if (items.length === 0) {
       setError("Add at least one SOP to the path.");
       return;
     }
-
     setPending(true);
-    try {
-      const body: Record<string, unknown> = {
-        title,
-        description,
-        enforceOrder,
-        status,
-        definition: {
-          name: defName,
-          description: defDescription,
-          defaultValidityDays: defValidityDays,
-        },
-        items: items.map((item) => ({
-          sopId: item.sopId,
-          isRequired: item.isRequired,
-          versionPolicy: item.versionPolicy,
-        })),
-      };
-      if (!isEdit) {
-        body["locationId"] = locationId;
-        body["stationId"] = stationId;
-      }
 
+    const body: Record<string, unknown> = {
+      title,
+      description,
+      enforceOrder,
+      definition: {
+        name: definitionName,
+        description: definitionDescription,
+        defaultValidityDays,
+      },
+      items: items.map((item) => ({
+        sopId: item.sopId,
+        isRequired: item.isRequired,
+        versionPolicy: item.versionPolicy,
+      })),
+    };
+    if (isEdit && path) {
+      body["status"] = path.status;
+    } else {
+      body["locationId"] = locationId;
+      body["stationId"] = stationId;
+    }
+
+    try {
       const response = await fetch(
-        isEdit ? `/api/management/training/paths/${path?.id}` : "/api/management/training/paths",
+        isEdit && path
+          ? `/api/management/training/paths/${path.id}`
+          : "/api/management/training/paths",
         {
           method: isEdit ? "PATCH" : "POST",
           headers: { "content-type": "application/json" },
@@ -223,54 +234,20 @@ export function TrainingPathForm({
             label="Title"
             value={title}
             onChange={(event) => setTitle(event.target.value)}
+            maxLength={160}
             required
           />
-          <Select
-            id="path-status"
-            label="Status"
-            value={status}
-            onChange={(event) => setStatus(event.target.value as "active" | "disabled")}
-          >
-            <option value="active">Active</option>
-            <option value="disabled">Disabled</option>
-          </Select>
-        </div>
-        <Textarea
-          id="path-description"
-          label="Description"
-          maxLength={2_000}
-          value={description}
-          onChange={(event) => setDescription(event.target.value)}
-        />
-        <Toggle
-          id="path-enforce-order"
-          label="Require required SOPs to be completed in order"
-          checked={enforceOrder}
-          onChange={(event) => setEnforceOrder(event.target.checked)}
-        />
-      </Card>
-
-      <Card className="form-section">
-        <h2>Location</h2>
-        {isEdit && path ? (
-          <div className="form-grid">
+          {isEdit && path ? (
             <div className="field">
-              <p className="field__label">Location</p>
+              <span className="field__label">Location</span>
               <p>{path.locationName}</p>
             </div>
-            <div className="field">
-              <p className="field__label">Station</p>
-              <p>{path.stationName ?? "Whole location"}</p>
-            </div>
-          </div>
-        ) : (
-          <div className="form-grid">
+          ) : (
             <Select
               id="path-location"
               label="Location"
               value={locationId}
               onChange={(event) => selectLocation(event.target.value)}
-              required
             >
               {locations.map((location) => (
                 <option key={location.id} value={location.id}>
@@ -278,148 +255,193 @@ export function TrainingPathForm({
                 </option>
               ))}
             </Select>
+          )}
+          {isEdit && path ? (
+            <div className="field">
+              <span className="field__label">Station</span>
+              <p>{path.stationName ?? "Any station"}</p>
+            </div>
+          ) : (
             <Select
               id="path-station"
               label="Station"
-              hint="Optional. Leave unset for a location-wide path."
+              hint="Optional. Leave unset if this qualification applies location-wide."
               value={stationId}
               onChange={(event) => setStationId(event.target.value)}
             >
-              <option value="">Whole location</option>
-              {candidateStations.map((station) => (
+              <option value="">No specific station</option>
+              {stationsAtLocation.map((station) => (
                 <option key={station.id} value={station.id}>
                   {station.name}
                 </option>
               ))}
             </Select>
-          </div>
-        )}
+          )}
+        </div>
+        <Textarea
+          id="path-description"
+          label="Description"
+          value={description}
+          onChange={(event) => setDescription(event.target.value)}
+          maxLength={2000}
+        />
+        <Checkbox
+          id="path-enforce-order"
+          label="Require completion in order"
+          checked={enforceOrder}
+          onChange={(event) => setEnforceOrder(event.target.checked)}
+        />
+        <p className="field__message">
+          Employees must complete required procedures in this order to earn the qualification.
+        </p>
       </Card>
 
       <Card className="form-section">
-        <h2>Qualification</h2>
-        <p className="muted">
-          Awarded automatically when an employee completes every required SOP below.
-        </p>
+        <h2>Qualification awarded</h2>
         <div className="form-grid">
           <Input
             id="path-definition-name"
             label="Qualification name"
-            value={defName}
-            onChange={(event) => setDefName(event.target.value)}
+            value={definitionName}
+            onChange={(event) => setDefinitionName(event.target.value)}
+            maxLength={160}
             required
           />
           <Input
             id="path-definition-validity"
             type="number"
             min={1}
-            max={3_650}
+            max={3650}
             label="Default validity (days)"
-            hint="Optional. Leave blank for a qualification that never expires."
-            value={defValidityDays}
-            onChange={(event) => setDefValidityDays(event.target.value)}
+            hint="Optional. Leave blank if this qualification never expires."
+            value={defaultValidityDays}
+            onChange={(event) => setDefaultValidityDays(event.target.value)}
           />
         </div>
         <Textarea
           id="path-definition-description"
           label="Qualification description"
-          maxLength={2_000}
-          value={defDescription}
-          onChange={(event) => setDefDescription(event.target.value)}
+          value={definitionDescription}
+          onChange={(event) => setDefinitionDescription(event.target.value)}
+          maxLength={2000}
         />
       </Card>
 
       <Card className="form-section">
-        <h2>Required SOPs</h2>
+        <h2>Required procedures</h2>
+        {effectiveLocationId === "" ? (
+          <p className="muted">Choose a location to see its published SOPs.</p>
+        ) : sopsAtLocation.length === 0 ? (
+          <p className="muted">No training-enabled published SOPs exist at this location yet.</p>
+        ) : (
+          <div className="form-grid">
+            <Select
+              id="path-add-sop"
+              label="Published SOP"
+              value={addSopId}
+              onChange={(event) => setAddSopId(event.target.value)}
+            >
+              <option value="">Choose a SOP…</option>
+              {candidateSops.map((sop) => (
+                <option key={sop.id} value={sop.id}>
+                  {sop.title}
+                </option>
+              ))}
+            </Select>
+            <Select
+              id="path-add-version-policy"
+              label="Version policy"
+              value={addVersionPolicy}
+              onChange={(event) => setAddVersionPolicy(event.target.value as PathItemVersionPolicy)}
+            >
+              <option value="current_version">
+                {TRAINING_PATH_VERSION_POLICY_LABELS["current_version"]}
+              </option>
+              <option value="any_passed_version">
+                {TRAINING_PATH_VERSION_POLICY_LABELS["any_passed_version"]}
+              </option>
+            </Select>
+          </div>
+        )}
+        {sopsAtLocation.length > 0 && (
+          <>
+            <Checkbox
+              id="path-add-required"
+              label="Required item"
+              checked={addIsRequired}
+              onChange={(event) => setAddIsRequired(event.target.checked)}
+            />
+            <Button type="button" disabled={!addSopId} onClick={addItem}>
+              <Plus size={18} aria-hidden="true" />
+              Add to path
+            </Button>
+          </>
+        )}
+
         {items.length === 0 ? (
-          <p>No SOPs added yet.</p>
+          <p className="muted">No SOPs added yet.</p>
         ) : (
           <ol className="step-list">
-            {items.map((item, index) => {
-              const sop = sopsById.get(item.sopId);
-              return (
-                <li key={`${item.sopId}-${index}`}>
-                  <Card className="step-card">
-                    <div className="step-card__head">
-                      <span className="step-order-badge" aria-hidden="true">
-                        {index + 1}
-                      </span>
-                      <div className="step-card__title">
-                        <strong>{sop?.title ?? "Unknown SOP"}</strong>
-                      </div>
-                      <div className="reorder-buttons">
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          aria-label={`Move item ${index + 1} up`}
-                          disabled={index === 0}
-                          onClick={() => moveItem(index, -1)}
-                        >
-                          <ArrowUp size={18} aria-hidden="true" />
-                        </Button>
-                        <Button
-                          type="button"
-                          variant="secondary"
-                          aria-label={`Move item ${index + 1} down`}
-                          disabled={index === items.length - 1}
-                          onClick={() => moveItem(index, 1)}
-                        >
-                          <ArrowDown size={18} aria-hidden="true" />
-                        </Button>
-                      </div>
+            {items.map((item, index) => (
+              <li key={item.sopId}>
+                <Card className="step-card">
+                  <div className="step-card__head">
+                    <span className="step-order-badge" aria-hidden="true">
+                      {index + 1}
+                    </span>
+                    <div className="step-card__title">
+                      <strong>{item.sopTitle}</strong>
+                      <small>
+                        {item.isRequired ? "Required" : "Optional"} ·{" "}
+                        {TRAINING_PATH_VERSION_POLICY_LABELS[item.versionPolicy]}
+                      </small>
                     </div>
-                    <div className="form-grid">
-                      <Select
-                        id={`path-item-${index}-version-policy`}
-                        label="Version policy"
-                        value={item.versionPolicy}
-                        onChange={(event) =>
-                          updateItem(index, { versionPolicy: event.target.value as VersionPolicy })
-                        }
+                    <div className="reorder-buttons">
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        aria-label={`Move ${item.sopTitle} up`}
+                        disabled={index === 0}
+                        onClick={() => moveItem(index, -1)}
                       >
-                        {trainingPathVersionPolicyValues.map((value) => (
-                          <option key={value} value={value}>
-                            {VERSION_POLICY_LABELS[value]}
-                          </option>
-                        ))}
-                      </Select>
-                    </div>
-                    <Toggle
-                      id={`path-item-${index}-required`}
-                      label="Required to earn the qualification"
-                      checked={item.isRequired}
-                      onChange={(event) => updateItem(index, { isRequired: event.target.checked })}
-                    />
-                    <div className="action-row">
-                      <Button type="button" variant="danger" onClick={() => removeItem(index)}>
-                        <Trash size={18} aria-hidden="true" />
-                        Remove
+                        <ArrowUp size={18} aria-hidden="true" />
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        aria-label={`Move ${item.sopTitle} down`}
+                        disabled={index === items.length - 1}
+                        onClick={() => moveItem(index, 1)}
+                      >
+                        <ArrowDown size={18} aria-hidden="true" />
                       </Button>
                     </div>
-                  </Card>
-                </li>
-              );
-            })}
+                  </div>
+                  <div className="action-row">
+                    <Checkbox
+                      id={`path-item-required-${item.sopId}`}
+                      label="Required"
+                      checked={item.isRequired}
+                      onChange={(event) =>
+                        setItems((prev) =>
+                          prev.map((row) =>
+                            row.sopId === item.sopId
+                              ? { ...row, isRequired: event.target.checked }
+                              : row,
+                          ),
+                        )
+                      }
+                    />
+                    <Button type="button" variant="danger" onClick={() => removeItem(item.sopId)}>
+                      <Trash size={18} aria-hidden="true" />
+                      Remove
+                    </Button>
+                  </div>
+                </Card>
+              </li>
+            ))}
           </ol>
         )}
-        <Select
-          id="path-add-item"
-          label="Add a published SOP"
-          value=""
-          onChange={(event) => addItem(event.target.value)}
-          disabled={availableSops.length === 0}
-        >
-          <option value="">
-            {availableSops.length === 0
-              ? "No more published SOPs at this location"
-              : "Choose an SOP…"}
-          </option>
-          {availableSops.map((sop) => (
-            <option key={sop.id} value={sop.id}>
-              {sop.title}
-            </option>
-          ))}
-        </Select>
       </Card>
 
       {error && (
@@ -428,7 +450,7 @@ export function TrainingPathForm({
         </p>
       )}
 
-      <Button type="submit" disabled={pending || locations.length === 0}>
+      <Button type="submit" disabled={pending}>
         {pending ? "Saving…" : isEdit ? "Save path" : "Create path"}
       </Button>
     </form>

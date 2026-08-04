@@ -3,14 +3,7 @@ import {
   QUALIFICATION_CLASSIFICATION_LABELS,
   QUALIFICATION_CLASSIFICATION_TONE,
 } from "@/components/training/status";
-import {
-  DataTable,
-  EmptyState,
-  PageHeader,
-  StatusBadge,
-  Tabs,
-  type DataColumn,
-} from "@/components/ui";
+import { EmptyState, PageHeader, StatusBadge, Tabs } from "@/components/ui";
 import { requireManagerPage } from "@/server/auth/authorization";
 import { listLocations } from "@/server/management/service";
 import {
@@ -35,18 +28,35 @@ function buildQueryString(
   return query ? `?${query}` : "";
 }
 
-function formatDate(value: Date | null): string {
-  if (!value) return "Never expires";
+function formatDate(value: Date | null): string | null {
+  if (!value) return null;
   return value.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
 }
 
-const TAB_LABELS: Record<(typeof qualificationOverviewTabValues)[number], string> = {
-  qualified: "Qualified",
-  training: "In training",
-  missing: "Missing",
-  expiring: "Expiring soon",
-  expired: "Expired",
-};
+function rowBadge(row: QualificationOverviewRow): {
+  tone: "neutral" | "success" | "warning" | "danger" | "info";
+  label: string;
+} {
+  if (row.isExpiringSoon) return { tone: "warning", label: "Expiring soon" };
+  return {
+    tone: QUALIFICATION_CLASSIFICATION_TONE[row.classification] ?? "neutral",
+    label: QUALIFICATION_CLASSIFICATION_LABELS[row.classification] ?? row.classification,
+  };
+}
+
+function rowDetail(row: QualificationOverviewRow): string | null {
+  if (row.classification === "qualified") {
+    const awarded = formatDate(row.awardedAt);
+    const expires = formatDate(row.expiresAt);
+    if (row.isExpiringSoon && expires) return `Expires ${expires}`;
+    return awarded ? `Awarded ${awarded}` : null;
+  }
+  if (row.classification === "expired") {
+    const expired = formatDate(row.expiresAt);
+    return expired ? `Expired ${expired}` : null;
+  }
+  return null;
+}
 
 export default async function ManagerQualificationsPage({
   searchParams,
@@ -65,62 +75,17 @@ export default async function ManagerQualificationsPage({
     listLocations(session),
   ]);
 
-  const columns: DataColumn<QualificationOverviewRow>[] = [
-    {
-      key: "employee",
-      header: "Employee",
-      render: (row) => (
-        <span>
-          {row.employeeName} <small className="muted">#{row.employeeNumber}</small>
-        </span>
-      ),
-    },
-    { key: "definition", header: "Qualification", render: (row) => row.definitionName },
-    { key: "path", header: "Path", render: (row) => row.pathTitle },
-    { key: "location", header: "Location", render: (row) => row.locationName },
-    {
-      key: "status",
-      header: "Status",
-      render: (row) => (
-        <span className="action-row">
-          <StatusBadge tone={QUALIFICATION_CLASSIFICATION_TONE[row.classification] ?? "neutral"}>
-            {QUALIFICATION_CLASSIFICATION_LABELS[row.classification] ?? row.classification}
-          </StatusBadge>
-          {row.isExpiringSoon && <StatusBadge tone="warning">Expiring soon</StatusBadge>}
-        </span>
-      ),
-    },
-    {
-      key: "awardedAt",
-      header: "Awarded",
-      render: (row) => (row.awardedAt ? formatDate(row.awardedAt) : "—"),
-    },
-    {
-      key: "expiresAt",
-      header: "Expires",
-      render: (row) => (row.awardedAt ? formatDate(row.expiresAt) : "—"),
-    },
-    {
-      key: "detail",
-      header: "",
-      render: (row) =>
-        row.qualificationId ? (
-          <Link href={`/manager/qualifications/${row.qualificationId}`}>View</Link>
-        ) : null,
-    },
-  ];
-
   return (
     <div className="page-stack">
       <PageHeader
         title="Qualifications"
-        description={`${rows.length} ${rows.length === 1 ? "row" : "rows"} matching this view.`}
+        description={`${rows.length} ${rows.length === 1 ? "record" : "records"} matching this view.`}
       />
       <Tabs
         label="Qualification status"
         items={qualificationOverviewTabValues.map((tab) => ({
           href: `/manager/qualifications${buildQueryString(raw, { tab })}`,
-          label: TAB_LABELS[tab] ?? tab,
+          label: QUALIFICATION_CLASSIFICATION_LABELS[tab] ?? tab,
           active: query.tab === tab,
         }))}
       />
@@ -143,16 +108,43 @@ export default async function ManagerQualificationsPage({
       </form>
       {rows.length === 0 ? (
         <EmptyState
-          title="Nothing in this view"
-          description="Qualification standing appears here once a training path exists and employees are working toward it."
+          title="Nothing matches this view"
+          description="Qualifications appear here once employees start training toward a training path."
         />
       ) : (
-        <DataTable
-          caption="Qualifications"
-          columns={columns}
-          rows={rows}
-          getRowKey={(row) => `${row.definitionId}:${row.employeeId}`}
-        />
+        <div className="record-grid">
+          {rows.map((row) => {
+            const badge = rowBadge(row);
+            const detail = rowDetail(row);
+            const body = (
+              <span className="record-card__body">
+                <strong>
+                  {row.employeeName} · #{row.employeeNumber}
+                </strong>
+                <small>
+                  {row.definitionName} · {row.locationName}
+                </small>
+                {detail && <small>{detail}</small>}
+              </span>
+            );
+            const key = `${row.employeeId}:${row.definitionId}`;
+            return row.qualificationId ? (
+              <Link
+                className="record-card"
+                href={`/manager/qualifications/${row.qualificationId}`}
+                key={key}
+              >
+                {body}
+                <StatusBadge tone={badge.tone}>{badge.label}</StatusBadge>
+              </Link>
+            ) : (
+              <div className="record-card" key={key}>
+                {body}
+                <StatusBadge tone={badge.tone}>{badge.label}</StatusBadge>
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );

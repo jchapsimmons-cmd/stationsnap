@@ -1,8 +1,4 @@
 import Link from "next/link";
-import {
-  QUALIFICATION_CLASSIFICATION_LABELS,
-  QUALIFICATION_CLASSIFICATION_TONE,
-} from "@/components/training/status";
 import { EmptyState, PageHeader, StatusBadge } from "@/components/ui";
 import { requireEmployeePage } from "@/server/auth/authorization";
 import {
@@ -11,19 +7,21 @@ import {
   type EmployeeQualificationSummary,
 } from "@/server/training/qualifications";
 
-function formatDate(value: Date | null): string {
-  if (!value) return "Never expires";
+function formatDate(value: Date | null): string | null {
+  if (!value) return null;
   return value.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
 }
 
 function QualificationSection({
   title,
   items,
-  linkable,
+  badgeTone,
+  detail,
 }: {
   title: string;
   items: readonly EmployeeQualificationSummary[];
-  linkable: boolean;
+  badgeTone: "neutral" | "success" | "warning" | "danger" | "info";
+  detail: (item: EmployeeQualificationSummary) => string | null;
 }) {
   if (items.length === 0) return null;
   return (
@@ -37,33 +35,22 @@ function QualificationSection({
             <span className="record-card__body">
               <strong>{item.definitionName}</strong>
               <small>{item.pathTitle}</small>
-              {item.awardedAt && <small>{formatDate(item.expiresAt)}</small>}
+              {detail(item) && <small>{detail(item)}</small>}
             </span>
           );
-          const badges = (
-            <span className="action-row">
-              <StatusBadge tone={QUALIFICATION_CLASSIFICATION_TONE[item.status] ?? "neutral"}>
-                {QUALIFICATION_CLASSIFICATION_LABELS[item.status] ?? item.status}
-              </StatusBadge>
-              {item.isExpiringSoon && <StatusBadge tone="warning">Expiring soon</StatusBadge>}
-            </span>
-          );
-          if (linkable && item.qualificationId) {
-            return (
-              <Link
-                className="record-card"
-                href={`/employee/qualifications/${item.qualificationId}`}
-                key={item.definitionId}
-              >
-                {body}
-                {badges}
-              </Link>
-            );
-          }
-          return (
+          return item.qualificationId ? (
+            <Link
+              className="record-card"
+              href={`/employee/qualifications/${item.qualificationId}`}
+              key={item.definitionId}
+            >
+              {body}
+              <StatusBadge tone={badgeTone}>{title}</StatusBadge>
+            </Link>
+          ) : (
             <div className="record-card" key={item.definitionId}>
               {body}
-              {badges}
+              <StatusBadge tone={badgeTone}>{title}</StatusBadge>
             </div>
           );
         })}
@@ -90,20 +77,54 @@ export default async function EmployeeQualificationsPage() {
     <div className="page-stack">
       <PageHeader
         title="Qualifications"
-        description="What you're qualified for at this location."
+        description="Earned, expiring, and in-progress qualifications for your location."
       />
       {isEmpty(sections) ? (
         <EmptyState
           title="No qualifications yet"
-          description="Qualifications appear here once your manager sets up a training path."
+          description="Qualifications are earned automatically as you complete a training path's required procedures."
         />
       ) : (
         <>
-          <QualificationSection title="Expiring soon" items={sections.expiring} linkable />
-          <QualificationSection title="Earned" items={sections.earned} linkable />
-          <QualificationSection title="In progress" items={sections.inProgress} linkable={false} />
-          <QualificationSection title="Expired" items={sections.expired} linkable />
-          <QualificationSection title="Missing" items={sections.missing} linkable={false} />
+          <QualificationSection
+            title="Expiring soon"
+            items={sections.expiring}
+            badgeTone="warning"
+            detail={(item) => {
+              const expires = formatDate(item.expiresAt);
+              return expires ? `Expires ${expires}` : null;
+            }}
+          />
+          <QualificationSection
+            title="Expired"
+            items={sections.expired}
+            badgeTone="danger"
+            detail={(item) => {
+              const expired = formatDate(item.expiresAt);
+              return expired ? `Expired ${expired}` : null;
+            }}
+          />
+          <QualificationSection
+            title="Earned"
+            items={sections.earned}
+            badgeTone="success"
+            detail={(item) => {
+              const awarded = formatDate(item.awardedAt);
+              return awarded ? `Awarded ${awarded}` : null;
+            }}
+          />
+          <QualificationSection
+            title="In progress"
+            items={sections.inProgress}
+            badgeTone="info"
+            detail={() => null}
+          />
+          <QualificationSection
+            title="Missing"
+            items={sections.missing}
+            badgeTone="neutral"
+            detail={() => null}
+          />
         </>
       )}
     </div>

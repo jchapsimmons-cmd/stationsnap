@@ -2,22 +2,21 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Button, Card, ConfirmationDialog, Textarea } from "@/components/ui";
+import { Button, Card, Textarea } from "@/components/ui";
 
 interface ApiResult {
   ok: boolean;
   error?: { message: string };
 }
 
-/** Revokes an active qualification episode. Manager-only; rendered only when `canRevoke` is true. */
-export function RevokeQualificationForm({ qualificationId }: { qualificationId: string }) {
+/** Revokes an active qualification. Revocation is permanent — there is no "unrevoke". */
+export function QualificationRevokeForm({ qualificationId }: { qualificationId: string }) {
   const router = useRouter();
   const [note, setNote] = useState("");
-  const [open, setOpen] = useState(false);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
 
-  async function confirmRevoke() {
+  async function submit() {
     setPending(true);
     setError(undefined);
     try {
@@ -29,14 +28,11 @@ export function RevokeQualificationForm({ qualificationId }: { qualificationId: 
       const result = (await response.json()) as ApiResult;
       if (!result.ok) {
         setError(result.error?.message ?? "This qualification could not be revoked.");
-        setOpen(false);
         return;
       }
-      setOpen(false);
       router.refresh();
     } catch {
       setError("StationSnap could not be reached. Try again.");
-      setOpen(false);
     } finally {
       setPending(false);
     }
@@ -46,8 +42,7 @@ export function RevokeQualificationForm({ qualificationId }: { qualificationId: 
     <Card className="form-section">
       <h2>Revoke qualification</h2>
       <p className="muted">
-        Revoking ends this qualification immediately. It cannot be undone; a new episode is awarded
-        only if the employee later completes the path again.
+        Revocation is permanent. The qualification&apos;s history stays visible afterward.
       </p>
       {error && (
         <p className="form-status form-status--error" role="alert">
@@ -55,24 +50,16 @@ export function RevokeQualificationForm({ qualificationId }: { qualificationId: 
         </p>
       )}
       <Textarea
-        id="revoke-note"
+        id="qualification-revoke-note"
         label="Note (optional)"
         hint="Explain why this qualification is being revoked."
-        maxLength={1_000}
+        maxLength={1000}
         value={note}
         onChange={(event) => setNote(event.target.value)}
       />
-      <Button type="button" variant="danger" disabled={pending} onClick={() => setOpen(true)}>
-        Revoke qualification
+      <Button type="button" variant="danger" disabled={pending} onClick={() => void submit()}>
+        {pending ? "Revoking…" : "Revoke qualification"}
       </Button>
-      <ConfirmationDialog
-        open={open}
-        title="Revoke qualification"
-        description="This immediately ends the employee's active qualification. This cannot be undone."
-        confirmLabel="Revoke qualification"
-        onConfirm={() => void confirmRevoke()}
-        onCancel={() => setOpen(false)}
-      />
     </Card>
   );
 }

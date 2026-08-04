@@ -1,13 +1,11 @@
-import {
-  QUALIFICATION_STATUS_LABELS,
-  QUALIFICATION_STATUS_TONE,
-} from "@/components/training/status";
-import { Card, EmptyState, PageHeader, StatusBadge } from "@/components/ui";
+import Link from "next/link";
+import { QUALIFICATION_STATUS_LABELS } from "@/components/training/status";
+import { Card, PageHeader, StatusBadge } from "@/components/ui";
 import { requireEmployeePage } from "@/server/auth/authorization";
 import { getQualificationDetailForEmployee } from "@/server/training/qualifications";
 
-function formatDate(value: Date | null): string {
-  if (!value) return "Never expires";
+function formatDate(value: Date | null): string | null {
+  if (!value) return null;
   return value.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
 }
 
@@ -30,67 +28,66 @@ export default async function EmployeeQualificationDetailPage({
   const session = await requireEmployeePage(`/employee/qualifications/${qualificationId}`);
   const detail = await getQualificationDetailForEmployee(session, qualificationId);
 
+  const statusTone =
+    detail.status === "revoked" ? "danger" : detail.isExpired ? "warning" : "success";
+
   return (
     <div className="page-stack">
       <PageHeader title={detail.definition.name} description={detail.path.title} />
 
       <Card>
         <div className="action-row">
-          <StatusBadge tone={QUALIFICATION_STATUS_TONE[detail.status] ?? "neutral"}>
-            {QUALIFICATION_STATUS_LABELS[detail.status] ?? detail.status}
+          <StatusBadge tone={statusTone}>
+            {detail.status === "revoked"
+              ? QUALIFICATION_STATUS_LABELS["revoked"]
+              : detail.isExpired
+                ? "Expired"
+                : QUALIFICATION_STATUS_LABELS["active"]}
           </StatusBadge>
-          {detail.status === "active" && detail.isExpired && (
-            <StatusBadge tone="danger">Expired</StatusBadge>
-          )}
         </div>
+        {detail.definition.description && <p>{detail.definition.description}</p>}
       </Card>
-
-      {detail.definition.description && (
-        <Card>
-          <p className="eyebrow">About this qualification</p>
-          <p>{detail.definition.description}</p>
-        </Card>
-      )}
 
       <div className="detail-grid">
         <Card>
           <p className="eyebrow">Awarded</p>
-          <strong>{formatInstant(detail.awardedAt)}</strong>
+          <strong>{formatDate(detail.awardedAt) ?? "—"}</strong>
         </Card>
         <Card>
-          <p className="eyebrow">Expires</p>
-          <strong>{formatDate(detail.expiresAt)}</strong>
+          <p className="eyebrow">Expiry</p>
+          <strong>{formatDate(detail.expiresAt) ?? "Never expires"}</strong>
         </Card>
-        {detail.status === "revoked" && (
-          <Card>
-            <p className="eyebrow">Revoked</p>
-            <strong>{detail.revokedAt ? formatInstant(detail.revokedAt) : "—"}</strong>
-          </Card>
-        )}
       </div>
 
       <Card className="form-section">
-        <h2>Supporting sessions</h2>
+        <h2>Earned from</h2>
         {detail.supportingSessions.length === 0 ? (
-          <EmptyState
-            title="No supporting sessions"
-            description="This qualification has no linked training sessions."
-          />
+          <p className="muted">No supporting sessions on record.</p>
         ) : (
           <ul className="mobile-list" aria-label="Supporting sessions">
             {detail.supportingSessions.map((row) => (
               <li key={row.sessionId}>
                 <div>
-                  <strong>
+                  <Link href={`/employee/sops/${row.sopId}`}>
                     {row.sopTitle} · v{row.sopVersionNumber}
-                  </strong>
-                  <span>{row.completedAt ? formatInstant(row.completedAt) : "—"}</span>
+                  </Link>
+                  <span>
+                    {row.completedAt ? `Completed ${formatInstant(row.completedAt)}` : "—"}
+                  </span>
                 </div>
               </li>
             ))}
           </ul>
         )}
       </Card>
+
+      {detail.status === "revoked" && (
+        <Card className="form-section">
+          <h2>Revoked</h2>
+          <p>{detail.revokedAt ? formatInstant(detail.revokedAt) : "—"}</p>
+          {detail.revokedNote && <p>{detail.revokedNote}</p>}
+        </Card>
+      )}
     </div>
   );
 }
