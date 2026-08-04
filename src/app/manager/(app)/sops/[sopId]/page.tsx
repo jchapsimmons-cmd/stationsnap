@@ -28,6 +28,14 @@ export default async function SopOverviewPage({ params }: { params: Promise<{ so
             <Link className="button button--secondary" href={`/manager/sops/${sop.id}/versions`}>
               Versions
             </Link>
+            {sop.status === "published" && (
+              <Link
+                className="button button--secondary"
+                href={`/manager/sops/${sop.id}/translations`}
+              >
+                Translations
+              </Link>
+            )}
             {canEdit && (
               <>
                 <Link className="button button--secondary" href={`/manager/sops/${sop.id}/edit`}>

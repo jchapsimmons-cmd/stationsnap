@@ -61,7 +61,9 @@ export type AuditAction =
   | "checklist_run.submitted"
   | "checklist_run.approval_decided"
   | "checklist_run.correction_requested"
-  | "checklist_run.correction_resubmitted";
+  | "checklist_run.correction_resubmitted"
+  | "translation.updated"
+  | "translation.approved";
 
 export interface AuditEventInput {
   organizationId?: string;
