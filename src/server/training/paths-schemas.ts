@@ -10,7 +10,10 @@ export const qualificationOverviewTabValues = [
   "expired",
 ] as const;
 
-const optionalUuid = z.union([z.literal(""), z.uuid()]).transform((value) => value || null);
+const optionalUuid = z
+  .union([z.literal(""), z.uuid()])
+  .default("")
+  .transform((value) => value || null);
 
 const definitionInputSchema = z.object({
   name: z.string().trim().min(1).max(160),
