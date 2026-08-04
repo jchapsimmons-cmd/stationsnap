@@ -5,6 +5,7 @@ import { writeAuditEvent } from "@/server/audit";
 import type { EmployeeSessionContext, ManagerSessionContext } from "@/server/auth/sessions";
 import { getDb } from "@/server/db/client";
 import { translations } from "@/server/db/schema";
+import { writeDomainEvent } from "@/server/events";
 import { getPublishedSopForEmployee, getSop } from "@/server/sops/service";
 import type { translationTargetLocaleValues, TranslationUpsertInput } from "@/server/sops/schemas";
 
@@ -315,6 +316,14 @@ export async function approveTranslation(
     targetId: sopId,
     metadata: { entityType: row.entityType, field: row.field, targetLocale: row.targetLocale },
     requestId,
+  });
+  await writeDomainEvent({
+    organizationId: actor.organizationId,
+    locationId: sop.locationId,
+    type: "translation.approved",
+    subjectType: "sop",
+    subjectId: sopId,
+    payload: { entityType: row.entityType, field: row.field, targetLocale: row.targetLocale },
   });
 
   const targetLocale = asTargetLocale(row.targetLocale);

@@ -61,6 +61,47 @@ export function MobileList({
   );
 }
 
+/** Page-number pagination for report/activity tables, where "N of M" matters more than infinite scroll. */
+export function Pagination({
+  page,
+  pageSize,
+  total,
+  buildHref,
+}: {
+  page: number;
+  pageSize: number;
+  total: number;
+  buildHref: (page: number) => string;
+}) {
+  const totalPages = Math.max(1, Math.ceil(total / pageSize));
+  if (totalPages <= 1) return null;
+  const hasPrevious = page > 1;
+  const hasNext = page < totalPages;
+  return (
+    <nav className="pagination" aria-label="Pagination">
+      <a
+        className="button button--secondary"
+        aria-disabled={!hasPrevious}
+        href={hasPrevious ? buildHref(page - 1) : undefined}
+        tabIndex={hasPrevious ? undefined : -1}
+      >
+        Previous
+      </a>
+      <span className="pagination__status">
+        Page {page} of {totalPages} · {total} total
+      </span>
+      <a
+        className="button button--secondary"
+        aria-disabled={!hasNext}
+        href={hasNext ? buildHref(page + 1) : undefined}
+        tabIndex={hasNext ? undefined : -1}
+      >
+        Next
+      </a>
+    </nav>
+  );
+}
+
 export interface TabItem {
   href: string;
   label: string;

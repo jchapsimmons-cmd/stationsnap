@@ -7,6 +7,7 @@ import type { ManagerSessionContext } from "@/server/auth/sessions";
 import { bumpRunRevision, getChecklistRunDetail } from "@/server/checklists/runs";
 import type { ChecklistApprovalDecisionInput } from "@/server/checklists/schemas";
 import { getDb } from "@/server/db/client";
+import { writeDomainEvent } from "@/server/events";
 import {
   checklistApprovalDecisions,
   checklistApprovalSubmissions,
@@ -128,6 +129,14 @@ export async function decideChecklistRun(
       requestId,
     });
   }
+  await writeDomainEvent({
+    organizationId: actor.organizationId,
+    locationId: run.locationId,
+    type: "checklist_run.approval_decided",
+    subjectType: "checklist_run",
+    subjectId: runId,
+    payload: { decision: input.decision, submissionId: submission.id },
+  });
 
   return getChecklistRunDetail(actor, runId);
 }

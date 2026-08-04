@@ -5,6 +5,7 @@ import { writeAuditEvent } from "@/server/audit";
 import { requireManagerManagedLocation } from "@/server/auth/authorization";
 import type { EmployeeSessionContext, ManagerSessionContext } from "@/server/auth/sessions";
 import { getDb } from "@/server/db/client";
+import { writeDomainEvent } from "@/server/events";
 import {
   employeeQualifications,
   employees,
@@ -22,6 +23,7 @@ import {
 import { getManagedLocationIds, requireActiveManagedLocation } from "@/server/management/service";
 import type {
   QualificationOverviewQuery,
+  QualificationsReportQuery,
   TrainingPathCreateInput,
   TrainingPathItemInput,
   TrainingPathQuery,
@@ -458,6 +460,14 @@ export async function revokeQualification(
     targetType: "employee_qualification",
     targetId: qualificationId,
     requestId,
+  });
+  await writeDomainEvent({
+    organizationId: actor.organizationId,
+    locationId: row.locationId,
+    type: "qualification.revoked",
+    subjectType: "employee_qualification",
+    subjectId: qualificationId,
+    payload: {},
   });
 
   return getQualificationDetail(actor, qualificationId);
@@ -1024,6 +1034,41 @@ export async function listQualificationsOverview(
     }
   }
   return rows;
+}
+
+/**
+ * Paginated qualification-status report for `/manager/reports/qualifications`. `listQualificationsOverview`
+ * already computes the full tenant/location-scoped, classification-filtered set in memory (bounded
+ * by active employees × qualification definitions per location, the same set `/manager/qualifications`
+ * renders unpaginated); this wraps it with a stable sort and an offset slice rather than duplicating
+ * its award/expiry derivation.
+ */
+export async function getQualificationsReport(
+  actor: ManagerSessionContext,
+  query: QualificationsReportQuery,
+): Promise<{
+  items: QualificationOverviewRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+}> {
+  const rows = await listQualificationsOverview(actor, {
+    locationId: query.locationId,
+    tab: query.tab,
+  });
+  const sorted = [...rows].sort((a, b) => {
+    const employeeCompare = a.employeeName.localeCompare(b.employeeName);
+    return employeeCompare !== 0
+      ? employeeCompare
+      : a.definitionName.localeCompare(b.definitionName);
+  });
+  const start = (query.page - 1) * query.pageSize;
+  return {
+    items: sorted.slice(start, start + query.pageSize),
+    total: sorted.length,
+    page: query.page,
+    pageSize: query.pageSize,
+  };
 }
 
 async function loadSupportingSessionsDetail(organizationId: string, qualificationId: string) {

@@ -1844,6 +1844,59 @@ export const checklistCorrectionRequests = pgTable(
 // src/server/sops/translations.ts. Every referenced row is itself immutable once its SOP version
 // is published, so a translation's source text can only go stale, never be edited out from
 // under it.
+export const domainEventProcessingStatus = pgEnum("domain_event_processing_status", [
+  "pending",
+  "processed",
+]);
+
+/**
+ * Transactional outbox of business-lifecycle facts, written after the mutation that caused them
+ * commits (same best-effort convention `audit_events` already uses, not literally inside the same
+ * transaction). Distinct from `audit_events`: audit events are the append-only security/action log
+ * for every request, while domain events are a curated subset of business milestones meant to
+ * drive `/manager/activity` now and Phase 16's notification job later — hence `processingStatus`,
+ * unused until that phase, defaulting to `pending` so nothing needs a backfill when it lands.
+ */
+export const domainEvents = pgTable(
+  "domain_events",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    locationId: uuid("location_id"),
+    type: text("type").notNull(),
+    subjectType: text("subject_type").notNull(),
+    subjectId: uuid("subject_id").notNull(),
+    payload: jsonb("payload")
+      .$type<Record<string, string | number | boolean | null>>()
+      .notNull()
+      .default({}),
+    occurredAt: timestamp("occurred_at", { withTimezone: true }).notNull().defaultNow(),
+    processingStatus: domainEventProcessingStatus("processing_status").notNull().default("pending"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.locationId, table.organizationId],
+      foreignColumns: [locations.id, locations.organizationId],
+      name: "domain_events_location_org_fk",
+    }).onDelete("restrict"),
+    index("domain_events_org_occurred_idx").on(table.organizationId, table.occurredAt),
+    index("domain_events_org_location_occurred_idx").on(
+      table.organizationId,
+      table.locationId,
+      table.occurredAt,
+    ),
+    index("domain_events_org_type_occurred_idx").on(
+      table.organizationId,
+      table.type,
+      table.occurredAt,
+    ),
+    index("domain_events_processing_status_idx").on(table.processingStatus),
+  ],
+);
+
 export const translations = pgTable(
   "translations",
   {

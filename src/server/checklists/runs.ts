@@ -1,11 +1,13 @@
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, isNull, or, sql } from "drizzle-orm";
 import { calendarDateInTimeZone, isoWeekStartInTimeZone } from "@/lib/timezone";
 import { AppError } from "@/lib/errors";
 import { writeAuditEvent } from "@/server/audit";
 import { requireManagerManagedLocation } from "@/server/auth/authorization";
 import type { EmployeeSessionContext, ManagerSessionContext } from "@/server/auth/sessions";
+import { writeDomainEvent } from "@/server/events";
 import type {
+  ChecklistCompletionReportQuery,
   ChecklistItemActionInput,
   ChecklistItemEvidenceUploadFormInput,
   ChecklistItemNoteInput,
@@ -756,6 +758,14 @@ export async function submitChecklistRun(
     runId,
     requestId,
   );
+  await writeDomainEvent({
+    organizationId: session.organizationId,
+    locationId: session.locationId,
+    type: "checklist_run.submitted",
+    subjectType: "checklist_run",
+    subjectId: runId,
+    payload: { status: needsApproval ? "awaiting_approval" : "submitted" },
+  });
   return getChecklistRunState(session, runId);
 }
 
@@ -829,6 +839,100 @@ export async function listChecklistRuns(actor: ManagerSessionContext, query: Che
     .where(and(...conditions))
     .orderBy(desc(checklistRuns.updatedAt))
     .limit(300);
+}
+
+/**
+ * Paginated checklist-completion report for `/manager/reports/checklists`. Same tenant/location
+ * scoping and join shape as `listChecklistRuns`, extended with a bounded search and a real total
+ * count instead of a fixed 300-row cap.
+ */
+export async function getChecklistCompletionReport(
+  actor: ManagerSessionContext,
+  query: ChecklistCompletionReportQuery,
+) {
+  const empty = { items: [], total: 0, page: query.page, pageSize: query.pageSize };
+  const managedIds = await getManagedLocationIds(actor);
+  if (managedIds.length === 0) return empty;
+  if (query.locationId && !managedIds.includes(query.locationId)) return empty;
+
+  const conditions = [
+    eq(checklistRuns.organizationId, actor.organizationId),
+    inArray(checklistRuns.locationId, query.locationId ? [query.locationId] : managedIds),
+  ];
+  if (query.status) conditions.push(eq(checklistRuns.status, query.status));
+  if (query.search) {
+    const pattern = `%${query.search}%`;
+    conditions.push(or(ilike(employees.displayName, pattern), ilike(checklists.title, pattern))!);
+  }
+
+  const db = getDb();
+  const base = () =>
+    db
+      .select({
+        id: checklistRuns.id,
+        status: checklistRuns.status,
+        startedAt: checklistRuns.startedAt,
+        submittedAt: checklistRuns.submittedAt,
+        completedAt: checklistRuns.completedAt,
+        checklistId: checklistRuns.checklistId,
+        checklistTitle: checklists.title,
+        checklistType: checklists.type,
+        employeeId: checklistRuns.employeeId,
+        employeeName: employees.displayName,
+        locationId: checklistRuns.locationId,
+        locationName: locations.name,
+        updatedAt: checklistRuns.updatedAt,
+      })
+      .from(checklistRuns)
+      .innerJoin(
+        checklists,
+        and(
+          eq(checklists.id, checklistRuns.checklistId),
+          eq(checklists.organizationId, checklistRuns.organizationId),
+        ),
+      )
+      .innerJoin(
+        employees,
+        and(
+          eq(employees.id, checklistRuns.employeeId),
+          eq(employees.organizationId, checklistRuns.organizationId),
+        ),
+      )
+      .innerJoin(
+        locations,
+        and(
+          eq(locations.id, checklistRuns.locationId),
+          eq(locations.organizationId, checklistRuns.organizationId),
+        ),
+      );
+
+  const [items, totalRows] = await Promise.all([
+    base()
+      .where(and(...conditions))
+      .orderBy(desc(checklistRuns.updatedAt), desc(checklistRuns.id))
+      .limit(query.pageSize)
+      .offset((query.page - 1) * query.pageSize),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(checklistRuns)
+      .innerJoin(
+        checklists,
+        and(
+          eq(checklists.id, checklistRuns.checklistId),
+          eq(checklists.organizationId, checklistRuns.organizationId),
+        ),
+      )
+      .innerJoin(
+        employees,
+        and(
+          eq(employees.id, checklistRuns.employeeId),
+          eq(employees.organizationId, checklistRuns.organizationId),
+        ),
+      )
+      .where(and(...conditions)),
+  ]);
+
+  return { items, total: totalRows[0]?.count ?? 0, page: query.page, pageSize: query.pageSize };
 }
 
 /** Full manager review context for one run: items, evidence, and the approval/correction history. */

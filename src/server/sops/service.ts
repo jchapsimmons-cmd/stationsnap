@@ -3,6 +3,7 @@ import { and, asc, desc, eq, ilike, inArray, isNull, lt, or, sql, type SQL } fro
 import { AppError } from "@/lib/errors";
 import { writeAuditEvent } from "@/server/audit";
 import { requireManagerManagedLocation } from "@/server/auth/authorization";
+import { writeDomainEvent } from "@/server/events";
 import type { EmployeeSessionContext, ManagerSessionContext } from "@/server/auth/sessions";
 import { getDb } from "@/server/db/client";
 import {
@@ -33,6 +34,7 @@ import type {
   SopQuery,
   SopStepCreateInput,
   SopStepUpdateInput,
+  SopVersionHistoryReportQuery,
   StepTrainingRequirementsInput,
   TrainingConfigUpdateInput,
   TrainingQuestionCreateInput,
@@ -1501,6 +1503,14 @@ export async function publishSop(
   });
 
   await auditSop(actor, "sop.published", sopId, base.sop.locationId, requestId);
+  await writeDomainEvent({
+    organizationId: actor.organizationId,
+    locationId: base.sop.locationId,
+    type: "sop.published",
+    subjectType: "sop",
+    subjectId: sopId,
+    payload: { versionNumber: draft.versionNumber, isUpdate },
+  });
   return getSop(actor, sopId);
 }
 
@@ -1527,6 +1537,14 @@ export async function archiveSop(actor: ManagerSessionContext, sopId: string, re
     }
   });
   await auditSop(actor, "sop.archived", sopId, detail.sop.locationId, requestId);
+  await writeDomainEvent({
+    organizationId: actor.organizationId,
+    locationId: detail.sop.locationId,
+    type: "sop.archived",
+    subjectType: "sop",
+    subjectId: sopId,
+    payload: { versionTitle: detail.version.title },
+  });
   return getSop(actor, sopId);
 }
 
@@ -1811,6 +1829,77 @@ export async function listSopVersions(actor: ManagerSessionContext, sopId: strin
     .where(and(eq(sopVersions.sopId, sopId), eq(sopVersions.organizationId, actor.organizationId)))
     .orderBy(desc(sopVersions.versionNumber));
   return { sopId, currentVersionId: base.sop.currentVersionId, versions };
+}
+
+/**
+ * Paginated version-history report for `/manager/reports/sop-versions`, across every SOP a manager
+ * can see rather than one at a time like `listSopVersions`. Same tenant/location scoping as
+ * `listSops`, ordered newest-published-first so managers can review what changed recently.
+ */
+export async function getSopVersionHistoryReport(
+  actor: ManagerSessionContext,
+  query: SopVersionHistoryReportQuery,
+) {
+  const empty = { items: [], total: 0, page: query.page, pageSize: query.pageSize };
+  const managedIds = await getManagedLocationIds(actor);
+  if (managedIds.length === 0) return empty;
+  if (query.locationId && !managedIds.includes(query.locationId)) return empty;
+
+  const conditions: SQL[] = [
+    eq(sops.organizationId, actor.organizationId),
+    inArray(sops.locationId, query.locationId ? [query.locationId] : managedIds),
+  ];
+  if (query.category) conditions.push(eq(sops.category, query.category));
+  if (query.status) conditions.push(eq(sopVersions.status, query.status));
+  if (query.search) {
+    const pattern = `%${query.search}%`;
+    conditions.push(ilike(sopVersions.title, pattern));
+  }
+
+  const db = getDb();
+  const base = () =>
+    db
+      .select({
+        id: sopVersions.id,
+        sopId: sops.id,
+        versionNumber: sopVersions.versionNumber,
+        status: sopVersions.status,
+        title: sopVersions.title,
+        category: sops.category,
+        changeSummary: sopVersions.changeSummary,
+        publishedAt: sopVersions.publishedAt,
+        publishedByManagerUserId: sopVersions.publishedByManagerUserId,
+        locationId: sops.locationId,
+        locationName: locations.name,
+        createdAt: sopVersions.createdAt,
+      })
+      .from(sopVersions)
+      .innerJoin(
+        sops,
+        and(eq(sops.id, sopVersions.sopId), eq(sops.organizationId, sopVersions.organizationId)),
+      )
+      .innerJoin(
+        locations,
+        and(eq(locations.id, sops.locationId), eq(locations.organizationId, sops.organizationId)),
+      );
+
+  const [items, totalRows] = await Promise.all([
+    base()
+      .where(and(...conditions))
+      .orderBy(desc(sopVersions.createdAt), desc(sopVersions.id))
+      .limit(query.pageSize)
+      .offset((query.page - 1) * query.pageSize),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(sopVersions)
+      .innerJoin(
+        sops,
+        and(eq(sops.id, sopVersions.sopId), eq(sops.organizationId, sopVersions.organizationId)),
+      )
+      .where(and(...conditions)),
+  ]);
+
+  return { items, total: totalRows[0]?.count ?? 0, page: query.page, pageSize: query.pageSize };
 }
 
 export async function getSopVersionDetail(
