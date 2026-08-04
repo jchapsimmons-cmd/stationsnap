@@ -4,7 +4,21 @@ import { parseInput } from "@/lib/validation";
 import { requireManager } from "@/server/auth/authorization";
 import { assertSameOrigin, getRequestFingerprint } from "@/server/auth/request-security";
 import { trainingPathUpdateSchema } from "@/server/training/paths-schemas";
-import { updatePath } from "@/server/training/qualifications";
+import { getPathDetail, updatePath } from "@/server/training/qualifications";
+
+export async function GET(
+  request: Request,
+  { params }: { params: Promise<{ pathId: string }> },
+): Promise<Response> {
+  const context = getRequestFingerprint(request);
+  try {
+    const actor = await requireManager(context.requestId);
+    const { pathId } = await params;
+    return successResponse(await getPathDetail(actor, pathId));
+  } catch (error: unknown) {
+    return errorResponse(error, context.requestId);
+  }
+}
 
 export async function PATCH(
   request: Request,
