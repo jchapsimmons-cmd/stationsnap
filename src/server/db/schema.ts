@@ -103,6 +103,12 @@ export const approvalSubmissionStatus = pgEnum("approval_submission_status", [
   "pending",
   "approved",
   "rejected",
+  "needs_correction",
+]);
+export const approvalDecisionType = pgEnum("approval_decision_type", [
+  "approved",
+  "rejected",
+  "needs_correction",
 ]);
 
 const timestamps = {
@@ -1120,10 +1126,100 @@ export const approvalSubmissions = pgTable(
       foreignColumns: [trainingSessions.id, trainingSessions.organizationId],
       name: "approval_submissions_session_org_fk",
     }).onDelete("cascade"),
+    unique("approval_submissions_id_org_unique").on(table.id, table.organizationId),
     unique("approval_submissions_session_generation_uidx").on(
       table.sessionId,
       table.submissionGeneration,
     ),
     index("approval_submissions_org_status_idx").on(table.organizationId, table.status),
+    index("approval_submissions_org_status_submitted_idx").on(
+      table.organizationId,
+      table.status,
+      table.submittedAt,
+    ),
+  ],
+);
+
+/**
+ * One immutable row per manager decision on an approval submission. The application layer only
+ * ever inserts here: a decision is never updated or deleted, so a submission's full review
+ * history — including every superseded correction round — stays readable forever.
+ * `pinConfirmationAuditEventId` is the documented optional PIN-confirmation reference; managers
+ * do not hold PINs today, so it is written as null until a PIN re-entry flow exists.
+ */
+export const approvalDecisions = pgTable(
+  "approval_decisions",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    submissionId: uuid("submission_id").notNull(),
+    decision: approvalDecisionType("decision").notNull(),
+    note: text("note").notNull().default(""),
+    decidedByManagerUserId: uuid("decided_by_manager_user_id")
+      .notNull()
+      .references(() => managerUsers.id, { onDelete: "restrict" }),
+    pinConfirmationAuditEventId: uuid("pin_confirmation_audit_event_id").references(
+      () => auditEvents.id,
+      { onDelete: "restrict" },
+    ),
+    decidedAt: timestamp("decided_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.submissionId, table.organizationId],
+      foreignColumns: [approvalSubmissions.id, approvalSubmissions.organizationId],
+      name: "approval_decisions_submission_org_fk",
+    }).onDelete("restrict"),
+    unique("approval_decisions_id_org_unique").on(table.id, table.organizationId),
+    index("approval_decisions_submission_decided_idx").on(table.submissionId, table.decidedAt),
+    index("approval_decisions_org_decided_idx").on(table.organizationId, table.decidedAt),
+  ],
+);
+
+/**
+ * One row per `needs_correction` decision. The manager note is not copied here: it lives on the
+ * owning `approval_decisions` row, so the required-note rule is validated and stored exactly once.
+ * `replacementGeneration` is the approval-submission generation the employee's resubmission will
+ * take; it is deliberately independent of `training_evidence.submission_generation`, which counts
+ * evidence revisions within a live session. Resolution is the only mutation: the original evidence
+ * and the decision that requested the fix always stay linked and readable.
+ */
+export const correctionRequests = pgTable(
+  "correction_requests",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    submissionId: uuid("submission_id").notNull(),
+    decisionId: uuid("decision_id").notNull(),
+    replacementGeneration: integer("replacement_generation").notNull(),
+    resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+    resolvedSubmissionId: uuid("resolved_submission_id"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.submissionId, table.organizationId],
+      foreignColumns: [approvalSubmissions.id, approvalSubmissions.organizationId],
+      name: "correction_requests_submission_org_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.decisionId, table.organizationId],
+      foreignColumns: [approvalDecisions.id, approvalDecisions.organizationId],
+      name: "correction_requests_decision_org_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.resolvedSubmissionId, table.organizationId],
+      foreignColumns: [approvalSubmissions.id, approvalSubmissions.organizationId],
+      name: "correction_requests_resolved_submission_org_fk",
+    }).onDelete("restrict"),
+    unique("correction_requests_decision_uidx").on(table.decisionId),
+    uniqueIndex("correction_requests_open_submission_uidx")
+      .on(table.submissionId)
+      .where(sql`resolved_at is null`),
+    index("correction_requests_org_submission_idx").on(table.organizationId, table.submissionId),
   ],
 );
