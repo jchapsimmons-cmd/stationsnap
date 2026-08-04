@@ -8,6 +8,7 @@ import {
   ClockCounterClockwise,
   CookingPot,
   Gear,
+  GraduationCap,
   House,
   MapPin,
   MoonStars,
@@ -33,6 +34,7 @@ function NavIcon({ href }: { href: string }) {
   if (href.includes("opening")) return <SunHorizon {...props} />;
   if (href.includes("closing")) return <MoonStars {...props} />;
   if (href.includes("qr")) return <QrCode {...props} />;
+  if (href.includes("training")) return <GraduationCap {...props} />;
   if (href.includes("sops")) return <ClipboardText {...props} />;
   if (href.includes("locations")) return <MapPin {...props} />;
   if (href.includes("stations")) return <CookingPot {...props} />;

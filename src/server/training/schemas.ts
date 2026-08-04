@@ -2,10 +2,74 @@ import { z } from "zod";
 
 const revision = z.coerce.number().int().min(1);
 
+export const trainingAssignmentStatusValues = [
+  "assigned",
+  "in_progress",
+  "completed",
+  "failed",
+  "cancelled",
+] as const;
+
+export const trainingAssignmentSkipReasonValues = [
+  "duplicate_active",
+  "employee_inactive",
+  "location_mismatch",
+  "not_found",
+] as const;
+
+const dueDateSchema = z
+  .string()
+  .trim()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, "Use YYYY-MM-DD.")
+  .refine((value) => {
+    const [year, month, day] = value.split("-").map(Number);
+    if (!year || !month || !day) return false;
+    const date = new Date(Date.UTC(year, month - 1, day));
+    return (
+      date.getUTCFullYear() === year &&
+      date.getUTCMonth() === month - 1 &&
+      date.getUTCDate() === day
+    );
+  }, "Enter a valid calendar date.");
+
+const employeesTargetSchema = z.object({
+  type: z.literal("employees"),
+  employeeIds: z
+    .array(z.uuid())
+    .min(1, "Choose at least one employee.")
+    .max(200, "Choose at most 200 employees.")
+    .transform((ids) => [...new Set(ids)]),
+});
+
+const jobRolesTargetSchema = z.object({
+  type: z.literal("jobRoles"),
+  jobRoles: z
+    .array(z.string().trim().min(1).max(80))
+    .min(1, "Choose at least one job role.")
+    .max(20, "Choose at most 20 job roles.")
+    .transform((roles) => [...new Set(roles)]),
+});
+
+const locationTargetSchema = z.object({
+  type: z.literal("location"),
+});
+
+export const trainingAssignmentTargetSchema = z.discriminatedUnion("type", [
+  employeesTargetSchema,
+  jobRolesTargetSchema,
+  locationTargetSchema,
+]);
+
 export const trainingAssignmentCreateSchema = z.object({
-  employeeId: z.uuid(),
   sopId: z.uuid(),
   requiredMode: z.enum(["learn", "guided", "test", "demonstration"]).optional(),
+  dueDate: dueDateSchema.optional(),
+  target: trainingAssignmentTargetSchema,
+});
+
+export const trainingAssignmentQuerySchema = z.object({
+  status: z.union([z.literal(""), z.enum(trainingAssignmentStatusValues)]).default(""),
+  locationId: z.union([z.literal(""), z.uuid()]).default(""),
 });
 
 export const trainingSessionRevisionSchema = z.object({
@@ -38,7 +102,10 @@ export const trainingSessionSubmitSchema = z.object({
   expectedRevision: revision,
 });
 
+export type TrainingAssignmentTargetInput = z.infer<typeof trainingAssignmentTargetSchema>;
 export type TrainingAssignmentCreateInput = z.infer<typeof trainingAssignmentCreateSchema>;
+export type TrainingAssignmentQuery = z.infer<typeof trainingAssignmentQuerySchema>;
+export type TrainingAssignmentSkipReason = (typeof trainingAssignmentSkipReasonValues)[number];
 export type TrainingSessionRevisionInput = z.infer<typeof trainingSessionRevisionSchema>;
 export type TrainingStepActionInput = z.infer<typeof trainingStepActionSchema>;
 export type TrainingAnswerSubmitInput = z.infer<typeof trainingAnswerSubmitSchema>;

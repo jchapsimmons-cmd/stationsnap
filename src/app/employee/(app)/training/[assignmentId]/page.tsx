@@ -1,23 +1,9 @@
 import Link from "next/link";
 import { StartOrResumeAction } from "@/components/training/start-or-resume-action";
+import { ASSIGNMENT_STATUS_TONE, TRAINING_MODE_LABELS } from "@/components/training/status";
 import { Card, PageHeader, StatusBadge } from "@/components/ui";
 import { requireEmployeePage } from "@/server/auth/authorization";
 import { getAssignmentDetail } from "@/server/training/service";
-
-const MODE_LABELS: Record<string, string> = {
-  learn: "Learn",
-  guided: "Guided",
-  test: "Test",
-  demonstration: "Demonstration",
-};
-
-const STATUS_TONE: Record<string, "neutral" | "success" | "warning" | "danger" | "info"> = {
-  assigned: "info",
-  in_progress: "warning",
-  completed: "success",
-  failed: "danger",
-  cancelled: "neutral",
-};
 
 export default async function EmployeeTrainingAssignmentPage({
   params,
@@ -39,11 +25,11 @@ export default async function EmployeeTrainingAssignmentPage({
     <div className="page-stack">
       <PageHeader
         title={assignment.sopTitle}
-        description={`${MODE_LABELS[assignment.requiredMode]} training`}
+        description={`${TRAINING_MODE_LABELS[assignment.requiredMode]} training`}
       />
       <Card>
         <div className="action-row">
-          <StatusBadge tone={STATUS_TONE[assignment.status] ?? "neutral"}>
+          <StatusBadge tone={ASSIGNMENT_STATUS_TONE[assignment.status] ?? "neutral"}>
             {assignment.status.replace("_", " ")}
           </StatusBadge>
           <StatusBadge tone="neutral">

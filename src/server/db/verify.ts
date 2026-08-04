@@ -4,6 +4,7 @@ import path from "node:path";
 import { eq } from "drizzle-orm";
 import EmbeddedPostgres from "embedded-postgres";
 import { Pool } from "pg";
+import { endOfDayInTimeZone } from "@/lib/timezone";
 import { changeManagerRole, disableManagerAccount, resetEmployeePin } from "@/server/auth/admin";
 import { managerCanAccessLocation, requireManagerLocation } from "@/server/auth/authorization";
 import { createOpaqueToken, hashToken, verifySecret } from "@/server/auth/crypto";
@@ -127,6 +128,9 @@ async function verifyUpgradeMigration(): Promise<void> {
   const pool = new Pool({
     connectionString: `postgresql://${user}:${password}@localhost:${port}/${upgradeDatabase}`,
   });
+  // See the matching comment in src/server/db/client.ts: an unhandled 'error' event on a
+  // pg Pool crashes the process, so every ad-hoc Pool needs its own listener too.
+  pool.on("error", () => undefined);
   try {
     await pool.query(
       await readFile(path.resolve("drizzle", "0000_colossal_sugar_man.sql"), "utf8"),
@@ -2655,41 +2659,56 @@ async function verifyDatabase(): Promise<void> {
     throw new Error("Publishing the Phase 8 training fixture did not succeed");
   }
 
-  let crossLocationAssignmentRejected = false;
-  try {
-    await assignTraining(
-      managerContext,
-      { employeeId: employeeSeed[3].id, sopId: engineDraft.id },
-      "verify-phase8-assign-cross-location-rejected",
+  const crossLocationAssignResult = await assignTraining(
+    managerContext,
+    {
+      sopId: engineDraft.id,
+      target: { type: "employees", employeeIds: [employeeSeed[3].id] },
+    },
+    "verify-phase9-assign-cross-location-skipped",
+  );
+  if (
+    crossLocationAssignResult.created.length !== 0 ||
+    crossLocationAssignResult.skipped.length !== 1 ||
+    crossLocationAssignResult.skipped[0]?.reason !== "location_mismatch"
+  ) {
+    throw new Error(
+      "An employee outside the SOP's location was not independently skipped with a location_mismatch reason",
     );
-  } catch {
-    crossLocationAssignmentRejected = true;
-  }
-  if (!crossLocationAssignmentRejected) {
-    throw new Error("An assignment was created for an employee outside the SOP's location");
   }
 
-  const engineAssignment = await assignTraining(
+  const engineAssignmentResult = await assignTraining(
     managerContext,
-    { employeeId: employeeSeed[0].id, sopId: engineDraft.id },
+    {
+      sopId: engineDraft.id,
+      target: { type: "employees", employeeIds: [employeeSeed[0].id] },
+    },
     "verify-phase8-assign-create",
   );
-  if (engineAssignment.status !== "assigned" || engineAssignment.requiredMode !== "guided") {
+  const engineAssignment = engineAssignmentResult.created[0];
+  if (
+    !engineAssignment ||
+    engineAssignmentResult.created.length !== 1 ||
+    engineAssignment.status !== "assigned" ||
+    engineAssignment.requiredMode !== "guided"
+  ) {
     throw new Error("Assignment creation did not persist the expected defaults");
   }
 
-  let duplicateActiveAssignmentRejected = false;
-  try {
-    await assignTraining(
-      managerContext,
-      { employeeId: employeeSeed[0].id, sopId: engineDraft.id },
-      "verify-phase8-assign-duplicate-rejected",
-    );
-  } catch {
-    duplicateActiveAssignmentRejected = true;
-  }
-  if (!duplicateActiveAssignmentRejected) {
-    throw new Error("A duplicate active assignment was accepted");
+  const duplicateActiveAssignResult = await assignTraining(
+    managerContext,
+    {
+      sopId: engineDraft.id,
+      target: { type: "employees", employeeIds: [employeeSeed[0].id] },
+    },
+    "verify-phase9-assign-duplicate-skipped",
+  );
+  if (
+    duplicateActiveAssignResult.created.length !== 0 ||
+    duplicateActiveAssignResult.skipped.length !== 1 ||
+    duplicateActiveAssignResult.skipped[0]?.reason !== "duplicate_active"
+  ) {
+    throw new Error("A duplicate active assignment was not independently skipped");
   }
 
   let foreignAssignmentRejected = false;
@@ -3092,11 +3111,18 @@ async function verifyDatabase(): Promise<void> {
     throw new Error("Publishing the attempt-limit fixture did not succeed");
   }
 
-  const attemptLimitAssignment = await assignTraining(
+  const attemptLimitAssignResult = await assignTraining(
     managerContext,
-    { employeeId: employeeSeed[1].id, sopId: attemptLimitDraft.id },
+    {
+      sopId: attemptLimitDraft.id,
+      target: { type: "employees", employeeIds: [employeeSeed[1].id] },
+    },
     "verify-phase8-attempt-limit-assign",
   );
+  const attemptLimitAssignment = attemptLimitAssignResult.created[0];
+  if (!attemptLimitAssignment) {
+    throw new Error("The attempt-limit fixture assignment was not created");
+  }
 
   const secondEmployeeLogin = await loginEmployee(
     {
@@ -3162,12 +3188,16 @@ async function verifyDatabase(): Promise<void> {
     throw new Error("The assignment did not move to failed once attempts were exhausted");
   }
 
-  const retrainingAssignment = await assignTraining(
+  const retrainingAssignResult = await assignTraining(
     managerContext,
-    { employeeId: employeeSeed[1].id, sopId: attemptLimitDraft.id },
+    {
+      sopId: attemptLimitDraft.id,
+      target: { type: "employees", employeeIds: [employeeSeed[1].id] },
+    },
     "verify-phase8-retraining-assign",
   );
-  if (retrainingAssignment.status !== "assigned") {
+  const retrainingAssignment = retrainingAssignResult.created[0];
+  if (!retrainingAssignment || retrainingAssignment.status !== "assigned") {
     throw new Error(
       "Re-assigning training after exhausted attempts did not create a fresh assignment",
     );
@@ -3178,6 +3208,217 @@ async function verifyDatabase(): Promise<void> {
     .where(eq(trainingAssignments.id, retrainingAssignment.id));
   if (retrainingRow?.retrainingGeneration !== 1) {
     throw new Error("Retraining assignment did not increment the generation counter");
+  }
+
+  // --- Phase 9: bulk assignment targeting, due dates, and duplicate prevention ---
+
+  const bulkDraft = await createSop(
+    managerContext,
+    {
+      title: "Bulk assignment training",
+      description: "Minimal training used to exercise bulk assignment targeting",
+      category: "general_procedure",
+      locationId: seedIds.locations.downtown,
+      stationId: null,
+      estimatedMinutes: 5,
+      difficulty: "beginner",
+      coverImageFileId: null,
+      sourceVideoFileId: null,
+      materials: [],
+      warnings: [],
+    },
+    "verify-phase9-sop-create",
+  );
+  const bulkStepDraft = await createStep(
+    managerContext,
+    bulkDraft.id,
+    {
+      title: "Read the procedure",
+      instruction: "Read the bulk assignment training procedure.",
+      imageFileId: null,
+      videoFileId: null,
+      warning: "",
+      quantity: "",
+      unit: "",
+      equipmentSetting: "",
+      timerSeconds: null,
+      isRequired: true,
+      expectedRevision: bulkDraft.version.revision,
+    },
+    "verify-phase9-step-create",
+  );
+  const bulkConfig = await updateTrainingConfig(
+    managerContext,
+    bulkDraft.id,
+    {
+      requirementState: "required",
+      defaultMode: "learn",
+      allowBacktracking: true,
+      requireSequentialProgress: true,
+      requireFullVideoWatch: false,
+      requireEvidenceApproval: false,
+      passingScorePercent: 80,
+      maxAttempts: 3,
+      qualificationValidityDays: null,
+      retrainingGraceDays: null,
+      expectedRevision: bulkStepDraft.version.revision,
+    },
+    "verify-phase9-config-save",
+  );
+  const bulkPublished = await publishSop(
+    managerContext,
+    bulkDraft.id,
+    {
+      expectedRevision: bulkConfig.revision,
+      changeSummary: "",
+      retrainingRule: { type: "none" },
+    },
+    "verify-phase9-publish",
+  );
+  if (bulkPublished.status !== "published") {
+    throw new Error("Publishing the Phase 9 bulk assignment fixture did not succeed");
+  }
+
+  let unauthorizedBulkAssignRejected = false;
+  try {
+    await assignTraining(
+      riversideManagerContext,
+      { sopId: bulkDraft.id, target: { type: "location" } },
+      "verify-phase9-assign-unauthorized-rejected",
+    );
+  } catch {
+    unauthorizedBulkAssignRejected = true;
+  }
+  if (!unauthorizedBulkAssignRejected) {
+    throw new Error("A manager without access to the SOP's location bulk-assigned training");
+  }
+
+  const bulkLineCookEmployee = await createEmployee(managerContext, {
+    primaryLocationId: seedIds.locations.downtown,
+    employeeNumber: "9001",
+    displayName: "Bulk Line Cook",
+    jobRole: "Line Cook",
+    language: "en",
+    pin: "9001",
+    status: "active",
+  });
+
+  const explicitDueDate = "2026-09-01";
+  const explicitAssignResult = await assignTraining(
+    managerContext,
+    {
+      sopId: bulkDraft.id,
+      dueDate: explicitDueDate,
+      target: {
+        type: "employees",
+        employeeIds: [employeeSeed[2].id, phaseThreeEmployee.id],
+      },
+    },
+    "verify-phase9-assign-employees",
+  );
+  const expectedDueAt = endOfDayInTimeZone(explicitDueDate, "America/Chicago");
+  if (
+    explicitAssignResult.created.length !== 1 ||
+    explicitAssignResult.created[0]?.employeeId !== employeeSeed[2].id ||
+    explicitAssignResult.created[0]?.dueAt?.getTime() !== expectedDueAt.getTime() ||
+    explicitAssignResult.created[0]?.dueTimezone !== "America/Chicago"
+  ) {
+    throw new Error(
+      "Bulk assignment by explicit employee list did not resolve the due date correctly",
+    );
+  }
+  if (
+    explicitAssignResult.skipped.length !== 1 ||
+    explicitAssignResult.skipped[0]?.employeeId !== phaseThreeEmployee.id ||
+    explicitAssignResult.skipped[0]?.reason !== "employee_inactive"
+  ) {
+    throw new Error("A disabled employee targeted explicitly was not independently skipped");
+  }
+
+  const matchingRoleAssignResult = await assignTraining(
+    managerContext,
+    {
+      sopId: bulkDraft.id,
+      target: { type: "jobRoles", jobRoles: ["line cook"] },
+    },
+    "verify-phase9-assign-job-role-match",
+  );
+  if (
+    matchingRoleAssignResult.created.length !== 1 ||
+    matchingRoleAssignResult.created[0]?.employeeId !== bulkLineCookEmployee.id ||
+    matchingRoleAssignResult.skipped.length !== 0
+  ) {
+    throw new Error(
+      "Bulk assignment by job role did not case-insensitively match the intended employee",
+    );
+  }
+
+  const nonMatchingRoleAssignResult = await assignTraining(
+    managerContext,
+    {
+      sopId: bulkDraft.id,
+      target: { type: "jobRoles", jobRoles: ["Sous Chef"] },
+    },
+    "verify-phase9-assign-job-role-no-match",
+  );
+  if (
+    nonMatchingRoleAssignResult.created.length !== 0 ||
+    nonMatchingRoleAssignResult.skipped.length !== 0
+  ) {
+    throw new Error(
+      "Bulk assignment by a non-matching job role unexpectedly created or skipped an assignment",
+    );
+  }
+
+  const firstLocationAssignResult = await assignTraining(
+    managerContext,
+    { sopId: bulkDraft.id, target: { type: "location" } },
+    "verify-phase9-assign-location-first",
+  );
+  const firstLocationCreatedIds = new Set(
+    firstLocationAssignResult.created.map((row) => row.employeeId),
+  );
+  const firstLocationSkippedIds = new Set(
+    firstLocationAssignResult.skipped.map((row) => row.employeeId),
+  );
+  if (
+    firstLocationAssignResult.created.length !== 2 ||
+    !firstLocationCreatedIds.has(employeeSeed[0].id) ||
+    !firstLocationCreatedIds.has(employeeSeed[1].id) ||
+    firstLocationAssignResult.skipped.length !== 2 ||
+    !firstLocationSkippedIds.has(employeeSeed[2].id) ||
+    !firstLocationSkippedIds.has(bulkLineCookEmployee.id) ||
+    firstLocationAssignResult.skipped.some((row) => row.reason !== "duplicate_active")
+  ) {
+    throw new Error(
+      "Bulk assignment by whole location did not independently create for unassigned employees and skip already-assigned ones",
+    );
+  }
+
+  const bulkFreshEmployee = await createEmployee(managerContext, {
+    primaryLocationId: seedIds.locations.downtown,
+    employeeNumber: "9002",
+    displayName: "Bulk Fresh Hire",
+    jobRole: "Host",
+    language: "en",
+    pin: "9002",
+    status: "active",
+  });
+
+  const secondLocationAssignResult = await assignTraining(
+    managerContext,
+    { sopId: bulkDraft.id, target: { type: "location" } },
+    "verify-phase9-assign-location-second",
+  );
+  if (
+    secondLocationAssignResult.created.length !== 1 ||
+    secondLocationAssignResult.created[0]?.employeeId !== bulkFreshEmployee.id ||
+    secondLocationAssignResult.skipped.length !== 4 ||
+    secondLocationAssignResult.skipped.some((row) => row.reason !== "duplicate_active")
+  ) {
+    throw new Error(
+      "Re-running the same location target did not skip already-assigned employees while still assigning the fresh hire",
+    );
   }
 
   const actions = new Set(
@@ -3230,7 +3471,7 @@ async function verifyDatabase(): Promise<void> {
   await verifyUpgradeMigration();
 
   process.stdout.write(
-    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, migrationConcurrencyLock: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true, employeeStationReader: true, employeeSopReader: true, employeeCategoryLibrary: true, employeeRecentViews: true, employeeMediaAuthorization: true, qrCreationAndTargetValidation: true, qrLocationScoping: true, qrRevocation: true, qrRotation: true, qrScanResolution: true, qrUnavailableTarget: true, qrEnumerationRateLimit: true, trainingConfigDefaultsAndScoping: true, trainingConfigStaleWriteRejection: true, trainingStepRequirementGuards: true, trainingQuestionCrudAndReorder: true, trainingPublishReadinessRules: true, trainingPublishedImmutability: true, trainingDraftCloning: true, trainingAssignmentCreationAndScoping: true, trainingSessionStartAndResume: true, trainingSequentialStepEnforcement: true, trainingWatchTimerQuestionEvidenceEnforcement: true, trainingDuplicateActionRejection: true, trainingScoringAndApprovalRouting: true, trainingSubmitIdempotency: true, trainingAttemptLimitsAndRetraining: true })}\n`,
+    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, migrationConcurrencyLock: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true, employeeStationReader: true, employeeSopReader: true, employeeCategoryLibrary: true, employeeRecentViews: true, employeeMediaAuthorization: true, qrCreationAndTargetValidation: true, qrLocationScoping: true, qrRevocation: true, qrRotation: true, qrScanResolution: true, qrUnavailableTarget: true, qrEnumerationRateLimit: true, trainingConfigDefaultsAndScoping: true, trainingConfigStaleWriteRejection: true, trainingStepRequirementGuards: true, trainingQuestionCrudAndReorder: true, trainingPublishReadinessRules: true, trainingPublishedImmutability: true, trainingDraftCloning: true, trainingAssignmentCreationAndScoping: true, trainingSessionStartAndResume: true, trainingSequentialStepEnforcement: true, trainingWatchTimerQuestionEvidenceEnforcement: true, trainingDuplicateActionRejection: true, trainingScoringAndApprovalRouting: true, trainingSubmitIdempotency: true, trainingAttemptLimitsAndRetraining: true, bulkAssignmentAuthorizationScoping: true, bulkAssignmentByEmployeeListWithDueDate: true, bulkAssignmentByJobRole: true, bulkAssignmentByLocation: true, bulkAssignmentIndependentDuplicateSkip: true })}\n`,
   );
 }
 
