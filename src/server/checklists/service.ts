@@ -59,23 +59,22 @@ async function assertStationInLocation(
   }
 }
 
-async function assertFileReady(organizationId: string, fileId: string): Promise<void> {
-  const [row] = await getDb()
-    .select({ status: files.status })
-    .from(files)
-    .where(and(eq(files.id, fileId), eq(files.organizationId, organizationId)))
-    .limit(1);
-  if (!row || row.status !== "ready") {
-    throw new AppError("BAD_REQUEST", "Finish uploading the media before saving.");
-  }
-}
-
 async function assertItemFilesReady(
   organizationId: string,
   items: readonly ChecklistItemInput[],
 ): Promise<void> {
-  for (const item of items) {
-    if (item.referenceFileId) await assertFileReady(organizationId, item.referenceFileId);
+  const referencedFileIds = items
+    .map((item) => item.referenceFileId)
+    .filter((id): id is string => Boolean(id));
+  if (referencedFileIds.length === 0) return;
+
+  const fileRows = await getDb()
+    .select({ id: files.id, status: files.status })
+    .from(files)
+    .where(and(inArray(files.id, referencedFileIds), eq(files.organizationId, organizationId)));
+  const readyIds = new Set(fileRows.filter((row) => row.status === "ready").map((row) => row.id));
+  if (referencedFileIds.some((id) => !readyIds.has(id))) {
+    throw new AppError("BAD_REQUEST", "Finish uploading the media before saving.");
   }
 }
 

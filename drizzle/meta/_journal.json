@@ -106,6 +106,13 @@
       "when": 1785895393454,
       "tag": "0014_phase16_notifications",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1785905986032,
+      "tag": "0015_exotic_kulan_gath",
+      "breakpoints": true
     }
   ]
 }

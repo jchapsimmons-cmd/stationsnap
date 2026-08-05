@@ -1027,6 +1027,14 @@ export const trainingAssignments = pgTable(
       table.status,
     ),
     index("training_assignments_employee_status_idx").on(table.employeeId, table.status),
+    // Covers the org-wide due-soon/overdue notification reconcile scan (status + due date range,
+    // no location filter), mirroring employee_qualifications_org_status_expiry_idx for the
+    // analogous qualification-expiry scan.
+    index("training_assignments_org_status_due_idx").on(
+      table.organizationId,
+      table.status,
+      table.dueAt,
+    ),
   ],
 );
 

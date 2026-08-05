@@ -16,6 +16,7 @@ import {
 } from "@/server/db/schema";
 import { maxBytesForMediaType, mediaTypeForMime } from "@/server/storage/constants";
 import { createObjectKey, readStoredObject, writeStoredObject } from "@/server/storage/driver";
+import { matchesDeclaredSignature } from "@/server/storage/file-signature";
 
 function sanitizeFileName(name: string): string {
   const cleaned = name.replace(/[\r\n"]/g, "").trim();
@@ -52,6 +53,9 @@ async function storeUploadedFile(
   }
   if (buffer.byteLength === 0) {
     throw new AppError("BAD_REQUEST", "The file is empty.");
+  }
+  if (!matchesDeclaredSignature(entry.type, buffer)) {
+    throw new AppError("BAD_REQUEST", "The file's contents do not match its declared type.");
   }
   const checksum = createHash("sha256").update(buffer).digest("hex");
   const objectKey = createObjectKey(organizationId);
@@ -147,8 +151,8 @@ export async function getMediaFile(actor: ManagerSessionContext, fileId: string)
   if (!row || row.status !== "ready") throw new AppError("NOT_FOUND", "File not found.");
 
   // Employee-uploaded training evidence is location-scoped, not merely organization-scoped: a
-  // manager may only read the proof attached to an assignment at a location they manage. Manager
-  // authored SOP media keeps its existing organization scope.
+  // manager may only read the proof attached to an assignment at a location they manage.
+  // Manager-authored SOP media gets the equivalent check below.
   if (row.uploaderEmployeeId) {
     const [evidenceMatch] = await getDb()
       .select({ locationId: trainingAssignments.locationId })
@@ -176,6 +180,61 @@ export async function getMediaFile(actor: ManagerSessionContext, fileId: string)
       .limit(1);
     if (!evidenceMatch) throw new AppError("NOT_FOUND", "File not found.");
     if (!(await managerCanManageLocation(actor, evidenceMatch.locationId))) {
+      throw new AppError("NOT_FOUND", "File not found.");
+    }
+  } else {
+    // Manager-authored SOP media (cover image, source video, or a step's image/video) is scoped
+    // to the owning SOP's location exactly like every other manager-facing SOP read, not merely
+    // to the organization: a manager restricted to one location must not be able to read another
+    // location's SOP media by fileId alone. A file not yet attached to any SOP field (a fresh
+    // upload mid-draft-edit, before the draft is saved) has no location to check yet and is only
+    // visible to the manager who uploaded it.
+    const [versionMatch] = await getDb()
+      .select({ locationId: sops.locationId })
+      .from(sopVersions)
+      .innerJoin(
+        sops,
+        and(eq(sops.id, sopVersions.sopId), eq(sops.organizationId, sopVersions.organizationId)),
+      )
+      .where(
+        and(
+          eq(sopVersions.organizationId, actor.organizationId),
+          or(eq(sopVersions.coverImageFileId, fileId), eq(sopVersions.sourceVideoFileId, fileId)),
+        ),
+      )
+      .limit(1);
+    const [stepMatch] = versionMatch
+      ? []
+      : await getDb()
+          .select({ locationId: sops.locationId })
+          .from(sopSteps)
+          .innerJoin(
+            sopVersions,
+            and(
+              eq(sopVersions.id, sopSteps.sopVersionId),
+              eq(sopVersions.organizationId, sopSteps.organizationId),
+            ),
+          )
+          .innerJoin(
+            sops,
+            and(
+              eq(sops.id, sopVersions.sopId),
+              eq(sops.organizationId, sopVersions.organizationId),
+            ),
+          )
+          .where(
+            and(
+              eq(sopSteps.organizationId, actor.organizationId),
+              or(eq(sopSteps.imageFileId, fileId), eq(sopSteps.videoFileId, fileId)),
+            ),
+          )
+          .limit(1);
+    const locationMatch = versionMatch ?? stepMatch ?? null;
+    if (locationMatch) {
+      if (!(await managerCanManageLocation(actor, locationMatch.locationId))) {
+        throw new AppError("NOT_FOUND", "File not found.");
+      }
+    } else if (row.uploaderManagerUserId !== actor.managerUserId) {
       throw new AppError("NOT_FOUND", "File not found.");
     }
   }

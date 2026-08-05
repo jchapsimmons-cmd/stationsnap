@@ -1,0 +1,1 @@
+CREATE INDEX "training_assignments_org_status_due_idx" ON "training_assignments" USING btree ("organization_id","status","due_at");

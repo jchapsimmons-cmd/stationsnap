@@ -863,6 +863,13 @@ async function verifyDatabase(): Promise<void> {
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
     "base64",
   );
+  // Not a playable video, but carries a real `ftyp` box so it clears the Phase 17 magic-byte
+  // signature check the same way a genuine (if minimal) MP4 file would.
+  const fakeMp4 = Buffer.concat([
+    Buffer.from([0x00, 0x00, 0x00, 0x18]),
+    Buffer.from("ftypisom", "ascii"),
+    Buffer.from("not-a-real-video", "ascii"),
+  ]);
   async function uploadTestImage(actor: ManagerSessionContext) {
     const formData = new FormData();
     formData.set(
@@ -875,7 +882,7 @@ async function verifyDatabase(): Promise<void> {
     const formData = new FormData();
     formData.set(
       "file",
-      new File([new Uint8Array(Buffer.from("not-a-real-video"))], "reference.mp4", {
+      new File([new Uint8Array(fakeMp4)], "reference.mp4", {
         type: "video/mp4",
       }),
     );
@@ -3101,7 +3108,7 @@ async function verifyDatabase(): Promise<void> {
     const wrongTypeForm = new FormData();
     wrongTypeForm.set(
       "file",
-      new File([new Uint8Array(Buffer.from("not-a-real-video"))], "proof.mp4", {
+      new File([new Uint8Array(fakeMp4)], "proof.mp4", {
         type: "video/mp4",
       }),
     );
@@ -6833,10 +6840,49 @@ async function verifyDatabase(): Promise<void> {
     );
   }
 
+  // --- Phase 17: audit every boundary ---
+  // Uploads are now checked against a real file-signature allowlist in addition to the
+  // client-declared MIME type; a mismatch (real PNG bytes declared as a JPEG) must be rejected.
+  let mismatchedSignatureRejected = false;
+  try {
+    const spoofedForm = new FormData();
+    spoofedForm.set(
+      "file",
+      new File([new Uint8Array(smallPng)], "spoofed.jpg", { type: "image/jpeg" }),
+    );
+    await uploadMedia(managerContext, spoofedForm, "verify-media-signature-mismatch");
+  } catch {
+    mismatchedSignatureRejected = true;
+  }
+  if (!mismatchedSignatureRejected) {
+    throw new Error("A file whose bytes did not match its declared MIME type was accepted");
+  }
+
+  // Manager-authored SOP media (the Phase 4 Downtown cover image) must be location-scoped like
+  // every other manager-facing SOP read, not merely organization-scoped: the Riverside-only
+  // manager must not be able to read it, while the owner (organization-wide) still can.
+  let downtownCoverRejectedForRiversideManager = false;
+  try {
+    await getMediaFile(riversideManagerContext, cleanCover.id);
+  } catch {
+    downtownCoverRejectedForRiversideManager = true;
+  }
+  if (!downtownCoverRejectedForRiversideManager) {
+    throw new Error(
+      "A Riverside-only manager was able to read a Downtown SOP's manager-authored media",
+    );
+  }
+  const ownerCoverRead = await getMediaFile(managerContext, cleanCover.id);
+  if (ownerCoverRead.buffer.length === 0) {
+    throw new Error(
+      "The organization-wide owner could not read a manager-authored SOP cover image",
+    );
+  }
+
   await verifyUpgradeMigration();
 
   process.stdout.write(
-    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, migrationConcurrencyLock: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true, employeeStationReader: true, employeeSopReader: true, employeeCategoryLibrary: true, employeeRecentViews: true, employeeMediaAuthorization: true, qrCreationAndTargetValidation: true, qrLocationScoping: true, qrRevocation: true, qrRotation: true, qrScanResolution: true, qrUnavailableTarget: true, qrEnumerationRateLimit: true, trainingConfigDefaultsAndScoping: true, trainingConfigStaleWriteRejection: true, trainingStepRequirementGuards: true, trainingQuestionCrudAndReorder: true, trainingPublishReadinessRules: true, trainingPublishedImmutability: true, trainingDraftCloning: true, trainingAssignmentCreationAndScoping: true, trainingSessionStartAndResume: true, trainingSequentialStepEnforcement: true, trainingWatchTimerQuestionEvidenceEnforcement: true, trainingDuplicateActionRejection: true, trainingScoringAndApprovalRouting: true, trainingSubmitIdempotency: true, trainingAttemptLimitsAndRetraining: true, bulkAssignmentAuthorizationScoping: true, bulkAssignmentByEmployeeListWithDueDate: true, bulkAssignmentByJobRole: true, bulkAssignmentByLocation: true, bulkAssignmentIndependentDuplicateSkip: true, approvalQueueLocationScoping: true, approvalEvidenceAuthorization: true, approvalDecisionNoteRules: true, approvalApprovedDecision: true, approvalRejectedDecision: true, approvalCorrectionRequest: true, approvalDecisionImmutability: true, correctionOwnershipEnforcement: true, correctionAppendOnlyEvidence: true, correctionResubmitIdempotency: true, approvalDecisionHistoryRetention: true, trainingPathAuthorizationScoping: true, trainingPathItemValidation: true, trainingPathOrderedBlocking: true, qualificationAward: true, qualificationRenewal: true, qualificationOverviewClassification: true, qualificationEmployeeView: true, qualificationRevocation: true, trainingPathArchiveStopsAwards: true, checklistAuthorizationScoping: true, checklistDuplicateTitleRejection: true, checklistRunStartAndResume: true, checklistAutoRequirementGuardsManualTick: true, checklistTimerPhotoNoteEnforcement: true, checklistSubmitRequiresAllRequiredItems: true, checklistDuplicateOccurrencePrevention: true, checklistApprovalRouting: true, checklistApprovalUnauthorizedRejection: true, checklistCorrectionRequestAndResubmit: true, checklistCorrectionResubmitIdempotency: true, checklistApprovalDecisionCompletesRun: true, checklistSubmitIdempotency: true, checklistRunListLocationScoping: true, checklistItemRemovalDisablesRatherThanDeletes: true, checklistHistoricalRunRetainsRemovedItem: true, translationMatrixExcludesProtectedFields: true, translationLocationScoping: true, translationEntityOwnershipGuard: true, translationEmptyApprovalRejected: true, translationEditResetsApproval: true, translationStaleSourceDetection: true, translationEmployeeLocaleSwitchPreservesProtectedFields: true, translationUnapprovedFallsBackToOriginal: true, domainEventEmissionCoverage: true, activityFeedLocationScoping: true, activityFeedTypeFilterAndPagination: true, trainingProgressReportFilteringAndScoping: true, qualificationsReportFilteringAndPagination: true, checklistCompletionReportFilteringAndScoping: true, sopVersionHistoryReportFilteringAndScoping: true, approvalHistoryReportUnionAndScoping: true, sopVersionPrintRecordFidelity: true, sopVersionPrintDraftRejection: true, sopVersionPrintLocationScoping: true, trainingSessionPrintRecordFidelity: true, trainingSessionPrintLocationScoping: true, printPdfGeneration: true, printPdfTextFidelity: true, csvExportRowFidelity: true, csvExportFormulaInjectionDefusing: true, notificationDomainEventCoverage: true, notificationNonNotificationTypesExcluded: true, notificationSynchronousDispatch: true, notificationEmployeeInbox: true, notificationMarkReadIdempotencyAndScoping: true, notificationManagerInboxAndLocationScoping: true, notificationDisabledEmployeeSuppression: true, notificationDisabledManagerSuppression: true, notificationDedupeKeyRetryIdempotency: true, notificationPendingEventReconcile: true, notificationEmailSkippedWithoutSmtp: true, notificationTimeBasedDueSoonAndOverdue: true, notificationTimeBasedExpiringSoon: true, notificationTimeReconcileSameDayGuard: true, notificationTimeReconcileTimezoneBoundary: true })}\n`,
+    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, migrationConcurrencyLock: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true, employeeStationReader: true, employeeSopReader: true, employeeCategoryLibrary: true, employeeRecentViews: true, employeeMediaAuthorization: true, qrCreationAndTargetValidation: true, qrLocationScoping: true, qrRevocation: true, qrRotation: true, qrScanResolution: true, qrUnavailableTarget: true, qrEnumerationRateLimit: true, trainingConfigDefaultsAndScoping: true, trainingConfigStaleWriteRejection: true, trainingStepRequirementGuards: true, trainingQuestionCrudAndReorder: true, trainingPublishReadinessRules: true, trainingPublishedImmutability: true, trainingDraftCloning: true, trainingAssignmentCreationAndScoping: true, trainingSessionStartAndResume: true, trainingSequentialStepEnforcement: true, trainingWatchTimerQuestionEvidenceEnforcement: true, trainingDuplicateActionRejection: true, trainingScoringAndApprovalRouting: true, trainingSubmitIdempotency: true, trainingAttemptLimitsAndRetraining: true, bulkAssignmentAuthorizationScoping: true, bulkAssignmentByEmployeeListWithDueDate: true, bulkAssignmentByJobRole: true, bulkAssignmentByLocation: true, bulkAssignmentIndependentDuplicateSkip: true, approvalQueueLocationScoping: true, approvalEvidenceAuthorization: true, approvalDecisionNoteRules: true, approvalApprovedDecision: true, approvalRejectedDecision: true, approvalCorrectionRequest: true, approvalDecisionImmutability: true, correctionOwnershipEnforcement: true, correctionAppendOnlyEvidence: true, correctionResubmitIdempotency: true, approvalDecisionHistoryRetention: true, trainingPathAuthorizationScoping: true, trainingPathItemValidation: true, trainingPathOrderedBlocking: true, qualificationAward: true, qualificationRenewal: true, qualificationOverviewClassification: true, qualificationEmployeeView: true, qualificationRevocation: true, trainingPathArchiveStopsAwards: true, checklistAuthorizationScoping: true, checklistDuplicateTitleRejection: true, checklistRunStartAndResume: true, checklistAutoRequirementGuardsManualTick: true, checklistTimerPhotoNoteEnforcement: true, checklistSubmitRequiresAllRequiredItems: true, checklistDuplicateOccurrencePrevention: true, checklistApprovalRouting: true, checklistApprovalUnauthorizedRejection: true, checklistCorrectionRequestAndResubmit: true, checklistCorrectionResubmitIdempotency: true, checklistApprovalDecisionCompletesRun: true, checklistSubmitIdempotency: true, checklistRunListLocationScoping: true, checklistItemRemovalDisablesRatherThanDeletes: true, checklistHistoricalRunRetainsRemovedItem: true, translationMatrixExcludesProtectedFields: true, translationLocationScoping: true, translationEntityOwnershipGuard: true, translationEmptyApprovalRejected: true, translationEditResetsApproval: true, translationStaleSourceDetection: true, translationEmployeeLocaleSwitchPreservesProtectedFields: true, translationUnapprovedFallsBackToOriginal: true, domainEventEmissionCoverage: true, activityFeedLocationScoping: true, activityFeedTypeFilterAndPagination: true, trainingProgressReportFilteringAndScoping: true, qualificationsReportFilteringAndPagination: true, checklistCompletionReportFilteringAndScoping: true, sopVersionHistoryReportFilteringAndScoping: true, approvalHistoryReportUnionAndScoping: true, sopVersionPrintRecordFidelity: true, sopVersionPrintDraftRejection: true, sopVersionPrintLocationScoping: true, trainingSessionPrintRecordFidelity: true, trainingSessionPrintLocationScoping: true, printPdfGeneration: true, printPdfTextFidelity: true, csvExportRowFidelity: true, csvExportFormulaInjectionDefusing: true, notificationDomainEventCoverage: true, notificationNonNotificationTypesExcluded: true, notificationSynchronousDispatch: true, notificationEmployeeInbox: true, notificationMarkReadIdempotencyAndScoping: true, notificationManagerInboxAndLocationScoping: true, notificationDisabledEmployeeSuppression: true, notificationDisabledManagerSuppression: true, notificationDedupeKeyRetryIdempotency: true, notificationPendingEventReconcile: true, notificationEmailSkippedWithoutSmtp: true, notificationTimeBasedDueSoonAndOverdue: true, notificationTimeBasedExpiringSoon: true, notificationTimeReconcileSameDayGuard: true, notificationTimeReconcileTimezoneBoundary: true, mediaSignatureValidation: true, mediaManagerAuthoredLocationScoping: true })}\n`,
   );
 }
 
