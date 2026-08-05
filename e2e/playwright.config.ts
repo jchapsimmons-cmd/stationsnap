@@ -8,7 +8,7 @@ import { defineConfig } from "@playwright/test";
  * `npx playwright test` directly against this config without an app already listening at
  * `E2E_APP_URL`; use `npm run test:e2e` instead.
  */
-const baseURL = process.env["E2E_APP_URL"] ?? "http://127.0.0.1:4310";
+const baseURL = process.env["E2E_APP_URL"] ?? "http://localhost:4310";
 
 export default defineConfig({
   testDir: "./tests",

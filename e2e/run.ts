@@ -23,7 +23,14 @@ const database = "stationsnap_e2e";
 const dbUser = "postgres";
 const dbPassword = randomBytes(24).toString("base64url");
 const appPort = Number(process.env["E2E_APP_PORT"] ?? 4310);
-const appHost = "127.0.0.1";
+// Next.js's own request-URL construction inside route handlers (e.g. the `new URL(path,
+// request.url)` redirects in src/app/q/[token]/route.ts) normalizes the host to "localhost"
+// under `next start` regardless of the Host header a client actually sent or which interface
+// `-H` bound to. Using "localhost" everywhere here — bind host, advertised APP_URL, and (by
+// default) Playwright's baseURL — keeps every origin the browser ever sees consistent, which
+// matters because a QR scan's absolute redirect chain must stay on one origin for the employee
+// session cookie it sets to still be readable by Playwright's later same-origin navigations.
+const appHost = "localhost";
 const appUrl = `http://${appHost}:${appPort}`;
 const managerPassword = randomBytes(18).toString("base64url");
 const employeePin = "9042";

@@ -149,9 +149,12 @@ async function configureTraining(page: Page, sopId: string): Promise<void> {
   await page.goto(`/manager/sops/${sopId}/training`);
   await page.getByLabel("Requirement").selectOption({ label: "Required" });
   await page.getByLabel("Default mode").selectOption({ label: "Guided" });
+  // Toggle's decorative track/thumb spans sit visually over the real (accessible) checkbox input,
+  // so a plain click lands on the overlay rather than the input Playwright resolved; `force: true`
+  // clicks the input directly rather than waiting on visual stability that will never resolve.
   await page
     .getByRole("switch", { name: "Require manager approval of submitted evidence" })
-    .check();
+    .check({ force: true });
   await page.getByLabel("Passing score (%)").fill("0");
   await page.getByLabel("Maximum attempts").fill("3");
   await submitAndWaitForApi(page, `/sops/${sopId}/training`, () =>
@@ -159,9 +162,13 @@ async function configureTraining(page: Page, sopId: string): Promise<void> {
   );
   await expect(page.getByText("Training configuration saved.")).toBeVisible();
 
-  await page.getByRole("switch", { name: "Require an explicit confirmation" }).check();
-  await page.getByRole("switch", { name: "Require photo evidence" }).check();
-  await page.getByRole("switch", { name: "Require manager approval" }).check();
+  await page
+    .getByRole("switch", { name: "Require an explicit confirmation" })
+    .check({ force: true });
+  await page.getByRole("switch", { name: "Require photo evidence" }).check({ force: true });
+  await page
+    .getByRole("switch", { name: "Require manager approval", exact: true })
+    .check({ force: true });
   await submitAndWaitForApi(page, "/training/steps/", () =>
     page.getByRole("button", { name: "Save step requirements" }).click(),
   );
@@ -172,7 +179,9 @@ async function addFinalQuestion(page: Page, sopId: string): Promise<void> {
   const finalQuestionsCard = page.locator(".card", { hasText: "Final questions" });
   await finalQuestionsCard.getByRole("button", { name: "Add question" }).click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByLabel("Question").fill("Was the procedure followed correctly?");
+  await dialog
+    .getByLabel("Question", { exact: true })
+    .fill("Was the procedure followed correctly?");
   await dialog.getByLabel("Choice 1").fill("Yes");
   await dialog.getByLabel("Choice 2").fill("No");
   await submitAndWaitForApi(page, "/training/questions", () =>
@@ -211,7 +220,7 @@ async function createTrainingPath(page: Page, fixture: Fixture): Promise<void> {
   ]);
 }
 
-/** Returns the full scan URL text (e.g. `http://127.0.0.1:4310/q/{token}`) shown once at creation. */
+/** Returns the full scan URL text (e.g. `http://localhost:4310/q/{token}`) shown once at creation. */
 async function createQrCode(page: Page, fixture: Fixture): Promise<string> {
   await page.goto("/manager/qr/new");
   await page.getByLabel("Location").selectOption({ label: fixture.locationName });
@@ -239,7 +248,7 @@ async function assignTraining(
   await submitAndWaitForApi(page, "/api/management/training/assignments", () =>
     page.getByRole("button", { name: "Assign training" }).click(),
   );
-  await expect(page.getByText(/1 assignment\(s\) created\./)).toBeVisible();
+  await expect(page.getByText(/1 assignment created\./)).toBeVisible();
 }
 
 async function loginAsEmployeeViaQr(page: Page, scanUrl: string, fixture: Fixture): Promise<void> {
@@ -256,7 +265,12 @@ async function loginAsEmployeeViaQr(page: Page, scanUrl: string, fixture: Fixtur
 /** Starts (or resumes) the employee's assignment for `sopTitle` and runs it to submission. */
 async function completeGuidedTraining(page: Page, sopTitle: string): Promise<void> {
   await page.goto("/employee/training");
-  await page.getByRole("link", { name: new RegExp(sopTitle) }).click();
+  // A retraining pass has two cards for the same SOP title: the earlier completed attempt and the
+  // new assignment. Only the not-yet-completed one is still actionable here.
+  await page
+    .getByRole("link", { name: new RegExp(sopTitle) })
+    .filter({ hasNotText: "completed" })
+    .click();
 
   const startButton = page.getByRole("button", { name: /Start (training|next attempt)/ });
   const resumeLink = page.getByRole("link", { name: "Continue where you left off" });
