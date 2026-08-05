@@ -6,6 +6,7 @@ import { writeAuditEvent } from "@/server/audit";
 import { requireManagerManagedLocation } from "@/server/auth/authorization";
 import type { EmployeeSessionContext, ManagerSessionContext } from "@/server/auth/sessions";
 import { writeDomainEvent } from "@/server/events";
+import { dispatchNotificationsForDomainEvent } from "@/server/notifications/service";
 import type {
   ChecklistCompletionReportQuery,
   ChecklistItemActionInput,
@@ -758,7 +759,7 @@ export async function submitChecklistRun(
     runId,
     requestId,
   );
-  await writeDomainEvent({
+  const submittedEvent = await writeDomainEvent({
     organizationId: session.organizationId,
     locationId: session.locationId,
     type: "checklist_run.submitted",
@@ -766,6 +767,7 @@ export async function submitChecklistRun(
     subjectId: runId,
     payload: { status: needsApproval ? "awaiting_approval" : "submitted" },
   });
+  await dispatchNotificationsForDomainEvent(submittedEvent);
   return getChecklistRunState(session, runId);
 }
 

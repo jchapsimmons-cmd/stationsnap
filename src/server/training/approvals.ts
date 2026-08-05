@@ -6,6 +6,7 @@ import { requireManagerManagedLocation } from "@/server/auth/authorization";
 import type { EmployeeSessionContext, ManagerSessionContext } from "@/server/auth/sessions";
 import { getDb } from "@/server/db/client";
 import { writeDomainEvent } from "@/server/events";
+import { dispatchNotificationsForDomainEvent } from "@/server/notifications/service";
 import {
   approvalDecisions,
   approvalSubmissions,
@@ -498,7 +499,7 @@ export async function decideApprovalSubmission(
       requestId,
     });
   }
-  await writeDomainEvent({
+  const approvalDecidedEvent = await writeDomainEvent({
     organizationId: actor.organizationId,
     locationId: context.assignment.locationId,
     type: "training.approval_decided",
@@ -506,6 +507,7 @@ export async function decideApprovalSubmission(
     subjectId: context.assignment.id,
     payload: { decision: input.decision, submissionId },
   });
+  await dispatchNotificationsForDomainEvent(approvalDecidedEvent);
   for (const outcome of awardOutcomes) {
     await writeAuditEvent({
       organizationId: actor.organizationId,
@@ -518,7 +520,7 @@ export async function decideApprovalSubmission(
       metadata: { definitionId: outcome.definitionId, isNewAward: outcome.isNewAward },
       requestId,
     });
-    await writeDomainEvent({
+    const qualificationAwardedEvent = await writeDomainEvent({
       organizationId: actor.organizationId,
       locationId: context.assignment.locationId,
       type: "qualification.awarded",
@@ -526,6 +528,7 @@ export async function decideApprovalSubmission(
       subjectId: outcome.qualificationId,
       payload: { definitionId: outcome.definitionId, isNewAward: outcome.isNewAward },
     });
+    await dispatchNotificationsForDomainEvent(qualificationAwardedEvent);
   }
 
   return getApprovalSubmissionDetail(actor, submissionId);

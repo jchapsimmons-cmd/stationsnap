@@ -12,6 +12,7 @@ import type {
 } from "@/server/checklists/schemas";
 import { getDb } from "@/server/db/client";
 import { writeDomainEvent } from "@/server/events";
+import { dispatchNotificationsForDomainEvent } from "@/server/notifications/service";
 import {
   checklistItemProgress,
   checklistItems,
@@ -274,7 +275,7 @@ export async function createChecklist(
     input.locationId,
     requestId,
   );
-  await writeDomainEvent({
+  const checklistCreatedEvent = await writeDomainEvent({
     organizationId: actor.organizationId,
     locationId: input.locationId,
     type: "checklist.created",
@@ -282,6 +283,7 @@ export async function createChecklist(
     subjectId: checklistId,
     payload: { title: input.title, type: input.type },
   });
+  await dispatchNotificationsForDomainEvent(checklistCreatedEvent);
   return getChecklistDetail(actor, checklistId);
 }
 

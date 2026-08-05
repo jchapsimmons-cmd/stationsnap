@@ -1,11 +1,11 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { eq, sql } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import EmbeddedPostgres from "embedded-postgres";
 import { Pool } from "pg";
 import { PDFDocument } from "pdf-lib";
-import { endOfDayInTimeZone } from "@/lib/timezone";
+import { calendarDateInTimeZone, endOfDayInTimeZone } from "@/lib/timezone";
 import { changeManagerRole, disableManagerAccount, resetEmployeePin } from "@/server/auth/admin";
 import { managerCanAccessLocation, requireManagerLocation } from "@/server/auth/authorization";
 import { createOpaqueToken, hashToken, verifySecret } from "@/server/auth/crypto";
@@ -40,6 +40,7 @@ import {
   createEmployee,
   createLocation,
   createStation,
+  getLocationRecipientManagers,
   getStationForEmployee,
   listEmployees,
   listStationsForEmployee,
@@ -57,12 +58,24 @@ import {
   domainEvents,
   employeeQualifications,
   files as filesTable,
+  notificationDeliveries,
+  notifications,
   qrScanEvents,
   qualificationSupportingSessions,
+  scheduledJobRuns,
   translations as translationsTable,
   trainingAssignments,
 } from "@/server/db/schema";
-import { domainEventTypeValues, listActivity } from "@/server/events";
+import { domainEventTypeValues, listActivity, type DomainEventRecord } from "@/server/events";
+import {
+  dispatchNotificationsForDomainEvent,
+  listNotificationsForEmployee,
+  listNotificationsForManager,
+  markEmployeeNotificationRead,
+  markManagerNotificationRead,
+  reconcilePendingDomainEventNotifications,
+  reconcileTimeBasedNotifications,
+} from "@/server/notifications/service";
 import { getApprovalHistoryReport } from "@/server/reports";
 import {
   createQrCode,
@@ -6307,10 +6320,523 @@ async function verifyDatabase(): Promise<void> {
     throw new Error("A formula-triggering employee name was not defused with the expected prefix");
   }
 
+  // --- Phase 16: idempotent in-app and SMTP-backed email notifications ---
+  // Every fixture above already exercised every mutation that now also dispatches a Phase 16
+  // notification (bulk assignment creation, session completion into awaiting_approval/passed/
+  // failed, training and checklist approval decisions, qualification award/revoke, checklist run
+  // submission into awaiting_approval), so this section proves the resulting `notifications`/
+  // `notification_deliveries` rows, list/read-state reads, dedupe idempotency, disabled-recipient
+  // suppression, and the time-based due/expiry reconcile pass, rather than re-deriving new
+  // fixtures for most of it.
+
+  const notificationTypeRows = await getDb()
+    .select({ type: notifications.type })
+    .from(notifications)
+    .where(eq(notifications.organizationId, seedIds.organization));
+  const observedNotificationTypes = new Set(notificationTypeRows.map((row) => row.type));
+  const expectedEventDrivenNotificationTypes = [
+    "training.assigned",
+    "training.awaiting_approval",
+    "training.completed",
+    "training.approval_decided",
+    "qualification.awarded",
+    "qualification.revoked",
+    "checklist_run.awaiting_approval",
+    "checklist_run.approval_decided",
+  ] as const;
+  const missingNotificationTypes = expectedEventDrivenNotificationTypes.filter(
+    (type) => !observedNotificationTypes.has(type),
+  );
+  if (missingNotificationTypes.length > 0) {
+    throw new Error(
+      `Missing notification types from earlier fixtures: ${missingNotificationTypes.join(", ")}`,
+    );
+  }
+  // sop.published, sop.archived, checklist.created, and translation.approved are deliberately not
+  // notification-worthy on their own — they stay purely on /manager/activity via domain_events, so
+  // the dispatcher must never have generated a notification for one of them.
+  const nonNotificationTypes = [
+    "sop.published",
+    "sop.archived",
+    "checklist.created",
+    "translation.approved",
+  ] as const;
+  if (nonNotificationTypes.some((type) => observedNotificationTypes.has(type))) {
+    throw new Error(
+      "A domain event type outside Phase 16's notification-worthy set produced a notification",
+    );
+  }
+
+  // Every domain event this run produced so far was dispatched synchronously at its own write
+  // site, so none should still be `pending` — the reconcile catch-up path only does real work in
+  // the dedicated fixture further down.
+  const pendingBeforeReconcile = await getDb()
+    .select({ count: sql<number>`count(*)::int` })
+    .from(domainEvents)
+    .where(
+      and(
+        eq(domainEvents.organizationId, seedIds.organization),
+        eq(domainEvents.processingStatus, "pending"),
+      ),
+    );
+  if ((pendingBeforeReconcile[0]?.count ?? 0) !== 0) {
+    throw new Error(
+      "A domain event was left unprocessed despite dispatching synchronously at every write site",
+    );
+  }
+
+  // Employee inbox: the Phase 14 report-path employee was assigned, completed training, and was
+  // awarded a qualification earlier in this run, so all three notification types should already
+  // be in their inbox, unread.
+  const reportPathEmployeeNotifications = await listNotificationsForEmployee(
+    reportPathEmployeeSession,
+    { unreadOnly: "", type: "", page: 1, pageSize: 100 },
+  );
+  const reportPathEmployeeTypes = new Set(
+    reportPathEmployeeNotifications.items.map((item) => item.type),
+  );
+  if (
+    !reportPathEmployeeTypes.has("training.assigned") ||
+    !reportPathEmployeeTypes.has("training.completed") ||
+    !reportPathEmployeeTypes.has("qualification.awarded")
+  ) {
+    throw new Error("The report-path employee's inbox was missing an expected notification type");
+  }
+  if (reportPathEmployeeNotifications.items.some((item) => item.readAt !== null)) {
+    throw new Error("A freshly generated notification was already marked read");
+  }
+
+  // Mark-as-read: idempotent (a second mark-read on the same notification is a harmless no-op),
+  // reflected immediately in an unreadOnly re-list, and scoped strictly to the acting recipient —
+  // a manager cannot mark an employee's notification read through the manager-side function, since
+  // it only ever matches rows whose recipientType is "manager".
+  const firstUnread = reportPathEmployeeNotifications.items[0];
+  if (!firstUnread) throw new Error("Expected at least one unread notification to mark read");
+  await markEmployeeNotificationRead(reportPathEmployeeSession, firstUnread.id);
+  await markEmployeeNotificationRead(reportPathEmployeeSession, firstUnread.id);
+  const afterMarkRead = await listNotificationsForEmployee(reportPathEmployeeSession, {
+    unreadOnly: "1",
+    type: "",
+    page: 1,
+    pageSize: 100,
+  });
+  if (afterMarkRead.items.some((item) => item.id === firstUnread.id)) {
+    throw new Error("A read notification still appeared in the unread-only list");
+  }
+  let crossRecipientMarkReadRejected = false;
+  try {
+    await markManagerNotificationRead(managerContext, firstUnread.id);
+  } catch {
+    crossRecipientMarkReadRejected = true;
+  }
+  if (!crossRecipientMarkReadRejected) {
+    throw new Error("A manager was able to mark an employee's notification read");
+  }
+
+  // Manager inbox: the owner sees org-wide notifications, including approval-queue items awaiting
+  // review; a Downtown-scoped manager never receives one addressed to a Riverside-only recipient.
+  const ownerNotifications = await listNotificationsForManager(managerContext, {
+    unreadOnly: "",
+    type: "",
+    page: 1,
+    pageSize: 200,
+  });
+  if (ownerNotifications.total === 0) {
+    throw new Error("The owner's notification inbox was unexpectedly empty");
+  }
+  const ownerNotificationTypes = new Set(ownerNotifications.items.map((item) => item.type));
+  if (
+    !ownerNotificationTypes.has("training.awaiting_approval") &&
+    !ownerNotificationTypes.has("checklist_run.awaiting_approval")
+  ) {
+    throw new Error("The owner's inbox never received an approval-queue notification");
+  }
+  const scopedManagerNotifications = await listNotificationsForManager(scopedManagerContext, {
+    unreadOnly: "",
+    type: "",
+    page: 1,
+    pageSize: 200,
+  });
+  if (
+    scopedManagerNotifications.items.some(
+      (item) => item.locationId !== null && item.locationId !== seedIds.locations.downtown,
+    )
+  ) {
+    throw new Error(
+      "A location-scoped manager received a notification outside their managed location",
+    );
+  }
+
+  // Disabled employee recipients receive nothing: `phaseThreeEmployee` has been disabled since
+  // early in this run. Attach a qualification-award event to them directly — the dispatcher must
+  // consult the employee's *current* status, not whatever it was when the underlying business row
+  // was written, and generate nothing.
+  const disabledEmployeeQualificationId = randomUUID();
+  await getDb().insert(employeeQualifications).values({
+    id: disabledEmployeeQualificationId,
+    organizationId: seedIds.organization,
+    employeeId: phaseThreeEmployee.id,
+    definitionId: reportPath.definition.id,
+    sourcePathId: reportPath.id,
+    awardedAt: new Date(),
+    status: "active",
+  });
+  const disabledEmployeeEvent: DomainEventRecord = {
+    id: randomUUID(),
+    organizationId: seedIds.organization,
+    locationId: seedIds.locations.downtown,
+    type: "qualification.awarded",
+    subjectType: "employee_qualification",
+    subjectId: disabledEmployeeQualificationId,
+    payload: { definitionId: reportPath.definition.id, isNewAward: true },
+    occurredAt: new Date(),
+  };
+  await dispatchNotificationsForDomainEvent(disabledEmployeeEvent);
+  const disabledEmployeeNotificationCount = await getDb()
+    .select({ count: sql<number>`count(*)::int` })
+    .from(notifications)
+    .where(
+      and(
+        eq(notifications.recipientType, "employee"),
+        eq(notifications.recipientId, phaseThreeEmployee.id),
+      ),
+    );
+  if ((disabledEmployeeNotificationCount[0]?.count ?? 0) !== 0) {
+    throw new Error("A disabled employee received a notification");
+  }
+
+  // Disabled manager recipients receive nothing: the Riverside manager fixture is a valid
+  // recipient candidate for Riverside before being disabled, and is excluded afterward.
+  const riversideRecipientsBeforeDisable = await getLocationRecipientManagers(
+    seedIds.organization,
+    seedIds.locations.riverside,
+  );
+  if (
+    !riversideRecipientsBeforeDisable.some(
+      (manager) => manager.membershipId === seedIds.memberships.riverside,
+    )
+  ) {
+    throw new Error(
+      "The Riverside manager fixture was not a recipient candidate before being disabled",
+    );
+  }
+  await disableManagerAccount(
+    managerContext,
+    seedIds.memberships.riverside,
+    "verify-phase16-disable-manager",
+  );
+  const riversideRecipientsAfterDisable = await getLocationRecipientManagers(
+    seedIds.organization,
+    seedIds.locations.riverside,
+  );
+  if (
+    riversideRecipientsAfterDisable.some(
+      (manager) => manager.membershipId === seedIds.memberships.riverside,
+    )
+  ) {
+    throw new Error("A disabled manager was still returned as a notification recipient candidate");
+  }
+
+  // Retry/dedupe idempotency: queue a second "qualification.awarded" event for an employee who
+  // already has one, simulating a retried or duplicated dispatch (e.g. after a mid-request crash
+  // between the notification insert and marking the event processed). Dispatching it twice in a
+  // row must still leave exactly one notification row for that event's dedupe key.
+  const retryEventId = randomUUID();
+  await getDb()
+    .insert(domainEvents)
+    .values({
+      id: retryEventId,
+      organizationId: seedIds.organization,
+      locationId: seedIds.locations.downtown,
+      type: "qualification.awarded",
+      subjectType: "employee_qualification",
+      subjectId: samQualification.id,
+      payload: { definitionId: samQualification.definitionId, isNewAward: false },
+    });
+  const [retryEventRow] = await getDb()
+    .select()
+    .from(domainEvents)
+    .where(eq(domainEvents.id, retryEventId))
+    .limit(1);
+  if (!retryEventRow) throw new Error("The dedupe-retry fixture domain event was not inserted");
+  const retryEvent: DomainEventRecord = {
+    id: retryEventRow.id,
+    organizationId: retryEventRow.organizationId,
+    locationId: retryEventRow.locationId,
+    type: retryEventRow.type as DomainEventRecord["type"],
+    subjectType: retryEventRow.subjectType as DomainEventRecord["subjectType"],
+    subjectId: retryEventRow.subjectId,
+    payload: retryEventRow.payload,
+    occurredAt: retryEventRow.occurredAt,
+  };
+  await dispatchNotificationsForDomainEvent(retryEvent);
+  await dispatchNotificationsForDomainEvent(retryEvent);
+  const retryDedupeKey = `event:${retryEventId}:employee:${samQualification.employeeId}`;
+  const retryNotificationCount = await getDb()
+    .select({ count: sql<number>`count(*)::int` })
+    .from(notifications)
+    .where(eq(notifications.dedupeKey, retryDedupeKey));
+  if ((retryNotificationCount[0]?.count ?? 0) !== 1) {
+    throw new Error("A retried domain event dispatch produced more than one notification");
+  }
+  const [retryEventAfter] = await getDb()
+    .select({ processingStatus: domainEvents.processingStatus })
+    .from(domainEvents)
+    .where(eq(domainEvents.id, retryEventId))
+    .limit(1);
+  if (retryEventAfter?.processingStatus !== "processed") {
+    throw new Error("A dispatched domain event was not marked processed");
+  }
+
+  // Catch-up reconcile: insert one more pending event directly, bypassing the synchronous dispatch
+  // every real write site performs, to prove `reconcilePendingDomainEventNotifications` — the
+  // entry point both notification pages call on every read — finds and processes it.
+  const catchUpEventId = randomUUID();
+  await getDb().insert(domainEvents).values({
+    id: catchUpEventId,
+    organizationId: seedIds.organization,
+    locationId: seedIds.locations.downtown,
+    type: "qualification.revoked",
+    subjectType: "employee_qualification",
+    subjectId: samQualification.id,
+    payload: {},
+  });
+  await reconcilePendingDomainEventNotifications(seedIds.organization);
+  const catchUpDedupeKey = `event:${catchUpEventId}:employee:${samQualification.employeeId}`;
+  const catchUpNotification = await getDb()
+    .select({ id: notifications.id })
+    .from(notifications)
+    .where(eq(notifications.dedupeKey, catchUpDedupeKey))
+    .limit(1);
+  if (catchUpNotification.length === 0) {
+    throw new Error("reconcilePendingDomainEventNotifications did not process a pending event");
+  }
+  const [catchUpEventAfter] = await getDb()
+    .select({ processingStatus: domainEvents.processingStatus })
+    .from(domainEvents)
+    .where(eq(domainEvents.id, catchUpEventId))
+    .limit(1);
+  if (catchUpEventAfter?.processingStatus !== "processed") {
+    throw new Error("The catch-up reconcile pass did not mark its event processed");
+  }
+
+  // Manager email delivery bookkeeping: this environment has no SMTP configured, so every manager
+  // notification's email delivery attempt must be recorded as `skipped` with a safe, non-secret
+  // error code — never silently dropped, and never containing anything from a raw provider error.
+  const emailDeliveryRows = await getDb()
+    .select({ status: notificationDeliveries.status, errorCode: notificationDeliveries.errorCode })
+    .from(notificationDeliveries)
+    .innerJoin(
+      notifications,
+      and(
+        eq(notifications.id, notificationDeliveries.notificationId),
+        eq(notifications.organizationId, notificationDeliveries.organizationId),
+      ),
+    )
+    .where(
+      and(
+        eq(notificationDeliveries.organizationId, seedIds.organization),
+        eq(notificationDeliveries.channel, "email"),
+        eq(notifications.recipientType, "manager"),
+      ),
+    );
+  if (emailDeliveryRows.length === 0) {
+    throw new Error("No manager notification ever attempted an email delivery");
+  }
+  if (
+    emailDeliveryRows.some(
+      (row) => row.status !== "skipped" || row.errorCode !== "smtp_not_configured",
+    )
+  ) {
+    throw new Error(
+      "An email delivery attempt in an SMTP-less environment was not recorded as safely skipped",
+    );
+  }
+
+  // Time-based reconcile: due-soon/overdue training and an expiring-soon qualification, gated to
+  // run at most once per organization per organization-local calendar day.
+  const timeFixtureEmployee = await createEmployee(managerContext, {
+    primaryLocationId: seedIds.locations.downtown,
+    employeeNumber: "9108",
+    displayName: "Taylor Deadline",
+    jobRole: "Cook",
+    language: "en",
+    pin: "9108",
+    status: "active",
+  });
+  const dueSoonSopFixture = await createMinimalPublishedSop(
+    managerContext,
+    "Phase 16 Due Soon Fixture SOP",
+    seedIds.locations.downtown,
+    "verify-phase16-due-soon-sop",
+  );
+  const overdueSopFixture = await createMinimalPublishedSop(
+    managerContext,
+    "Phase 16 Overdue Fixture SOP",
+    seedIds.locations.downtown,
+    "verify-phase16-overdue-sop",
+  );
+  const dueSoonAssign = await assignTraining(
+    managerContext,
+    {
+      sopId: dueSoonSopFixture.id,
+      target: { type: "employees", employeeIds: [timeFixtureEmployee.id] },
+    },
+    "verify-phase16-due-soon-assign",
+  );
+  const overdueAssign = await assignTraining(
+    managerContext,
+    {
+      sopId: overdueSopFixture.id,
+      target: { type: "employees", employeeIds: [timeFixtureEmployee.id] },
+    },
+    "verify-phase16-overdue-assign",
+  );
+  const dueSoonAssignmentId = dueSoonAssign.created[0]?.id;
+  const overdueAssignmentId = overdueAssign.created[0]?.id;
+  if (!dueSoonAssignmentId || !overdueAssignmentId) {
+    throw new Error("The Phase 16 time-reconcile fixture assignments were not created");
+  }
+  const timeReconcileNow = new Date();
+  await getDb()
+    .update(trainingAssignments)
+    .set({
+      dueAt: new Date(timeReconcileNow.getTime() + 24 * 60 * 60 * 1000),
+      dueTimezone: "America/Chicago",
+    })
+    .where(eq(trainingAssignments.id, dueSoonAssignmentId));
+  await getDb()
+    .update(trainingAssignments)
+    .set({
+      dueAt: new Date(timeReconcileNow.getTime() - 24 * 60 * 60 * 1000),
+      dueTimezone: "America/Chicago",
+    })
+    .where(eq(trainingAssignments.id, overdueAssignmentId));
+
+  const [reportPathEmployeeQualificationRow] = await getDb()
+    .select()
+    .from(employeeQualifications)
+    .where(eq(employeeQualifications.employeeId, reportPathEmployee.id));
+  if (!reportPathEmployeeQualificationRow) {
+    throw new Error("Expected the report-path employee to already have an awarded qualification");
+  }
+  await getDb()
+    .update(employeeQualifications)
+    .set({ expiresAt: new Date(timeReconcileNow.getTime() + 15 * 24 * 60 * 60 * 1000) })
+    .where(eq(employeeQualifications.id, reportPathEmployeeQualificationRow.id));
+
+  await reconcileTimeBasedNotifications(seedIds.organization, timeReconcileNow);
+
+  const dueSoonNotification = await getDb()
+    .select({ id: notifications.id })
+    .from(notifications)
+    .where(eq(notifications.dedupeKey, `due_soon:${dueSoonAssignmentId}`))
+    .limit(1);
+  if (dueSoonNotification.length === 0) {
+    throw new Error("The due-soon reconcile scan did not notify the employee");
+  }
+  const overdueNotification = await getDb()
+    .select({ id: notifications.id })
+    .from(notifications)
+    .where(eq(notifications.dedupeKey, `overdue:${overdueAssignmentId}`))
+    .limit(1);
+  if (overdueNotification.length === 0) {
+    throw new Error("The overdue reconcile scan did not notify the employee");
+  }
+  const expiringSoonNotification = await getDb()
+    .select({ id: notifications.id })
+    .from(notifications)
+    .where(
+      eq(
+        notifications.dedupeKey,
+        `qualification_expiring:${reportPathEmployeeQualificationRow.id}`,
+      ),
+    )
+    .limit(1);
+  if (expiringSoonNotification.length === 0) {
+    throw new Error("The expiring-soon reconcile scan did not notify the employee");
+  }
+
+  // Same-day guard: a second reconcile call for the same organization and moment must not run the
+  // scans again — no new `scheduled_job_runs` row.
+  const jobRunsBeforeSecondCall = await getDb()
+    .select({ count: sql<number>`count(*)::int` })
+    .from(scheduledJobRuns)
+    .where(
+      and(
+        eq(scheduledJobRuns.organizationId, seedIds.organization),
+        eq(scheduledJobRuns.jobType, "notification_time_reconcile"),
+      ),
+    );
+  await reconcileTimeBasedNotifications(seedIds.organization, timeReconcileNow);
+  const jobRunsAfterSecondCall = await getDb()
+    .select({ count: sql<number>`count(*)::int` })
+    .from(scheduledJobRuns)
+    .where(
+      and(
+        eq(scheduledJobRuns.organizationId, seedIds.organization),
+        eq(scheduledJobRuns.jobType, "notification_time_reconcile"),
+      ),
+    );
+  if (jobRunsAfterSecondCall[0]?.count !== jobRunsBeforeSecondCall[0]?.count) {
+    throw new Error("A same-day reconcile call was not treated as a no-op");
+  }
+
+  // Timezone boundary: shifting `now` by a few hours that cross a UTC day boundary but stay within
+  // the same *organization-local* calendar day must still land in the same bucket (no-op) — the
+  // seed organization's timezone is America/Chicago (UTC-5/UTC-6), so a multi-hour shift can cross
+  // midnight UTC while staying on the same Chicago calendar date.
+  const [orgRow] = await getDb()
+    .select({ timezone: organizations.timezone })
+    .from(organizations)
+    .where(eq(organizations.id, seedIds.organization))
+    .limit(1);
+  if (!orgRow)
+    throw new Error("Seed organization row was not found for the timezone-boundary check");
+  const sameLocalDayLater = new Date(timeReconcileNow.getTime() + 3 * 60 * 60 * 1000);
+  if (
+    calendarDateInTimeZone(sameLocalDayLater, orgRow.timezone) ===
+    calendarDateInTimeZone(timeReconcileNow, orgRow.timezone)
+  ) {
+    await reconcileTimeBasedNotifications(seedIds.organization, sameLocalDayLater);
+    const jobRunsAfterSameDayShift = await getDb()
+      .select({ count: sql<number>`count(*)::int` })
+      .from(scheduledJobRuns)
+      .where(
+        and(
+          eq(scheduledJobRuns.organizationId, seedIds.organization),
+          eq(scheduledJobRuns.jobType, "notification_time_reconcile"),
+        ),
+      );
+    if (jobRunsAfterSameDayShift[0]?.count !== jobRunsBeforeSecondCall[0]?.count) {
+      throw new Error(
+        "A same-organization-local-day reconcile call (shifted a few hours) was not treated as a no-op",
+      );
+    }
+  }
+
+  // A full day later is a genuinely new local calendar day: the guard must allow a new run.
+  const nextLocalDay = new Date(timeReconcileNow.getTime() + 26 * 60 * 60 * 1000);
+  await reconcileTimeBasedNotifications(seedIds.organization, nextLocalDay);
+  const jobRunsAfterNextDay = await getDb()
+    .select({ count: sql<number>`count(*)::int` })
+    .from(scheduledJobRuns)
+    .where(
+      and(
+        eq(scheduledJobRuns.organizationId, seedIds.organization),
+        eq(scheduledJobRuns.jobType, "notification_time_reconcile"),
+      ),
+    );
+  if ((jobRunsAfterNextDay[0]?.count ?? 0) <= (jobRunsBeforeSecondCall[0]?.count ?? 0)) {
+    throw new Error(
+      "A reconcile call a full day later did not start a new scheduled_job_runs entry",
+    );
+  }
+
   await verifyUpgradeMigration();
 
   process.stdout.write(
-    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, migrationConcurrencyLock: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true, employeeStationReader: true, employeeSopReader: true, employeeCategoryLibrary: true, employeeRecentViews: true, employeeMediaAuthorization: true, qrCreationAndTargetValidation: true, qrLocationScoping: true, qrRevocation: true, qrRotation: true, qrScanResolution: true, qrUnavailableTarget: true, qrEnumerationRateLimit: true, trainingConfigDefaultsAndScoping: true, trainingConfigStaleWriteRejection: true, trainingStepRequirementGuards: true, trainingQuestionCrudAndReorder: true, trainingPublishReadinessRules: true, trainingPublishedImmutability: true, trainingDraftCloning: true, trainingAssignmentCreationAndScoping: true, trainingSessionStartAndResume: true, trainingSequentialStepEnforcement: true, trainingWatchTimerQuestionEvidenceEnforcement: true, trainingDuplicateActionRejection: true, trainingScoringAndApprovalRouting: true, trainingSubmitIdempotency: true, trainingAttemptLimitsAndRetraining: true, bulkAssignmentAuthorizationScoping: true, bulkAssignmentByEmployeeListWithDueDate: true, bulkAssignmentByJobRole: true, bulkAssignmentByLocation: true, bulkAssignmentIndependentDuplicateSkip: true, approvalQueueLocationScoping: true, approvalEvidenceAuthorization: true, approvalDecisionNoteRules: true, approvalApprovedDecision: true, approvalRejectedDecision: true, approvalCorrectionRequest: true, approvalDecisionImmutability: true, correctionOwnershipEnforcement: true, correctionAppendOnlyEvidence: true, correctionResubmitIdempotency: true, approvalDecisionHistoryRetention: true, trainingPathAuthorizationScoping: true, trainingPathItemValidation: true, trainingPathOrderedBlocking: true, qualificationAward: true, qualificationRenewal: true, qualificationOverviewClassification: true, qualificationEmployeeView: true, qualificationRevocation: true, trainingPathArchiveStopsAwards: true, checklistAuthorizationScoping: true, checklistDuplicateTitleRejection: true, checklistRunStartAndResume: true, checklistAutoRequirementGuardsManualTick: true, checklistTimerPhotoNoteEnforcement: true, checklistSubmitRequiresAllRequiredItems: true, checklistDuplicateOccurrencePrevention: true, checklistApprovalRouting: true, checklistApprovalUnauthorizedRejection: true, checklistCorrectionRequestAndResubmit: true, checklistCorrectionResubmitIdempotency: true, checklistApprovalDecisionCompletesRun: true, checklistSubmitIdempotency: true, checklistRunListLocationScoping: true, checklistItemRemovalDisablesRatherThanDeletes: true, checklistHistoricalRunRetainsRemovedItem: true, translationMatrixExcludesProtectedFields: true, translationLocationScoping: true, translationEntityOwnershipGuard: true, translationEmptyApprovalRejected: true, translationEditResetsApproval: true, translationStaleSourceDetection: true, translationEmployeeLocaleSwitchPreservesProtectedFields: true, translationUnapprovedFallsBackToOriginal: true, domainEventEmissionCoverage: true, activityFeedLocationScoping: true, activityFeedTypeFilterAndPagination: true, trainingProgressReportFilteringAndScoping: true, qualificationsReportFilteringAndPagination: true, checklistCompletionReportFilteringAndScoping: true, sopVersionHistoryReportFilteringAndScoping: true, approvalHistoryReportUnionAndScoping: true, sopVersionPrintRecordFidelity: true, sopVersionPrintDraftRejection: true, sopVersionPrintLocationScoping: true, trainingSessionPrintRecordFidelity: true, trainingSessionPrintLocationScoping: true, printPdfGeneration: true, printPdfTextFidelity: true, csvExportRowFidelity: true, csvExportFormulaInjectionDefusing: true })}\n`,
+    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, migrationConcurrencyLock: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true, employeeStationReader: true, employeeSopReader: true, employeeCategoryLibrary: true, employeeRecentViews: true, employeeMediaAuthorization: true, qrCreationAndTargetValidation: true, qrLocationScoping: true, qrRevocation: true, qrRotation: true, qrScanResolution: true, qrUnavailableTarget: true, qrEnumerationRateLimit: true, trainingConfigDefaultsAndScoping: true, trainingConfigStaleWriteRejection: true, trainingStepRequirementGuards: true, trainingQuestionCrudAndReorder: true, trainingPublishReadinessRules: true, trainingPublishedImmutability: true, trainingDraftCloning: true, trainingAssignmentCreationAndScoping: true, trainingSessionStartAndResume: true, trainingSequentialStepEnforcement: true, trainingWatchTimerQuestionEvidenceEnforcement: true, trainingDuplicateActionRejection: true, trainingScoringAndApprovalRouting: true, trainingSubmitIdempotency: true, trainingAttemptLimitsAndRetraining: true, bulkAssignmentAuthorizationScoping: true, bulkAssignmentByEmployeeListWithDueDate: true, bulkAssignmentByJobRole: true, bulkAssignmentByLocation: true, bulkAssignmentIndependentDuplicateSkip: true, approvalQueueLocationScoping: true, approvalEvidenceAuthorization: true, approvalDecisionNoteRules: true, approvalApprovedDecision: true, approvalRejectedDecision: true, approvalCorrectionRequest: true, approvalDecisionImmutability: true, correctionOwnershipEnforcement: true, correctionAppendOnlyEvidence: true, correctionResubmitIdempotency: true, approvalDecisionHistoryRetention: true, trainingPathAuthorizationScoping: true, trainingPathItemValidation: true, trainingPathOrderedBlocking: true, qualificationAward: true, qualificationRenewal: true, qualificationOverviewClassification: true, qualificationEmployeeView: true, qualificationRevocation: true, trainingPathArchiveStopsAwards: true, checklistAuthorizationScoping: true, checklistDuplicateTitleRejection: true, checklistRunStartAndResume: true, checklistAutoRequirementGuardsManualTick: true, checklistTimerPhotoNoteEnforcement: true, checklistSubmitRequiresAllRequiredItems: true, checklistDuplicateOccurrencePrevention: true, checklistApprovalRouting: true, checklistApprovalUnauthorizedRejection: true, checklistCorrectionRequestAndResubmit: true, checklistCorrectionResubmitIdempotency: true, checklistApprovalDecisionCompletesRun: true, checklistSubmitIdempotency: true, checklistRunListLocationScoping: true, checklistItemRemovalDisablesRatherThanDeletes: true, checklistHistoricalRunRetainsRemovedItem: true, translationMatrixExcludesProtectedFields: true, translationLocationScoping: true, translationEntityOwnershipGuard: true, translationEmptyApprovalRejected: true, translationEditResetsApproval: true, translationStaleSourceDetection: true, translationEmployeeLocaleSwitchPreservesProtectedFields: true, translationUnapprovedFallsBackToOriginal: true, domainEventEmissionCoverage: true, activityFeedLocationScoping: true, activityFeedTypeFilterAndPagination: true, trainingProgressReportFilteringAndScoping: true, qualificationsReportFilteringAndPagination: true, checklistCompletionReportFilteringAndScoping: true, sopVersionHistoryReportFilteringAndScoping: true, approvalHistoryReportUnionAndScoping: true, sopVersionPrintRecordFidelity: true, sopVersionPrintDraftRejection: true, sopVersionPrintLocationScoping: true, trainingSessionPrintRecordFidelity: true, trainingSessionPrintLocationScoping: true, printPdfGeneration: true, printPdfTextFidelity: true, csvExportRowFidelity: true, csvExportFormulaInjectionDefusing: true, notificationDomainEventCoverage: true, notificationNonNotificationTypesExcluded: true, notificationSynchronousDispatch: true, notificationEmployeeInbox: true, notificationMarkReadIdempotencyAndScoping: true, notificationManagerInboxAndLocationScoping: true, notificationDisabledEmployeeSuppression: true, notificationDisabledManagerSuppression: true, notificationDedupeKeyRetryIdempotency: true, notificationPendingEventReconcile: true, notificationEmailSkippedWithoutSmtp: true, notificationTimeBasedDueSoonAndOverdue: true, notificationTimeBasedExpiringSoon: true, notificationTimeReconcileSameDayGuard: true, notificationTimeReconcileTimezoneBoundary: true })}\n`,
   );
 }
 

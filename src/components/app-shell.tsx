@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
 import {
+  Bell,
   BookOpen,
   Broom,
   Buildings,
@@ -28,6 +29,7 @@ interface NavItem {
 function NavIcon({ href }: { href: string }) {
   const props = { size: 19, weight: "regular" as const, "aria-hidden": true };
   if (href === "/manager" || href === "/employee") return <House {...props} />;
+  if (href.includes("notifications")) return <Bell {...props} />;
   if (href.includes("recent")) return <ClockCounterClockwise {...props} />;
   if (href.includes("recipes")) return <BookOpen {...props} />;
   if (href.includes("cleaning")) return <Broom {...props} />;

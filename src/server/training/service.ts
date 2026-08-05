@@ -25,6 +25,10 @@ import {
 } from "@/server/db/schema";
 import { getManagedLocationIds } from "@/server/management/service";
 import {
+  dispatchNotificationsForDomainEvent,
+  notifyAssignmentCreated,
+} from "@/server/notifications/service";
+import {
   defaultStepRequirementValues,
   loadStepTrainingRequirementsMap,
   loadTrainingConfig,
@@ -450,8 +454,16 @@ export async function assignTraining(
       locationId: sops.locationId,
       status: sops.status,
       currentVersionId: sops.currentVersionId,
+      title: sopVersions.title,
     })
     .from(sops)
+    .innerJoin(
+      sopVersions,
+      and(
+        eq(sopVersions.id, sops.currentVersionId),
+        eq(sopVersions.organizationId, sops.organizationId),
+      ),
+    )
     .where(and(eq(sops.id, input.sopId), eq(sops.organizationId, actor.organizationId)))
     .limit(1);
   if (!sopRow || sopRow.status !== "published" || !sopRow.currentVersionId) {
@@ -507,13 +519,23 @@ export async function assignTraining(
         targetId: outcome.created.id,
         requestId,
       });
+      // Per-employee, independent of the batch-level domain event below: `training.assignment_
+      // batch_created`'s subject is the SOP, not any one employee, so there is no single event a
+      // generic dispatcher could resolve a recipient from. See notifyAssignmentCreated's own doc.
+      await notifyAssignmentCreated({
+        organizationId: actor.organizationId,
+        locationId: sopRow.locationId,
+        employeeId,
+        assignmentId: outcome.created.id,
+        sopTitle: sopRow.title,
+      });
     } else {
       skipped.push(outcome.skipped);
     }
   }
 
   if (created.length > 0) {
-    await writeDomainEvent({
+    const batchEvent = await writeDomainEvent({
       organizationId: actor.organizationId,
       locationId: sopRow.locationId,
       type: "training.assignment_batch_created",
@@ -526,6 +548,7 @@ export async function assignTraining(
         skippedCount: skipped.length,
       },
     });
+    await dispatchNotificationsForDomainEvent(batchEvent);
   }
 
   return { created, skipped };
@@ -1716,7 +1739,7 @@ export async function submitSession(
   });
 
   await auditTraining(session, "training.session_submitted", sessionId, requestId);
-  await writeDomainEvent({
+  const sessionCompletedEvent = await writeDomainEvent({
     organizationId: session.organizationId,
     locationId: session.locationId,
     type: "training.session_completed",
@@ -1728,6 +1751,7 @@ export async function submitSession(
       scorePercent,
     },
   });
+  await dispatchNotificationsForDomainEvent(sessionCompletedEvent);
   for (const outcome of awardOutcomes) {
     await writeAuditEvent({
       organizationId: session.organizationId,
@@ -1740,7 +1764,7 @@ export async function submitSession(
       metadata: { definitionId: outcome.definitionId, isNewAward: outcome.isNewAward },
       requestId,
     });
-    await writeDomainEvent({
+    const qualificationAwardedEvent = await writeDomainEvent({
       organizationId: session.organizationId,
       locationId: session.locationId,
       type: "qualification.awarded",
@@ -1748,6 +1772,7 @@ export async function submitSession(
       subjectId: outcome.qualificationId,
       payload: { definitionId: outcome.definitionId, isNewAward: outcome.isNewAward },
     });
+    await dispatchNotificationsForDomainEvent(qualificationAwardedEvent);
   }
   return getSessionState(session, assignmentId, sessionId);
 }

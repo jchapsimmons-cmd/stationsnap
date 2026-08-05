@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, sql, type SQL } from "drizzle-orm";
+import { AppError } from "@/lib/errors";
 import type { ManagerSessionContext } from "@/server/auth/sessions";
 import { getDb } from "@/server/db/client";
 import {
@@ -18,7 +19,7 @@ import { getManagedLocationIds } from "@/server/management/service";
 
 /**
  * A curated subset of business-lifecycle facts, deliberately smaller than `AuditAction`: only
- * milestones a manager would want on `/manager/activity` (or a future notification), never
+ * milestones a manager would want on `/manager/activity` or a Phase 16 notification, never
  * step-by-step progress noise that `audit_events` already covers.
  */
 export type DomainEventType =
@@ -61,21 +62,48 @@ export interface DomainEventInput {
   payload?: Record<string, string | number | boolean | null>;
 }
 
-export async function writeDomainEvent(input: DomainEventInput): Promise<void> {
+/** The row `writeDomainEvent` inserts, returned so callers can dispatch Phase 16 notifications
+ * off the exact event just written without a second read. */
+export interface DomainEventRecord {
+  id: string;
+  organizationId: string;
+  locationId: string | null;
+  type: DomainEventType;
+  subjectType: DomainEventSubjectType;
+  subjectId: string;
+  payload: Record<string, string | number | boolean | null>;
+  occurredAt: Date;
+}
+
+export async function writeDomainEvent(input: DomainEventInput): Promise<DomainEventRecord> {
   const payload = Object.fromEntries(
     Object.entries(input.payload ?? {}).filter(
       ([key]) => !/(password|pin|token|secret|authorization|cookie)/i.test(key),
     ),
   );
-  await getDb().insert(domainEvents).values({
-    id: randomUUID(),
-    organizationId: input.organizationId,
-    locationId: input.locationId,
-    type: input.type,
-    subjectType: input.subjectType,
-    subjectId: input.subjectId,
-    payload,
-  });
+  const [row] = await getDb()
+    .insert(domainEvents)
+    .values({
+      id: randomUUID(),
+      organizationId: input.organizationId,
+      locationId: input.locationId,
+      type: input.type,
+      subjectType: input.subjectType,
+      subjectId: input.subjectId,
+      payload,
+    })
+    .returning();
+  if (!row) throw new AppError("INTERNAL_ERROR", "Domain event could not be recorded.");
+  return {
+    id: row.id,
+    organizationId: row.organizationId,
+    locationId: row.locationId,
+    type: row.type as DomainEventType,
+    subjectType: row.subjectType as DomainEventSubjectType,
+    subjectId: row.subjectId,
+    payload: row.payload,
+    occurredAt: row.occurredAt,
+  };
 }
 
 export interface ActivityQuery {

@@ -99,6 +99,52 @@ export async function getManagedLocationIds(actor: ManagerSessionContext): Promi
   return rows.map((row) => row.id);
 }
 
+/**
+ * The inverse of `getManagedLocationIds`: every active manager (owner or explicitly granted
+ * manager) who can manage the given location, for Phase 16 notification fan-out. Owners are
+ * included regardless of `manager_location_access` since they manage every location implicitly;
+ * a disabled manager membership or manager user is excluded so disabled recipients never receive
+ * a notification.
+ */
+export async function getLocationRecipientManagers(
+  organizationId: string,
+  locationId: string,
+): Promise<{ membershipId: string; managerUserId: string; displayName: string; email: string }[]> {
+  const rows = await getDb()
+    .select({
+      membershipId: managerMemberships.id,
+      managerUserId: managerUsers.id,
+      displayName: managerUsers.displayName,
+      email: managerUsers.email,
+      role: managerMemberships.role,
+      grantedLocationId: managerLocationAccess.locationId,
+    })
+    .from(managerMemberships)
+    .innerJoin(managerUsers, eq(managerUsers.id, managerMemberships.managerUserId))
+    .leftJoin(
+      managerLocationAccess,
+      and(
+        eq(managerLocationAccess.membershipId, managerMemberships.id),
+        eq(managerLocationAccess.organizationId, managerMemberships.organizationId),
+        eq(managerLocationAccess.locationId, locationId),
+      ),
+    )
+    .where(
+      and(
+        eq(managerMemberships.organizationId, organizationId),
+        eq(managerMemberships.status, "active"),
+        eq(managerUsers.status, "active"),
+        or(eq(managerMemberships.role, "owner"), eq(managerLocationAccess.locationId, locationId)),
+      ),
+    );
+  return rows.map((row) => ({
+    membershipId: row.membershipId,
+    managerUserId: row.managerUserId,
+    displayName: row.displayName,
+    email: row.email,
+  }));
+}
+
 export async function getOrganization(actor: ManagerSessionContext) {
   const [row] = await getDb()
     .select()
