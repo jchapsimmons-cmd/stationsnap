@@ -22,7 +22,8 @@
     "db:migrate": "tsx src/server/db/migrate.ts",
     "db:seed": "tsx src/server/db/seed.ts",
     "db:verify": "tsx src/server/db/verify.ts",
-    "verify": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run db:verify && npm run build"
+    "verify": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run db:verify && npm run build",
+    "test:e2e": "tsx e2e/run.ts"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",
@@ -40,13 +41,14 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@playwright/test": "^1.56.0",
     "@testing-library/jest-dom": "^7.0.0",
     "@testing-library/react": "^16.3.2",
     "@testing-library/user-event": "^14.6.1",
     "@types/node": "^26.1.2",
     "@types/nodemailer": "^8.0.1",
-    "@types/pg": "^8.20.3",
     "@types/pdf-parse": "^1.1.5",
+    "@types/pg": "^8.20.3",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^19.2.18",
     "@types/react-dom": "^19.2.4",
