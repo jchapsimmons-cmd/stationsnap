@@ -6,6 +6,7 @@ import type { EmployeeSessionContext, ManagerSessionContext } from "@/server/aut
 import { getDb } from "@/server/db/client";
 import { translations } from "@/server/db/schema";
 import { writeDomainEvent } from "@/server/events";
+import { dispatchNotificationsForDomainEvent } from "@/server/notifications/service";
 import { getPublishedSopForEmployee, getSop } from "@/server/sops/service";
 import type { translationTargetLocaleValues, TranslationUpsertInput } from "@/server/sops/schemas";
 
@@ -317,7 +318,7 @@ export async function approveTranslation(
     metadata: { entityType: row.entityType, field: row.field, targetLocale: row.targetLocale },
     requestId,
   });
-  await writeDomainEvent({
+  const translationApprovedEvent = await writeDomainEvent({
     organizationId: actor.organizationId,
     locationId: sop.locationId,
     type: "translation.approved",
@@ -325,6 +326,7 @@ export async function approveTranslation(
     subjectId: sopId,
     payload: { entityType: row.entityType, field: row.field, targetLocale: row.targetLocale },
   });
+  await dispatchNotificationsForDomainEvent(translationApprovedEvent);
 
   const targetLocale = asTargetLocale(row.targetLocale);
   const rows = await buildMatrix(actor.organizationId, sop, targetLocale);

@@ -1933,3 +1933,150 @@ export const translations = pgTable(
     index("translations_org_status_idx").on(table.organizationId, table.status),
   ],
 );
+
+export const notificationRecipientType = pgEnum("notification_recipient_type", [
+  "manager",
+  "employee",
+]);
+export const notificationDeliveryChannel = pgEnum("notification_delivery_channel", [
+  "in_app",
+  "email",
+]);
+export const notificationDeliveryStatus = pgEnum("notification_delivery_status", [
+  "sent",
+  "failed",
+  "skipped",
+]);
+export const scheduledJobRunStatus = pgEnum("scheduled_job_run_status", [
+  "running",
+  "completed",
+  "failed",
+]);
+
+/**
+ * One notification per (recipient, occurrence). `recipientId` is polymorphic — a
+ * `manager_memberships.id` when `recipientType` is `manager`, an `employees.id` when `employee` —
+ * so it deliberately carries no foreign key, the same convention `translations.entityId` already
+ * uses for a polymorphic reference; recipient existence and status are re-checked at generation
+ * time instead. `type` plus `params` reuse the exact `domain_events.type`/`payload` convention
+ * (a resolvable key plus safe display parameters) rather than introducing separate title/body
+ * keys, so the same `params` sanitization and label-resolution shape works for both. `dedupeKey`
+ * is this table's idempotency guarantee: event-driven notifications key it off the immutable
+ * `domain_events.id` that caused them (`event:<domainEventId>:<recipientType>:<recipientId>`), and
+ * time-derived ones key it off the subject that triggered the window
+ * (`due_soon:<assignmentId>`, `overdue:<assignmentId>`, `qualification_expiring:<qualificationId>`)
+ * so a generation pass can run any number of times without ever duplicating a notification.
+ */
+export const notifications = pgTable(
+  "notifications",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    locationId: uuid("location_id"),
+    recipientType: notificationRecipientType("recipient_type").notNull(),
+    recipientId: uuid("recipient_id").notNull(),
+    type: text("type").notNull(),
+    subjectType: text("subject_type").notNull().default(""),
+    subjectId: uuid("subject_id"),
+    params: jsonb("params")
+      .$type<Record<string, string | number | boolean | null>>()
+      .notNull()
+      .default({}),
+    internalPath: text("internal_path").notNull().default(""),
+    dedupeKey: text("dedupe_key").notNull(),
+    readAt: timestamp("read_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.locationId, table.organizationId],
+      foreignColumns: [locations.id, locations.organizationId],
+      name: "notifications_location_org_fk",
+    }).onDelete("restrict"),
+    unique("notifications_id_org_unique").on(table.id, table.organizationId),
+    uniqueIndex("notifications_dedupe_key_uidx").on(table.dedupeKey),
+    index("notifications_recipient_read_created_idx").on(
+      table.recipientType,
+      table.recipientId,
+      table.readAt,
+      table.createdAt,
+    ),
+    index("notifications_org_recipient_created_idx").on(
+      table.organizationId,
+      table.recipientType,
+      table.recipientId,
+      table.createdAt,
+    ),
+  ],
+);
+
+/**
+ * One row per channel actually attempted for a notification. In-app delivery is written alongside
+ * the notification itself (there is nothing to fail); email delivery records what was attempted —
+ * `skipped` when SMTP is not configured or the recipient has no email, `failed` with a safe,
+ * non-secret `errorCode` on a send error, never the raw provider error text (same "no secrets in
+ * safe metadata" rule every other audited table in this schema follows).
+ */
+export const notificationDeliveries = pgTable(
+  "notification_deliveries",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    notificationId: uuid("notification_id").notNull(),
+    channel: notificationDeliveryChannel("channel").notNull(),
+    recipientAddress: text("recipient_address").notNull().default(""),
+    status: notificationDeliveryStatus("status").notNull(),
+    errorCode: text("error_code").notNull().default(""),
+    attemptCount: integer("attempt_count").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.notificationId, table.organizationId],
+      foreignColumns: [notifications.id, notifications.organizationId],
+      name: "notification_deliveries_notification_org_fk",
+    }).onDelete("cascade"),
+    unique("notification_deliveries_notification_channel_uidx").on(
+      table.notificationId,
+      table.channel,
+    ),
+    index("notification_deliveries_org_status_idx").on(table.organizationId, table.status),
+  ],
+);
+
+/**
+ * Guards the time-derived reconcile pass (training due-soon/overdue, qualification expiring-soon)
+ * so it does real work at most once per organization per local calendar day, no matter how many
+ * page views or cron hits land in that window: the unique `(jobType, organizationId, timeBucket)`
+ * index turns every call after the first into a harmless insert conflict. `timeBucket` is the
+ * organization's own IANA-timezone calendar date (`calendarDateInTimeZone`), not a UTC date, so the
+ * boundary a new run becomes possible on is the organization's local midnight.
+ */
+export const scheduledJobRuns = pgTable(
+  "scheduled_job_runs",
+  {
+    id: uuid("id").primaryKey(),
+    jobType: text("job_type").notNull(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    timeBucket: text("time_bucket").notNull(),
+    status: scheduledJobRunStatus("status").notNull().default("running"),
+    attempts: integer("attempts").notNull().default(1),
+    startedAt: timestamp("started_at", { withTimezone: true }).notNull().defaultNow(),
+    completedAt: timestamp("completed_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    uniqueIndex("scheduled_job_runs_type_org_bucket_uidx").on(
+      table.jobType,
+      table.organizationId,
+      table.timeBucket,
+    ),
+    index("scheduled_job_runs_org_status_idx").on(table.organizationId, table.status),
+  ],
+);

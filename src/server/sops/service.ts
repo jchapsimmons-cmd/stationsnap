@@ -4,6 +4,7 @@ import { AppError } from "@/lib/errors";
 import { writeAuditEvent } from "@/server/audit";
 import { requireManagerManagedLocation } from "@/server/auth/authorization";
 import { writeDomainEvent } from "@/server/events";
+import { dispatchNotificationsForDomainEvent } from "@/server/notifications/service";
 import type { EmployeeSessionContext, ManagerSessionContext } from "@/server/auth/sessions";
 import { getDb } from "@/server/db/client";
 import {
@@ -1503,7 +1504,7 @@ export async function publishSop(
   });
 
   await auditSop(actor, "sop.published", sopId, base.sop.locationId, requestId);
-  await writeDomainEvent({
+  const publishedEvent = await writeDomainEvent({
     organizationId: actor.organizationId,
     locationId: base.sop.locationId,
     type: "sop.published",
@@ -1511,6 +1512,7 @@ export async function publishSop(
     subjectId: sopId,
     payload: { versionNumber: draft.versionNumber, isUpdate },
   });
+  await dispatchNotificationsForDomainEvent(publishedEvent);
   return getSop(actor, sopId);
 }
 
@@ -1537,7 +1539,7 @@ export async function archiveSop(actor: ManagerSessionContext, sopId: string, re
     }
   });
   await auditSop(actor, "sop.archived", sopId, detail.sop.locationId, requestId);
-  await writeDomainEvent({
+  const archivedEvent = await writeDomainEvent({
     organizationId: actor.organizationId,
     locationId: detail.sop.locationId,
     type: "sop.archived",
@@ -1545,6 +1547,7 @@ export async function archiveSop(actor: ManagerSessionContext, sopId: string, re
     subjectId: sopId,
     payload: { versionTitle: detail.version.title },
   });
+  await dispatchNotificationsForDomainEvent(archivedEvent);
   return getSop(actor, sopId);
 }
 

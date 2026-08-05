@@ -6,6 +6,8 @@ import { requireManagerManagedLocation } from "@/server/auth/authorization";
 import type { EmployeeSessionContext, ManagerSessionContext } from "@/server/auth/sessions";
 import { getDb } from "@/server/db/client";
 import { writeDomainEvent } from "@/server/events";
+import { dispatchNotificationsForDomainEvent } from "@/server/notifications/service";
+import { EXPIRING_SOON_WINDOW_MS } from "@/server/training/qualification-windows";
 import {
   employeeQualifications,
   employees,
@@ -32,10 +34,6 @@ import type {
 
 type Tx = Parameters<Parameters<ReturnType<typeof getDb>["transaction"]>[0]>[0];
 
-// Cross-cutting "expiring soon" window used by the overview and employee views. This is a fixed
-// simplification for this phase — qualification_definitions has no separate configurable
-// "expiring soon" threshold — not a value a manager can tune per definition.
-const EXPIRING_SOON_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 function postgresCode(error: unknown): string | undefined {
@@ -461,7 +459,7 @@ export async function revokeQualification(
     targetId: qualificationId,
     requestId,
   });
-  await writeDomainEvent({
+  const revokedEvent = await writeDomainEvent({
     organizationId: actor.organizationId,
     locationId: row.locationId,
     type: "qualification.revoked",
@@ -469,6 +467,7 @@ export async function revokeQualification(
     subjectId: qualificationId,
     payload: {},
   });
+  await dispatchNotificationsForDomainEvent(revokedEvent);
 
   return getQualificationDetail(actor, qualificationId);
 }

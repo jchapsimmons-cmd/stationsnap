@@ -8,6 +8,7 @@ import { bumpRunRevision, getChecklistRunDetail } from "@/server/checklists/runs
 import type { ChecklistApprovalDecisionInput } from "@/server/checklists/schemas";
 import { getDb } from "@/server/db/client";
 import { writeDomainEvent } from "@/server/events";
+import { dispatchNotificationsForDomainEvent } from "@/server/notifications/service";
 import {
   checklistApprovalDecisions,
   checklistApprovalSubmissions,
@@ -129,7 +130,7 @@ export async function decideChecklistRun(
       requestId,
     });
   }
-  await writeDomainEvent({
+  const approvalDecidedEvent = await writeDomainEvent({
     organizationId: actor.organizationId,
     locationId: run.locationId,
     type: "checklist_run.approval_decided",
@@ -137,6 +138,7 @@ export async function decideChecklistRun(
     subjectId: runId,
     payload: { decision: input.decision, submissionId: submission.id },
   });
+  await dispatchNotificationsForDomainEvent(approvalDecidedEvent);
 
   return getChecklistRunDetail(actor, runId);
 }

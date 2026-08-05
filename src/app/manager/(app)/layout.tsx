@@ -1,14 +1,20 @@
 import type { ReactNode } from "react";
 import { AppShell } from "@/components/app-shell";
 import { requireManagerPage } from "@/server/auth/authorization";
+import { reconcileTimeBasedNotificationsBestEffort } from "@/server/notifications/service";
 
 export const dynamic = "force-dynamic";
 
 export default async function ManagerLayout({ children }: { children: ReactNode }) {
   const session = await requireManagerPage("/manager");
+  // Best-effort, cheap after the first page view of the organization's local day (see the
+  // `scheduled_job_runs` guard inside): the closest this project gets to a due/expiry cron before
+  // Phase 20's durable job runner exists.
+  await reconcileTimeBasedNotificationsBestEffort(session.organizationId);
   const navItems = [
     { href: "/manager", label: "Overview" },
     { href: "/manager/activity", label: "Activity" },
+    { href: "/manager/notifications", label: "Notifications" },
     { href: "/manager/reports", label: "Reports" },
     { href: "/manager/sops", label: "SOPs" },
     { href: "/manager/training/assignments", label: "Training" },
