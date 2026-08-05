@@ -19,6 +19,7 @@ export async function GET(
         "content-length": String(media.buffer.byteLength),
         "cache-control": "private, max-age=3600",
         "content-disposition": `inline; filename="${media.originalName.replace(/"/g, "")}"`,
+        "x-content-type-options": "nosniff",
       },
     });
   } catch (error: unknown) {
