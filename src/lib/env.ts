@@ -5,6 +5,11 @@ const optionalNonEmpty = z.preprocess(
   z.string().min(1).optional(),
 );
 
+const optionalUrl = z.preprocess(
+  (value) => (value === "" ? undefined : value),
+  z.string().url().optional(),
+);
+
 const serverEnvSchema = z
   .object({
     NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -14,7 +19,7 @@ const serverEnvSchema = z
     LOG_LEVEL: z
       .enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"])
       .default("info"),
-    APP_URL: z.string().url().default("http://localhost:3000"),
+    APP_URL: optionalUrl,
     SMTP_HOST: optionalNonEmpty,
     SMTP_PORT: z.coerce.number().int().min(1).max(65_535).default(587),
     SMTP_USER: optionalNonEmpty,
@@ -41,7 +46,31 @@ const serverEnvSchema = z
         message: "BLOB_READ_WRITE_TOKEN is required when STORAGE_DRIVER is vercel-blob",
       });
     }
-  });
+    if (value.NODE_ENV === "production") {
+      if (!value.APP_URL) {
+        context.addIssue({
+          code: "custom",
+          path: ["APP_URL"],
+          message: "APP_URL must be set explicitly in production (the localhost default is unsafe)",
+        });
+      } else if (!value.APP_URL.startsWith("https://")) {
+        context.addIssue({
+          code: "custom",
+          path: ["APP_URL"],
+          message: "APP_URL must use https:// in production",
+        });
+      }
+      if (value.STORAGE_DRIVER === "local") {
+        context.addIssue({
+          code: "custom",
+          path: ["STORAGE_DRIVER"],
+          message:
+            "STORAGE_DRIVER must be vercel-blob in production; local disk storage does not persist on serverless hosts",
+        });
+      }
+    }
+  })
+  .transform((value) => ({ ...value, APP_URL: value.APP_URL ?? "http://localhost:3000" }));
 
 export type ServerEnv = z.infer<typeof serverEnvSchema>;
 
