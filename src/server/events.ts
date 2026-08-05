@@ -19,7 +19,7 @@ import { getManagedLocationIds } from "@/server/management/service";
 
 /**
  * A curated subset of business-lifecycle facts, deliberately smaller than `AuditAction`: only
- * milestones a manager would want on `/manager/activity` (or a future notification), never
+ * milestones a manager would want on `/manager/activity` or a Phase 16 notification, never
  * step-by-step progress noise that `audit_events` already covers.
  */
 export type DomainEventType =

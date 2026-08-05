@@ -1853,9 +1853,11 @@ export const domainEventProcessingStatus = pgEnum("domain_event_processing_statu
  * Transactional outbox of business-lifecycle facts, written after the mutation that caused them
  * commits (same best-effort convention `audit_events` already uses, not literally inside the same
  * transaction). Distinct from `audit_events`: audit events are the append-only security/action log
- * for every request, while domain events are a curated subset of business milestones meant to
- * drive `/manager/activity` now and Phase 16's notification job later — hence `processingStatus`,
- * unused until that phase, defaulting to `pending` so nothing needs a backfill when it lands.
+ * for every request, while domain events are a curated subset of business milestones that drives
+ * `/manager/activity` and, since Phase 16, `processingStatus`: flipped to `processed` by
+ * `dispatchNotificationsForDomainEvent` (see `src/server/notifications/service.ts`) once that
+ * event has been considered for notification generation, defaulting to `pending` so a row written
+ * before Phase 16 existed needed no backfill.
  */
 export const domainEvents = pgTable(
   "domain_events",
