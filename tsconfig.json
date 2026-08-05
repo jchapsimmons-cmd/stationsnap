@@ -33,6 +33,7 @@
     "src/**/*.tsx",
     "vitest.config.ts",
     "e2e/**/*.ts",
+    "scripts/**/*.ts",
     ".next/dev/types/**/*.ts"
   ],
   "exclude": ["node_modules"]

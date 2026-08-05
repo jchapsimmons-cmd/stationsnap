@@ -59,6 +59,65 @@ describe("parseServerEnv", () => {
     ).toMatchObject({ STORAGE_DRIVER: "vercel-blob" });
   });
 
+  it("defaults APP_URL to localhost outside production", () => {
+    expect(
+      parseServerEnv({
+        NODE_ENV: "test",
+        DATABASE_URL: "postgresql://user:password@localhost/stationsnap",
+      }),
+    ).toMatchObject({ APP_URL: "http://localhost:3000" });
+  });
+
+  it("rejects a missing APP_URL in production", () => {
+    expect(() =>
+      parseServerEnv({
+        NODE_ENV: "production",
+        DATABASE_URL: "postgresql://user:password@localhost/stationsnap",
+        STORAGE_DRIVER: "vercel-blob",
+        BLOB_READ_WRITE_TOKEN: "vercel_blob_rw_test_token",
+      }),
+    ).toThrow(/APP_URL must be set explicitly in production/);
+  });
+
+  it("rejects a non-https APP_URL in production", () => {
+    expect(() =>
+      parseServerEnv({
+        NODE_ENV: "production",
+        DATABASE_URL: "postgresql://user:password@localhost/stationsnap",
+        APP_URL: "http://stationsnap.example.com",
+        STORAGE_DRIVER: "vercel-blob",
+        BLOB_READ_WRITE_TOKEN: "vercel_blob_rw_test_token",
+      }),
+    ).toThrow(/APP_URL must use https/);
+  });
+
+  it("rejects local storage in production", () => {
+    expect(() =>
+      parseServerEnv({
+        NODE_ENV: "production",
+        DATABASE_URL: "postgresql://user:password@localhost/stationsnap",
+        APP_URL: "https://stationsnap.example.com",
+        STORAGE_DRIVER: "local",
+      }),
+    ).toThrow(/STORAGE_DRIVER must be vercel-blob in production/);
+  });
+
+  it("accepts a fully configured production environment", () => {
+    expect(
+      parseServerEnv({
+        NODE_ENV: "production",
+        DATABASE_URL: "postgresql://user:password@localhost/stationsnap",
+        APP_URL: "https://stationsnap.example.com",
+        STORAGE_DRIVER: "vercel-blob",
+        BLOB_READ_WRITE_TOKEN: "vercel_blob_rw_test_token",
+      }),
+    ).toMatchObject({
+      NODE_ENV: "production",
+      APP_URL: "https://stationsnap.example.com",
+      STORAGE_DRIVER: "vercel-blob",
+    });
+  });
+
   it("allows seed credentials only outside production", () => {
     expect(
       parseSeedEnv({
