@@ -46,7 +46,15 @@ Exact package versions and providers must be selected in Phase 1 from maintained
 5. Private object-storage provider and upload limits. Resolved: local disk for development, Vercel Blob in production (selected and configured directly against the live deployment).
 6. Durable job runner and scheduled-job host. Still open; not required until Phase 20 automation needs it, since no phase before Phase 20 depends on background jobs.
 7. Production host, region, domain, backup objectives, retention policy, and privacy requirements. Hosting (Vercel) and the production database (Neon Postgres) are resolved and live; remaining items (backup/retention policy, privacy documentation) are covered in Phase 19.
-8. AI/transcription provider, AI-assisted translation provider, and SMS provider. Still open and deliberately deferred; required only for Phase 20, which must not start without an explicit decision from the project owner.
+8. AI/transcription provider, AI-assisted translation provider, and SMS provider. Resolved by the project owner on 2026-08-06; see "Phase 20 provider decisions" below. Phase 20 may now proceed.
+
+## Phase 20 provider decisions (resolved 2026-08-06)
+
+- **Video-to-draft AI (transcription + structured draft extraction):** Anthropic Claude structures the schema-validated draft from a transcript (Claude does not transcribe audio directly); OpenAI Whisper performs the transcription step. Credentials: `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`.
+- **AI-assisted translation drafting (upgrading Phase 13's manual translations):** the same Anthropic Claude credential (`ANTHROPIC_API_KEY`) is reused — one vendor relationship, draft translations flow through the same untrusted-AI-output → schema → manager-review pipeline already built in Phase 13.
+- **SMS notification channel (alongside Phase 16's email/in-app channels):** Twilio, authenticated via an API Key (not the primary Auth Token). Credentials: `TWILIO_ACCOUNT_SID`, `TWILIO_API_KEY_SID`, `TWILIO_API_KEY_SECRET`, `TWILIO_FROM_NUMBER` (E.164 format, e.g. `+1XXXXXXXXXX`).
+
+All six credentials are already configured on Vercel (Production and Preview), the same way `DATABASE_URL` and `BLOB_READ_WRITE_TOKEN` were for earlier phases — add matching entries to `src/lib/env.ts`'s server env schema rather than assuming they exist unchecked. **Automated tests (unit, `db:verify`, and the Playwright E2E suite) must use provider fakes for all three integrations, per `docs/testing-plan.md`'s established "provider fakes" principle — never call the real Anthropic, OpenAI, or Twilio APIs from a test.** These are paid, rate-limited, external services; real calls in CI-style runs would be slow, flaky, and cost money on every `npm run verify`. Only the live production deployment should ever call the real APIs.
 
 ## Design conflicts
 
@@ -111,7 +119,7 @@ The exact technical order preserves the numbered phases because each later capab
 17. Phase 17: audit every boundary; fix high/medium security and performance findings and add regressions.
 18. Phase 18: automate the complete cross-role lifecycle on clean databases and representative viewports.
 19. Phase 19: harden the already-live production deployment: PWA metadata, backup/retention policy, rollback rehearsal, and a production-like release verification. Hosting (Vercel), the production database (Neon Postgres), and object storage (Vercel Blob) were already selected and configured directly against production ahead of schedule, so this phase covers the remaining operational work rather than initial provider selection.
-20. Phase 20 (deferred; requires explicit provider decisions from the project owner before starting): add the durable, schema-validated video-to-draft AI workflow, upgrade Phase 13's manual translations with AI-assisted drafting, and add an SMS notification channel alongside Phase 16's email/in-app channels. Do not attempt automatically. An automated pipeline reaching this point must stop, record exactly which provider decisions are needed, and wait rather than guessing.
+20. Phase 20 (unblocked 2026-08-06; see "Phase 20 provider decisions" above for the chosen providers and required credentials): add the durable, schema-validated video-to-draft AI workflow, upgrade Phase 13's manual translations with AI-assisted drafting, and add an SMS notification channel alongside Phase 16's email/in-app channels. All automated tests for this phase must use provider fakes, never the real Anthropic/OpenAI/Twilio APIs.
 
 ## Phase gates
 
