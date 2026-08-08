@@ -323,6 +323,11 @@ export const employees = pgTable(
     language: preferredLanguage("preferred_language").notNull().default("en"),
     pinHash: text("pin_hash"),
     status: recordStatus("status").notNull().default("active"),
+    // Phase 20: employees have no email column (Phase 16), so SMS is their only external
+    // notification channel. Both default to "not opted in" — an empty phone never sends, and a
+    // phone number alone never sends without the explicit opt-in also being set.
+    phone: text("phone").notNull().default(""),
+    smsOptIn: boolean("sms_opt_in").notNull().default(false),
     ...timestamps,
   },
   (table) => [
@@ -1951,6 +1956,7 @@ export const notificationRecipientType = pgEnum("notification_recipient_type", [
 export const notificationDeliveryChannel = pgEnum("notification_delivery_channel", [
   "in_app",
   "email",
+  "sms",
 ]);
 export const notificationDeliveryStatus = pgEnum("notification_delivery_status", [
   "sent",

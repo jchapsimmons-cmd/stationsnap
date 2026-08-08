@@ -28,6 +28,20 @@ const serverEnvSchema = z
     MEDIA_STORAGE_DIR: z.string().min(1).default("uploads"),
     STORAGE_DRIVER: z.enum(["local", "vercel-blob"]).default("local"),
     BLOB_READ_WRITE_TOKEN: optionalNonEmpty,
+    // Phase 20: SMS notification channel. Authenticated with a Twilio API Key (SID + Secret)
+    // rather than the account's primary Auth Token, per the project owner's resolved decision
+    // (docs/implementation-plan.md). All four must be configured together, exactly like the SMTP
+    // group above, or not at all — "not configured" is a normal, safely-skipped state.
+    TWILIO_ACCOUNT_SID: optionalNonEmpty,
+    TWILIO_API_KEY_SID: optionalNonEmpty,
+    TWILIO_API_KEY_SECRET: optionalNonEmpty,
+    TWILIO_FROM_NUMBER: z.preprocess(
+      (value) => (value === "" ? undefined : value),
+      z
+        .string()
+        .regex(/^\+[1-9]\d{1,14}$/, "TWILIO_FROM_NUMBER must be in E.164 format, e.g. +15551234567")
+        .optional(),
+    ),
   })
   .superRefine((value, context) => {
     const smtpValues = [value.SMTP_HOST, value.SMTP_USER, value.SMTP_PASSWORD, value.SMTP_FROM];
@@ -37,6 +51,21 @@ const serverEnvSchema = z
         code: "custom",
         path: ["SMTP_HOST"],
         message: "SMTP_HOST, SMTP_USER, SMTP_PASSWORD, and SMTP_FROM must be configured together",
+      });
+    }
+    const twilioValues = [
+      value.TWILIO_ACCOUNT_SID,
+      value.TWILIO_API_KEY_SID,
+      value.TWILIO_API_KEY_SECRET,
+      value.TWILIO_FROM_NUMBER,
+    ];
+    const twilioConfigured = twilioValues.filter(Boolean).length;
+    if (twilioConfigured > 0 && twilioConfigured !== twilioValues.length) {
+      context.addIssue({
+        code: "custom",
+        path: ["TWILIO_ACCOUNT_SID"],
+        message:
+          "TWILIO_ACCOUNT_SID, TWILIO_API_KEY_SID, TWILIO_API_KEY_SECRET, and TWILIO_FROM_NUMBER must be configured together",
       });
     }
     if (value.STORAGE_DRIVER === "vercel-blob" && !value.BLOB_READ_WRITE_TOKEN) {

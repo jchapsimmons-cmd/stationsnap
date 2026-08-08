@@ -584,6 +584,8 @@ async function verifyDatabase(): Promise<void> {
     language: "en",
     pin: phaseThreePin,
     status: "active",
+    phone: "",
+    smsOptIn: false,
   });
   const [phaseThreeCredential] = await getDb()
     .select({ pinHash: employees.pinHash })
@@ -613,6 +615,8 @@ async function verifyDatabase(): Promise<void> {
       jobRole: phaseThreeEmployee.jobRole,
       language: phaseThreeEmployee.language,
       status: phaseThreeEmployee.status,
+      phone: phaseThreeEmployee.phone,
+      smsOptIn: phaseThreeEmployee.smsOptIn,
     });
   } catch {
     scopedEmployeeMoveRejected = true;
@@ -625,6 +629,8 @@ async function verifyDatabase(): Promise<void> {
     jobRole: phaseThreeEmployee.jobRole,
     language: phaseThreeEmployee.language,
     status: "disabled",
+    phone: phaseThreeEmployee.phone,
+    smsOptIn: phaseThreeEmployee.smsOptIn,
   });
   let disabledPhaseThreeLoginRejected = false;
   try {
@@ -3533,6 +3539,8 @@ async function verifyDatabase(): Promise<void> {
     language: "en",
     pin: "9001",
     status: "active",
+    phone: "",
+    smsOptIn: false,
   });
 
   const explicitDueDate = "2026-09-01";
@@ -3635,6 +3643,8 @@ async function verifyDatabase(): Promise<void> {
     language: "en",
     pin: "9002",
     status: "active",
+    phone: "",
+    smsOptIn: false,
   });
 
   const secondLocationAssignResult = await assignTraining(
@@ -4497,6 +4507,8 @@ async function verifyDatabase(): Promise<void> {
     language: "en",
     pin: "9101",
     status: "active",
+    phone: "",
+    smsOptIn: false,
   });
 
   const expiringSoonEmployee = await createEmployee(managerContext, {
@@ -4507,6 +4519,8 @@ async function verifyDatabase(): Promise<void> {
     language: "en",
     pin: "9102",
     status: "active",
+    phone: "",
+    smsOptIn: false,
   });
   const expiringAssignA = await assignTraining(
     managerContext,
@@ -4553,6 +4567,8 @@ async function verifyDatabase(): Promise<void> {
     language: "en",
     pin: "9103",
     status: "active",
+    phone: "",
+    smsOptIn: false,
   });
   const lapsedAssignA = await assignTraining(
     managerContext,
@@ -4777,6 +4793,8 @@ async function verifyDatabase(): Promise<void> {
     language: "en",
     pin: "9104",
     status: "active",
+    phone: "",
+    smsOptIn: false,
   });
   const archivedAssignA = await assignTraining(
     managerContext,
@@ -4955,6 +4973,8 @@ async function verifyDatabase(): Promise<void> {
     language: "en",
     pin: "9201",
     status: "active",
+    phone: "",
+    smsOptIn: false,
   });
   const rileyContext = await loginNewEmployee("9201", "9201", "phase12-riley");
   if (checklistEmployee.primaryLocationId !== seedIds.locations.downtown) {
@@ -5571,6 +5591,8 @@ async function verifyDatabase(): Promise<void> {
     language: "es",
     pin: "9301",
     status: "active",
+    phone: "",
+    smsOptIn: false,
   });
   const caseyContext = await loginNewEmployee("9301", "9301", "phase13-casey");
   if (translationEmployee.primaryLocationId !== seedIds.locations.downtown) {
@@ -5869,6 +5891,8 @@ async function verifyDatabase(): Promise<void> {
     language: "en",
     pin: "9105",
     status: "active",
+    phone: "",
+    smsOptIn: false,
   });
   const reportPathAssign = await assignTraining(
     managerContext,
@@ -6295,6 +6319,8 @@ async function verifyDatabase(): Promise<void> {
     language: "en",
     pin: "9106",
     status: "active",
+    phone: "",
+    smsOptIn: false,
   });
   const csvInjectionAssign = await assignTraining(
     managerContext,
@@ -6672,6 +6698,8 @@ async function verifyDatabase(): Promise<void> {
     language: "en",
     pin: "9108",
     status: "active",
+    phone: "",
+    smsOptIn: false,
   });
   const dueSoonSopFixture = await createMinimalPublishedSop(
     managerContext,
@@ -6904,8 +6932,108 @@ async function verifyDatabase(): Promise<void> {
 
   await verifyUpgradeMigration();
 
+  // --- Phase 20 (in progress): SMS notification channel ---
+  // Only the SMS channel (alongside Phase 16's in-app/email channels) is built so far this tick;
+  // the video-to-draft AI workflow, its durable Vercel Cron job runner, and AI-assisted
+  // translation drafting remain open scope for a future tick. Maya Chen (employeeSeed[0]) is
+  // seeded with a phone number and SMS opted in, and the Phase 8/9 assignment fixture far above
+  // already assigned her a training.assigned notification, so this section proves the resulting
+  // `notification_deliveries` SMS row rather than re-deriving a new fixture, mirroring how the
+  // Phase 16 section above proves email delivery bookkeeping.
+  const mayaSmsDeliveryRows = await getDb()
+    .select({
+      status: notificationDeliveries.status,
+      errorCode: notificationDeliveries.errorCode,
+      recipientAddress: notificationDeliveries.recipientAddress,
+    })
+    .from(notificationDeliveries)
+    .innerJoin(
+      notifications,
+      and(
+        eq(notifications.id, notificationDeliveries.notificationId),
+        eq(notifications.organizationId, notificationDeliveries.organizationId),
+      ),
+    )
+    .where(
+      and(
+        eq(notificationDeliveries.organizationId, seedIds.organization),
+        eq(notificationDeliveries.channel, "sms"),
+        eq(notifications.recipientId, employeeSeed[0].id),
+      ),
+    );
+  if (mayaSmsDeliveryRows.length === 0) {
+    throw new Error("An SMS-opted-in employee's notification never attempted an SMS delivery");
+  }
+  if (
+    mayaSmsDeliveryRows.some(
+      (row) => row.status !== "skipped" || row.errorCode !== "twilio_not_configured",
+    )
+  ) {
+    throw new Error(
+      "An SMS delivery attempt in a Twilio-less environment was not recorded as safely skipped",
+    );
+  }
+  if (mayaSmsDeliveryRows.some((row) => row.recipientAddress !== employeeSeed[0].phone)) {
+    throw new Error("The SMS delivery attempt did not record the employee's own phone number");
+  }
+
+  // An employee with no SMS opt-in never gets an SMS delivery attempt at all — not even a
+  // skipped one — even though they received notifications of the exact same types above. Riley
+  // Reportee (the Phase 14/16 report-path fixture) has no phone number and no opt-in.
+  const noOptInSmsDeliveryRows = await getDb()
+    .select({ id: notificationDeliveries.id })
+    .from(notificationDeliveries)
+    .innerJoin(
+      notifications,
+      and(
+        eq(notifications.id, notificationDeliveries.notificationId),
+        eq(notifications.organizationId, notificationDeliveries.organizationId),
+      ),
+    )
+    .where(
+      and(
+        eq(notificationDeliveries.organizationId, seedIds.organization),
+        eq(notificationDeliveries.channel, "sms"),
+        eq(notifications.recipientId, reportPathEmployee.id),
+      ),
+    );
+  if (noOptInSmsDeliveryRows.length !== 0) {
+    throw new Error("An employee with no SMS opt-in still received an SMS delivery attempt");
+  }
+
+  // Phone/SMS opt-in round-trip through the same createEmployee/updateEmployee/getEmployee path
+  // every other employee field already uses, proving the new columns persist and can be toggled
+  // off again without touching any other profile field.
+  const smsFixtureEmployee = await createEmployee(managerContext, {
+    primaryLocationId: seedIds.locations.downtown,
+    employeeNumber: "9120",
+    displayName: "Casey Textable",
+    jobRole: "Cook",
+    language: "en",
+    pin: "9120",
+    status: "active",
+    phone: "+15555550199",
+    smsOptIn: true,
+  });
+  if (smsFixtureEmployee.phone !== "+15555550199" || smsFixtureEmployee.smsOptIn !== true) {
+    throw new Error("createEmployee did not persist the phone number and SMS opt-in");
+  }
+  const smsFixtureAfterOptOut = await updateEmployee(managerContext, smsFixtureEmployee.id, {
+    primaryLocationId: seedIds.locations.downtown,
+    employeeNumber: "9120",
+    displayName: "Casey Textable",
+    jobRole: "Cook",
+    language: "en",
+    status: "active",
+    phone: "+15555550199",
+    smsOptIn: false,
+  });
+  if (smsFixtureAfterOptOut.smsOptIn !== false || smsFixtureAfterOptOut.phone !== "+15555550199") {
+    throw new Error("updateEmployee did not persist an SMS opt-out while keeping the phone number");
+  }
+
   process.stdout.write(
-    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, migrationConcurrencyLock: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true, employeeStationReader: true, employeeSopReader: true, employeeCategoryLibrary: true, employeeRecentViews: true, employeeMediaAuthorization: true, qrCreationAndTargetValidation: true, qrLocationScoping: true, qrRevocation: true, qrRotation: true, qrScanResolution: true, qrUnavailableTarget: true, qrEnumerationRateLimit: true, trainingConfigDefaultsAndScoping: true, trainingConfigStaleWriteRejection: true, trainingStepRequirementGuards: true, trainingQuestionCrudAndReorder: true, trainingPublishReadinessRules: true, trainingPublishedImmutability: true, trainingDraftCloning: true, trainingAssignmentCreationAndScoping: true, trainingSessionStartAndResume: true, trainingSequentialStepEnforcement: true, trainingWatchTimerQuestionEvidenceEnforcement: true, trainingDuplicateActionRejection: true, trainingScoringAndApprovalRouting: true, trainingSubmitIdempotency: true, trainingAttemptLimitsAndRetraining: true, bulkAssignmentAuthorizationScoping: true, bulkAssignmentByEmployeeListWithDueDate: true, bulkAssignmentByJobRole: true, bulkAssignmentByLocation: true, bulkAssignmentIndependentDuplicateSkip: true, approvalQueueLocationScoping: true, approvalEvidenceAuthorization: true, approvalDecisionNoteRules: true, approvalApprovedDecision: true, approvalRejectedDecision: true, approvalCorrectionRequest: true, approvalDecisionImmutability: true, correctionOwnershipEnforcement: true, correctionAppendOnlyEvidence: true, correctionResubmitIdempotency: true, approvalDecisionHistoryRetention: true, trainingPathAuthorizationScoping: true, trainingPathItemValidation: true, trainingPathOrderedBlocking: true, qualificationAward: true, qualificationRenewal: true, qualificationOverviewClassification: true, qualificationEmployeeView: true, qualificationRevocation: true, trainingPathArchiveStopsAwards: true, checklistAuthorizationScoping: true, checklistDuplicateTitleRejection: true, checklistRunStartAndResume: true, checklistAutoRequirementGuardsManualTick: true, checklistTimerPhotoNoteEnforcement: true, checklistSubmitRequiresAllRequiredItems: true, checklistDuplicateOccurrencePrevention: true, checklistApprovalRouting: true, checklistApprovalUnauthorizedRejection: true, checklistCorrectionRequestAndResubmit: true, checklistCorrectionResubmitIdempotency: true, checklistApprovalDecisionCompletesRun: true, checklistSubmitIdempotency: true, checklistRunListLocationScoping: true, checklistItemRemovalDisablesRatherThanDeletes: true, checklistHistoricalRunRetainsRemovedItem: true, translationMatrixExcludesProtectedFields: true, translationLocationScoping: true, translationEntityOwnershipGuard: true, translationEmptyApprovalRejected: true, translationEditResetsApproval: true, translationStaleSourceDetection: true, translationEmployeeLocaleSwitchPreservesProtectedFields: true, translationUnapprovedFallsBackToOriginal: true, domainEventEmissionCoverage: true, activityFeedLocationScoping: true, activityFeedTypeFilterAndPagination: true, trainingProgressReportFilteringAndScoping: true, qualificationsReportFilteringAndPagination: true, checklistCompletionReportFilteringAndScoping: true, sopVersionHistoryReportFilteringAndScoping: true, approvalHistoryReportUnionAndScoping: true, sopVersionPrintRecordFidelity: true, sopVersionPrintDraftRejection: true, sopVersionPrintLocationScoping: true, trainingSessionPrintRecordFidelity: true, trainingSessionPrintLocationScoping: true, printPdfGeneration: true, printPdfTextFidelity: true, csvExportRowFidelity: true, csvExportFormulaInjectionDefusing: true, notificationDomainEventCoverage: true, notificationNonNotificationTypesExcluded: true, notificationSynchronousDispatch: true, notificationEmployeeInbox: true, notificationMarkReadIdempotencyAndScoping: true, notificationManagerInboxAndLocationScoping: true, notificationDisabledEmployeeSuppression: true, notificationDisabledManagerSuppression: true, notificationDedupeKeyRetryIdempotency: true, notificationPendingEventReconcile: true, notificationEmailSkippedWithoutSmtp: true, notificationTimeBasedDueSoonAndOverdue: true, notificationTimeBasedExpiringSoon: true, notificationTimeReconcileSameDayGuard: true, notificationTimeReconcileTimezoneBoundary: true, mediaSignatureValidation: true, mediaManagerAuthoredLocationScoping: true, pwaManifestConfiguration: true, healthCheckLiveDatabase: true })}\n`,
+    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, migrationConcurrencyLock: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true, employeeStationReader: true, employeeSopReader: true, employeeCategoryLibrary: true, employeeRecentViews: true, employeeMediaAuthorization: true, qrCreationAndTargetValidation: true, qrLocationScoping: true, qrRevocation: true, qrRotation: true, qrScanResolution: true, qrUnavailableTarget: true, qrEnumerationRateLimit: true, trainingConfigDefaultsAndScoping: true, trainingConfigStaleWriteRejection: true, trainingStepRequirementGuards: true, trainingQuestionCrudAndReorder: true, trainingPublishReadinessRules: true, trainingPublishedImmutability: true, trainingDraftCloning: true, trainingAssignmentCreationAndScoping: true, trainingSessionStartAndResume: true, trainingSequentialStepEnforcement: true, trainingWatchTimerQuestionEvidenceEnforcement: true, trainingDuplicateActionRejection: true, trainingScoringAndApprovalRouting: true, trainingSubmitIdempotency: true, trainingAttemptLimitsAndRetraining: true, bulkAssignmentAuthorizationScoping: true, bulkAssignmentByEmployeeListWithDueDate: true, bulkAssignmentByJobRole: true, bulkAssignmentByLocation: true, bulkAssignmentIndependentDuplicateSkip: true, approvalQueueLocationScoping: true, approvalEvidenceAuthorization: true, approvalDecisionNoteRules: true, approvalApprovedDecision: true, approvalRejectedDecision: true, approvalCorrectionRequest: true, approvalDecisionImmutability: true, correctionOwnershipEnforcement: true, correctionAppendOnlyEvidence: true, correctionResubmitIdempotency: true, approvalDecisionHistoryRetention: true, trainingPathAuthorizationScoping: true, trainingPathItemValidation: true, trainingPathOrderedBlocking: true, qualificationAward: true, qualificationRenewal: true, qualificationOverviewClassification: true, qualificationEmployeeView: true, qualificationRevocation: true, trainingPathArchiveStopsAwards: true, checklistAuthorizationScoping: true, checklistDuplicateTitleRejection: true, checklistRunStartAndResume: true, checklistAutoRequirementGuardsManualTick: true, checklistTimerPhotoNoteEnforcement: true, checklistSubmitRequiresAllRequiredItems: true, checklistDuplicateOccurrencePrevention: true, checklistApprovalRouting: true, checklistApprovalUnauthorizedRejection: true, checklistCorrectionRequestAndResubmit: true, checklistCorrectionResubmitIdempotency: true, checklistApprovalDecisionCompletesRun: true, checklistSubmitIdempotency: true, checklistRunListLocationScoping: true, checklistItemRemovalDisablesRatherThanDeletes: true, checklistHistoricalRunRetainsRemovedItem: true, translationMatrixExcludesProtectedFields: true, translationLocationScoping: true, translationEntityOwnershipGuard: true, translationEmptyApprovalRejected: true, translationEditResetsApproval: true, translationStaleSourceDetection: true, translationEmployeeLocaleSwitchPreservesProtectedFields: true, translationUnapprovedFallsBackToOriginal: true, domainEventEmissionCoverage: true, activityFeedLocationScoping: true, activityFeedTypeFilterAndPagination: true, trainingProgressReportFilteringAndScoping: true, qualificationsReportFilteringAndPagination: true, checklistCompletionReportFilteringAndScoping: true, sopVersionHistoryReportFilteringAndScoping: true, approvalHistoryReportUnionAndScoping: true, sopVersionPrintRecordFidelity: true, sopVersionPrintDraftRejection: true, sopVersionPrintLocationScoping: true, trainingSessionPrintRecordFidelity: true, trainingSessionPrintLocationScoping: true, printPdfGeneration: true, printPdfTextFidelity: true, csvExportRowFidelity: true, csvExportFormulaInjectionDefusing: true, notificationDomainEventCoverage: true, notificationNonNotificationTypesExcluded: true, notificationSynchronousDispatch: true, notificationEmployeeInbox: true, notificationMarkReadIdempotencyAndScoping: true, notificationManagerInboxAndLocationScoping: true, notificationDisabledEmployeeSuppression: true, notificationDisabledManagerSuppression: true, notificationDedupeKeyRetryIdempotency: true, notificationPendingEventReconcile: true, notificationEmailSkippedWithoutSmtp: true, notificationTimeBasedDueSoonAndOverdue: true, notificationTimeBasedExpiringSoon: true, notificationTimeReconcileSameDayGuard: true, notificationTimeReconcileTimezoneBoundary: true, mediaSignatureValidation: true, mediaManagerAuthoredLocationScoping: true, pwaManifestConfiguration: true, healthCheckLiveDatabase: true, notificationSmsSkippedWithoutTwilio: true, notificationSmsRequiresOptIn: true, employeePhoneAndSmsOptInPersistence: true })}\n`,
   );
 }
 

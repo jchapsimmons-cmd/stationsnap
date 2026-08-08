@@ -3,6 +3,7 @@ import { and, asc, desc, eq, inArray, lte, sql, type SQL } from "drizzle-orm";
 import { calendarDateInTimeZone } from "@/lib/timezone";
 import { AppError } from "@/lib/errors";
 import { isEmailDeliveryConfigured, sendNotificationEmail } from "@/server/email";
+import { isSmsDeliveryConfigured, sendNotificationSms } from "@/server/sms";
 import type { DomainEventRecord } from "@/server/events";
 import { getDb } from "@/server/db/client";
 import {
@@ -67,11 +68,33 @@ interface CreateNotificationInput {
 }
 
 /**
- * Inserts one notification plus its in-app delivery record, then — for a manager recipient with
- * an email address and SMTP configured — attempts an email delivery too. Idempotent on
- * `dedupeKey`: a conflict means this exact occurrence was already notified, so this silently
- * returns rather than throwing, letting every call site (event dispatch, the time-based reconcile
- * pass, and their respective catch-up retries) call this any number of times safely.
+ * Resolves whether an employee recipient should receive an SMS for this notification: they need
+ * both a phone number on file and the explicit opt-in, mirroring the Zod-level invariant in
+ * `employeeCreateSchema`/`employeeUpdateSchema` that a phone is required to opt in in the first
+ * place. A single point lookup keyed on `employees.id` (== the notification's `recipientId` for
+ * employee recipients), so every employee-recipient call site gets SMS for free without having to
+ * thread phone/opt-in state through its own query — unlike manager email, which stays an explicit
+ * `email` argument because a manager's address comes from a different join at each call site.
+ */
+async function resolveEmployeeSmsDestination(
+  organizationId: string,
+  employeeId: string,
+): Promise<{ to: string } | null> {
+  const [row] = await getDb()
+    .select({ phone: employees.phone, smsOptIn: employees.smsOptIn })
+    .from(employees)
+    .where(and(eq(employees.id, employeeId), eq(employees.organizationId, organizationId)))
+    .limit(1);
+  return row && row.smsOptIn && row.phone ? { to: row.phone } : null;
+}
+
+/**
+ * Inserts one notification plus its in-app delivery record, then attempts external delivery:
+ * email for a manager recipient with an address and SMTP configured, SMS for an employee
+ * recipient with a phone number, opt-in, and Twilio configured. Idempotent on `dedupeKey`: a
+ * conflict means this exact occurrence was already notified, so this silently returns rather than
+ * throwing, letting every call site (event dispatch, the time-based reconcile pass, and their
+ * respective catch-up retries) call this any number of times safely.
  */
 async function createNotification(input: CreateNotificationInput): Promise<void> {
   const params = sanitizeParams(input.params);
@@ -108,30 +131,63 @@ async function createNotification(input: CreateNotificationInput): Promise<void>
     status: "sent",
   });
 
-  if (!input.email) return;
+  const sms =
+    input.recipientType === "employee"
+      ? await resolveEmployeeSmsDestination(input.organizationId, input.recipientId)
+      : null;
+  if (!input.email && !sms) return;
 
   const { title, body } = resolveNotificationText(input.type, params);
-  let status: "sent" | "failed" | "skipped" = "skipped";
-  let errorCode = "smtp_not_configured";
-  if (isEmailDeliveryConfigured()) {
-    try {
-      await sendNotificationEmail({ to: input.email.to, subject: title, text: body });
-      status = "sent";
-      errorCode = "";
-    } catch {
-      status = "failed";
-      errorCode = "send_failed";
+
+  if (input.email) {
+    let status: "sent" | "failed" | "skipped" = "skipped";
+    let errorCode = "smtp_not_configured";
+    if (isEmailDeliveryConfigured()) {
+      try {
+        await sendNotificationEmail({ to: input.email.to, subject: title, text: body });
+        status = "sent";
+        errorCode = "";
+      } catch {
+        status = "failed";
+        errorCode = "send_failed";
+      }
     }
+    await getDb().insert(notificationDeliveries).values({
+      id: randomUUID(),
+      organizationId: input.organizationId,
+      notificationId: inserted.id,
+      channel: "email",
+      recipientAddress: input.email.to,
+      status,
+      errorCode,
+    });
   }
-  await getDb().insert(notificationDeliveries).values({
-    id: randomUUID(),
-    organizationId: input.organizationId,
-    notificationId: inserted.id,
-    channel: "email",
-    recipientAddress: input.email.to,
-    status,
-    errorCode,
-  });
+
+  if (sms) {
+    let status: "sent" | "failed" | "skipped" = "skipped";
+    let errorCode = "twilio_not_configured";
+    if (isSmsDeliveryConfigured()) {
+      try {
+        // SMS has no subject line, so the title is folded into the body — the same content an
+        // in-app/email recipient would see, just formatted for a single text message.
+        await sendNotificationSms({ to: sms.to, body: `${title}: ${body}` });
+        status = "sent";
+        errorCode = "";
+      } catch {
+        status = "failed";
+        errorCode = "send_failed";
+      }
+    }
+    await getDb().insert(notificationDeliveries).values({
+      id: randomUUID(),
+      organizationId: input.organizationId,
+      notificationId: inserted.id,
+      channel: "sms",
+      recipientAddress: sms.to,
+      status,
+      errorCode,
+    });
+  }
 }
 
 /**

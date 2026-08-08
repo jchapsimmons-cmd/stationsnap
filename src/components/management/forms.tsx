@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
-import { Button, Card, Checkbox, Input, Select, Textarea } from "@/components/ui";
+import { Button, Card, Checkbox, Input, Select, Textarea, Toggle } from "@/components/ui";
 
 interface ApiResult<T> {
   ok: boolean;
@@ -364,24 +364,29 @@ export function EmployeeForm({
     jobRole: string;
     language: "en" | "es";
     status: "active" | "disabled";
+    phone: string;
+    smsOptIn: boolean;
   };
   locations: readonly LocationOption[];
 }) {
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string>();
+  const [smsOptIn, setSmsOptIn] = useState(employee?.smsOptIn ?? false);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setPending(true);
     setError(undefined);
     const form = new FormData(event.currentTarget);
-    const payload: Record<string, string> = {
+    const payload: Record<string, string | boolean> = {
       primaryLocationId: value(form, "primaryLocationId"),
       employeeNumber: value(form, "employeeNumber"),
       displayName: value(form, "displayName"),
       jobRole: value(form, "jobRole"),
       language: value(form, "language"),
       status: value(form, "status"),
+      phone: value(form, "phone"),
+      smsOptIn,
     };
     if (!employee) payload["pin"] = value(form, "pin");
     try {
@@ -456,6 +461,14 @@ export function EmployeeForm({
           >
             {statusOptions}
           </Select>
+          <Input
+            id="employee-phone"
+            name="phone"
+            type="tel"
+            label="Phone (optional)"
+            hint="E.164 format, e.g. +15551234567. Required to enable SMS notifications."
+            defaultValue={employee?.phone ?? ""}
+          />
           {!employee && (
             <Input
               id="employee-pin"
@@ -469,6 +482,12 @@ export function EmployeeForm({
             />
           )}
         </div>
+        <Toggle
+          id="employee-sms-opt-in"
+          label="Send this employee SMS notifications"
+          checked={smsOptIn}
+          onChange={(event) => setSmsOptIn(event.target.checked)}
+        />
       </Card>
       <FormStatus error={error} />
       <Button type="submit" disabled={pending || locations.length === 0}>
