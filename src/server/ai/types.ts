@@ -30,3 +30,24 @@ export interface DraftingResult {
 export interface DraftingProvider {
   draftSop(input: { transcript: string; sourceTitleHint: string }): Promise<DraftingResult>;
 }
+
+/**
+ * Phase 20's second AI-assisted feature: drafting a single translated field/step for a manager to
+ * review, upgrading Phase 13's manual-only translation entry. Reuses the same Anthropic credential
+ * and provider-neutral shape as `DraftingProvider` above, but is a separate interface — one
+ * bounded text-in/text-out call, not a multi-step transcription+drafting job.
+ */
+export interface TranslationDraftResult {
+  /** Unvalidated JSON the provider returned; the caller runs it through the versioned Zod schema. */
+  raw: unknown;
+  provider: string;
+  model: string;
+}
+
+export interface TranslationDraftingProvider {
+  draftTranslation(input: {
+    sourceText: string;
+    targetLocale: string;
+    contextLabel: string;
+  }): Promise<TranslationDraftResult>;
+}

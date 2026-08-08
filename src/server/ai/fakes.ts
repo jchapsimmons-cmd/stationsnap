@@ -1,5 +1,11 @@
 import { AiProviderError } from "@/server/ai/providers";
-import type { DraftingProvider, DraftingResult, TranscriptionProvider } from "@/server/ai/types";
+import type {
+  DraftingProvider,
+  DraftingResult,
+  TranscriptionProvider,
+  TranslationDraftingProvider,
+  TranslationDraftResult,
+} from "@/server/ai/types";
 
 /**
  * Deterministic provider test doubles. Every automated test (unit, `db:verify`) that needs the
@@ -72,5 +78,44 @@ export const malformedDraftingProvider: DraftingProvider = {
 export const alwaysFailingDraftingProvider: DraftingProvider = {
   draftSop: async () => {
     throw new AiProviderError("draft_generation_failed", "fake drafting failure");
+  },
+};
+
+/**
+ * Phase 20 AI-assisted translation drafting fakes — never the real Anthropic HTTP client, per the
+ * same "provider fakes" principle the video-to-draft fakes above already follow.
+ */
+
+/** Always succeeds with a deterministic, recognizable, schema-valid translation. */
+export const fakeTranslationDraftingProvider: TranslationDraftingProvider = {
+  draftTranslation: async (input): Promise<TranslationDraftResult> => ({
+    raw: { translatedText: `[${input.targetLocale}] ${input.sourceText}` },
+    provider: "fake-anthropic",
+    model: "fake-claude",
+  }),
+};
+
+/** Returns a payload that fails the versioned translation draft schema (empty text). */
+export const malformedTranslationDraftingProvider: TranslationDraftingProvider = {
+  draftTranslation: async (): Promise<TranslationDraftResult> => ({
+    raw: { translatedText: "" },
+    provider: "fake-anthropic",
+    model: "fake-claude",
+  }),
+};
+
+/** Returns well-formed JSON that is nonetheless the wrong shape (missing `translatedText`). */
+export const wrongShapeTranslationDraftingProvider: TranslationDraftingProvider = {
+  draftTranslation: async (): Promise<TranslationDraftResult> => ({
+    raw: { text: "no translatedText field here" },
+    provider: "fake-anthropic",
+    model: "fake-claude",
+  }),
+};
+
+/** Always fails with a translation-drafting-shaped provider error, for testing failure paths. */
+export const alwaysFailingTranslationDraftingProvider: TranslationDraftingProvider = {
+  draftTranslation: async () => {
+    throw new AiProviderError("translation_generation_failed", "fake translation failure");
   },
 };

@@ -275,40 +275,58 @@ export type TrainingQuestionCreateInput = z.infer<typeof trainingQuestionCreateS
 export type TrainingQuestionUpdateInput = z.infer<typeof trainingQuestionUpdateSchema>;
 export type TrainingQuestionReorderInput = z.infer<typeof trainingQuestionReorderSchema>;
 
-// Manual translations are English-source, Spanish-target only for this phase; AI-assisted
-// drafting and additional target locales are deferred to Phase 20.
+// Manual translations are English-source, Spanish-target only for this phase. Phase 20 adds
+// AI-assisted drafting for these same fields/locales; additional target locales remain deferred.
 export const translationSourceLocaleValues = ["en"] as const;
 export const translationTargetLocaleValues = ["es"] as const;
 
+// One shape per (entityType, allowed field) pair, shared by both the manual upsert schema (which
+// adds a bounded `translatedText`) and the Phase 20 AI-draft-generation schema (which has no
+// `translatedText` — the manager is asking StationSnap to produce one, not supplying it). Keeping
+// a single source of truth here means an AI-generated field/locale combination can never diverge
+// from what manual entry accepts.
+const translationTargetVersion = z.object({
+  entityType: z.literal("sop_version"),
+  entityId: z.uuid(),
+  field: z.enum(["title", "description"]),
+  targetLocale: z.enum(translationTargetLocaleValues),
+});
+const translationTargetMaterial = z.object({
+  entityType: z.literal("sop_material"),
+  entityId: z.uuid(),
+  field: z.literal("name"),
+  targetLocale: z.enum(translationTargetLocaleValues),
+});
+const translationTargetWarning = z.object({
+  entityType: z.literal("sop_warning"),
+  entityId: z.uuid(),
+  field: z.literal("text"),
+  targetLocale: z.enum(translationTargetLocaleValues),
+});
+const translationTargetStep = z.object({
+  entityType: z.literal("sop_step"),
+  entityId: z.uuid(),
+  field: z.enum(["title", "instruction", "warning"]),
+  targetLocale: z.enum(translationTargetLocaleValues),
+});
+
 export const translationUpsertSchema = z.discriminatedUnion("entityType", [
-  z.object({
-    entityType: z.literal("sop_version"),
-    entityId: z.uuid(),
-    field: z.enum(["title", "description"]),
-    targetLocale: z.enum(translationTargetLocaleValues),
-    translatedText: z.string().trim().max(4_000),
-  }),
-  z.object({
-    entityType: z.literal("sop_material"),
-    entityId: z.uuid(),
-    field: z.literal("name"),
-    targetLocale: z.enum(translationTargetLocaleValues),
-    translatedText: z.string().trim().max(160),
-  }),
-  z.object({
-    entityType: z.literal("sop_warning"),
-    entityId: z.uuid(),
-    field: z.literal("text"),
-    targetLocale: z.enum(translationTargetLocaleValues),
-    translatedText: z.string().trim().max(500),
-  }),
-  z.object({
-    entityType: z.literal("sop_step"),
-    entityId: z.uuid(),
-    field: z.enum(["title", "instruction", "warning"]),
-    targetLocale: z.enum(translationTargetLocaleValues),
-    translatedText: z.string().trim().max(4_000),
-  }),
+  translationTargetVersion.extend({ translatedText: z.string().trim().max(4_000) }),
+  translationTargetMaterial.extend({ translatedText: z.string().trim().max(160) }),
+  translationTargetWarning.extend({ translatedText: z.string().trim().max(500) }),
+  translationTargetStep.extend({ translatedText: z.string().trim().max(4_000) }),
+]);
+
+/**
+ * A manager's explicit request to draft (never auto-apply) an AI translation for one field/locale
+ * — the same field/entity-type combinations `translationUpsertSchema` accepts, minus the text
+ * itself. See `src/server/sops/translations.ts`'s `generateTranslationDraft`.
+ */
+export const translationDraftGenerateSchema = z.discriminatedUnion("entityType", [
+  translationTargetVersion,
+  translationTargetMaterial,
+  translationTargetWarning,
+  translationTargetStep,
 ]);
 
 export const translationMatrixQuerySchema = z.object({
@@ -320,5 +338,6 @@ export const employeeSopLocaleQuerySchema = z.object({
 });
 
 export type TranslationUpsertInput = z.infer<typeof translationUpsertSchema>;
+export type TranslationDraftGenerateInput = z.infer<typeof translationDraftGenerateSchema>;
 export type TranslationMatrixQuery = z.infer<typeof translationMatrixQuerySchema>;
 export type EmployeeSopLocaleQuery = z.infer<typeof employeeSopLocaleQuerySchema>;

@@ -4,6 +4,8 @@ import type {
   DraftingResult,
   TranscriptionProvider,
   TranscriptionResult,
+  TranslationDraftingProvider,
+  TranslationDraftResult,
 } from "@/server/ai/types";
 
 /** Thrown by the real providers below when their API key is missing or the provider call itself
@@ -140,6 +142,81 @@ export const claudeDraftingProvider: DraftingProvider = {
       throw new AiProviderError(
         "draft_invalid_json",
         "The drafting provider's response was not valid JSON.",
+      );
+    }
+    return { raw, provider: "anthropic", model: CLAUDE_MODEL };
+  },
+};
+
+const TRANSLATION_PROMPT_INSTRUCTIONS = `You translate a single short piece of restaurant standard operating procedure text for a
+manager to review before approving it. Respond with a single JSON object only — no prose, no
+markdown fences — matching exactly this shape:
+{ "translatedText": string }
+Preserve any numbers, quantities, units, or equipment settings in the source text exactly as
+written; translate only the surrounding language. Keep the tone plain and instructional, matching
+commercial kitchen training material. Never add content the source text does not contain.`;
+
+/**
+ * Real Anthropic Claude translation drafting over the Messages API directly, reusing the same
+ * `ANTHROPIC_API_KEY` credential and "no SDK, one JSON-only prompt" shape `claudeDraftingProvider`
+ * above already establishes. Guarded behind `ANTHROPIC_API_KEY`; never constructed or called by
+ * any automated test. Returns the raw parsed JSON — validation against the versioned schema in
+ * `translation-draft-schema.ts` happens one layer up, in `generateTranslationDraft`
+ * (`src/server/sops/translations.ts`).
+ */
+export const claudeTranslationDraftingProvider: TranslationDraftingProvider = {
+  async draftTranslation(input): Promise<TranslationDraftResult> {
+    const env = getServerEnv();
+    if (!env.ANTHROPIC_API_KEY) {
+      throw new AiProviderError("provider_not_configured", "ANTHROPIC_API_KEY is not configured.");
+    }
+    let response: Response;
+    try {
+      response = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": env.ANTHROPIC_API_KEY,
+          "anthropic-version": "2023-06-01",
+        },
+        body: JSON.stringify({
+          model: CLAUDE_MODEL,
+          max_tokens: 1_024,
+          system: TRANSLATION_PROMPT_INSTRUCTIONS,
+          messages: [
+            {
+              role: "user",
+              content: `Target language code: ${input.targetLocale}\nField: ${input.contextLabel}\n\nSource text (English):\n${input.sourceText}`,
+            },
+          ],
+        }),
+      });
+    } catch {
+      throw new AiProviderError("translation_unreachable", "The translation request failed.");
+    }
+    if (!response.ok) {
+      throw new AiProviderError(
+        "translation_generation_failed",
+        `The translation provider returned status ${response.status}.`,
+      );
+    }
+    const data = (await response.json().catch(() => null)) as {
+      content?: { type?: string; text?: string }[];
+    } | null;
+    const text = data?.content?.find((block) => block.type === "text")?.text;
+    if (typeof text !== "string") {
+      throw new AiProviderError(
+        "translation_invalid_response",
+        "The translation provider returned an unusable response.",
+      );
+    }
+    let raw: unknown;
+    try {
+      raw = JSON.parse(text);
+    } catch {
+      throw new AiProviderError(
+        "translation_invalid_json",
+        "The translation provider's response was not valid JSON.",
       );
     }
     return { raw, provider: "anthropic", model: CLAUDE_MODEL };
