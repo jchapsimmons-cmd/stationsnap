@@ -74,3 +74,4 @@
 - 2026-08-08T15:23:50Z tick: completedPhase=19, nextPhase=20, decision=blocked, needs human input
 - 2026-08-08T15:28:45Z tick: completedPhase=19, nextPhase=20, decision=proceeding
 - 2026-08-08T15:47:05Z tick: completedPhase=19, nextPhase=20, decision=proceeding
+- 2026-08-08T16:25:47Z tick: completedPhase=20, nextPhase=21, decision=landed Build Phase 20 on main (303cf17); note: remote phase-20 branch delete failed with HTTP 403 (credential lacks ref-delete permission), left in place harmlessly
