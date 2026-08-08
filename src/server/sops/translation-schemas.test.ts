@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   employeeSopLocaleQuerySchema,
+  translationDraftGenerateSchema,
   translationMatrixQuerySchema,
   translationUpsertSchema,
 } from "@/server/sops/schemas";
@@ -142,5 +143,60 @@ describe("Phase 13 translation schemas", () => {
 
   it("rejects an unsupported employee locale", () => {
     expect(() => employeeSopLocaleQuerySchema.parse({ lang: "fr" })).toThrow();
+  });
+});
+
+describe("Phase 20 AI translation draft generation schema", () => {
+  it("accepts the same field/entity-type combinations translationUpsertSchema accepts", () => {
+    const result = translationDraftGenerateSchema.parse({
+      entityType: "sop_step",
+      entityId,
+      field: "instruction",
+      targetLocale: "es",
+    });
+    expect(result.field).toBe("instruction");
+  });
+
+  it("has no translatedText field — that is what generation produces", () => {
+    const result = translationDraftGenerateSchema.parse({
+      entityType: "sop_version",
+      entityId,
+      field: "title",
+      targetLocale: "es",
+    });
+    expect(result).not.toHaveProperty("translatedText");
+  });
+
+  it("rejects a field name that does not belong to the entity type", () => {
+    expect(() =>
+      translationDraftGenerateSchema.parse({
+        entityType: "sop_material",
+        entityId,
+        field: "instruction",
+        targetLocale: "es",
+      }),
+    ).toThrow();
+  });
+
+  it("rejects an unsupported target locale", () => {
+    expect(() =>
+      translationDraftGenerateSchema.parse({
+        entityType: "sop_version",
+        entityId,
+        field: "title",
+        targetLocale: "fr",
+      }),
+    ).toThrow();
+  });
+
+  it("rejects an invalid entity id", () => {
+    expect(() =>
+      translationDraftGenerateSchema.parse({
+        entityType: "sop_version",
+        entityId: "not-a-uuid",
+        field: "title",
+        targetLocale: "es",
+      }),
+    ).toThrow();
   });
 });

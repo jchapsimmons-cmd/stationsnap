@@ -73,9 +73,12 @@ import {
 } from "@/server/db/schema";
 import { parseAiDraftedSop } from "@/server/ai/draft-schema";
 import {
+  alwaysFailingTranslationDraftingProvider,
   fakeDraftingProvider,
   fakeTranscriptionProvider,
+  fakeTranslationDraftingProvider,
   malformedDraftingProvider,
+  malformedTranslationDraftingProvider,
 } from "@/server/ai/fakes";
 import { advanceOneAiSopJobStep } from "@/server/jobs/ai-sop-job-runner";
 import {
@@ -144,6 +147,7 @@ import {
 } from "@/server/sops/service";
 import {
   approveTranslation,
+  generateTranslationDraft,
   getLocalizedSopForEmployee,
   getTranslationMatrix,
   upsertTranslation,
@@ -5696,6 +5700,290 @@ async function verifyDatabase(): Promise<void> {
     throw new Error("A stale translation was approved without being re-saved");
   }
 
+  // --- Phase 20: AI-assisted translation drafting (upgrades the Phase 13 flow above) ---
+  // Reuses `translationPublished`, the manager/riverside contexts, and the matrix rows from the
+  // Phase 13 section above. Every provider call below goes through src/server/ai/fakes.ts — never
+  // the real Anthropic HTTP client — per docs/testing-plan.md's "provider fakes" principle and the
+  // Phase 20 provider decisions in docs/implementation-plan.md. Translation drafting is
+  // synchronous (see the Phase 20 job-runner decision), so there is no job/cron machinery to
+  // drive here — just direct calls to `generateTranslationDraft`.
+
+  const fakeTranslationDraftDeps = { drafting: fakeTranslationDraftingProvider };
+
+  const materialNameField = initialTranslationMatrix.rows.find(
+    (row) => row.entityType === "sop_material" && row.field === "name",
+  );
+  const warningField = initialTranslationMatrix.rows.find(
+    (row) => row.entityType === "sop_warning",
+  );
+  const stepTitleField = initialTranslationMatrix.rows.find(
+    (row) => row.entityType === "sop_step" && row.field === "title",
+  );
+  const stepInstructionField = initialTranslationMatrix.rows.find(
+    (row) => row.entityType === "sop_step" && row.field === "instruction",
+  );
+  if (!materialNameField || !warningField || !stepTitleField || !stepInstructionField) {
+    throw new Error(
+      "The Phase 13 translation matrix was missing a field needed for the Phase 20 AI drafting fixtures",
+    );
+  }
+
+  // Org/location isolation: a manager without access to this location cannot generate a draft.
+  let unauthorizedDraftRejected = false;
+  try {
+    await generateTranslationDraft(
+      riversideManagerContext,
+      translationPublished.id,
+      {
+        entityType: "sop_material",
+        entityId: materialNameField.entityId,
+        field: "name",
+        targetLocale: "es",
+      },
+      fakeTranslationDraftDeps,
+      "verify-phase20-translation-unauthorized",
+    );
+  } catch {
+    unauthorizedDraftRejected = true;
+  }
+  if (!unauthorizedDraftRejected) {
+    throw new Error(
+      "A manager without access to the location generated an AI translation draft for another location",
+    );
+  }
+
+  // Happy path: a schema-valid AI draft lands as an editable, unapproved, pending-review row.
+  const afterAiDraft = await generateTranslationDraft(
+    managerContext,
+    translationPublished.id,
+    {
+      entityType: "sop_material",
+      entityId: materialNameField.entityId,
+      field: "name",
+      targetLocale: "es",
+    },
+    fakeTranslationDraftDeps,
+    "verify-phase20-translation-draft",
+  );
+  const aiDraftedRow = afterAiDraft.rows.find(
+    (row) => row.entityType === "sop_material" && row.entityId === materialNameField.entityId,
+  );
+  if (
+    !aiDraftedRow ||
+    !aiDraftedRow.translationId ||
+    aiDraftedRow.status !== "pending_review" ||
+    aiDraftedRow.provider !== "ai" ||
+    aiDraftedRow.approvedAt ||
+    aiDraftedRow.translatedText !== `[es] ${materialNameField.sourceText}`
+  ) {
+    throw new Error(
+      "Generating an AI translation draft did not land as a schema-valid, pending-review, unapproved draft",
+    );
+  }
+
+  // Malformed AI output (fails the versioned schema) must never become a draft.
+  let malformedDraftRejected = false;
+  try {
+    await generateTranslationDraft(
+      managerContext,
+      translationPublished.id,
+      {
+        entityType: "sop_warning",
+        entityId: warningField.entityId,
+        field: "text",
+        targetLocale: "es",
+      },
+      { drafting: malformedTranslationDraftingProvider },
+      "verify-phase20-translation-malformed",
+    );
+  } catch {
+    malformedDraftRejected = true;
+  }
+  if (!malformedDraftRejected) {
+    throw new Error("Malformed AI translation output was not rejected");
+  }
+  const matrixAfterMalformed = await getTranslationMatrix(
+    managerContext,
+    translationPublished.id,
+    "es",
+  );
+  const warningRowAfterMalformed = matrixAfterMalformed.rows.find(
+    (row) => row.entityType === "sop_warning" && row.entityId === warningField.entityId,
+  );
+  if (!warningRowAfterMalformed || warningRowAfterMalformed.status !== "untranslated") {
+    throw new Error("A malformed AI translation output became a draft");
+  }
+
+  // A failing provider (network/service error) must also never produce a draft.
+  let providerFailureRejected = false;
+  try {
+    await generateTranslationDraft(
+      managerContext,
+      translationPublished.id,
+      {
+        entityType: "sop_warning",
+        entityId: warningField.entityId,
+        field: "text",
+        targetLocale: "es",
+      },
+      { drafting: alwaysFailingTranslationDraftingProvider },
+      "verify-phase20-translation-provider-failure",
+    );
+  } catch {
+    providerFailureRejected = true;
+  }
+  if (!providerFailureRejected) {
+    throw new Error(
+      "A failing AI translation provider did not surface as a rejected draft attempt",
+    );
+  }
+
+  // AI never overwrites an already-approved translation: the title field was approved earlier in
+  // the Phase 13 section above.
+  let approvedOverwriteRejected = false;
+  try {
+    await generateTranslationDraft(
+      managerContext,
+      translationPublished.id,
+      {
+        entityType: "sop_version",
+        entityId: versionTitleField.entityId,
+        field: "title",
+        targetLocale: "es",
+      },
+      fakeTranslationDraftDeps,
+      "verify-phase20-translation-approved-overwrite-rejected",
+    );
+  } catch {
+    approvedOverwriteRejected = true;
+  }
+  if (!approvedOverwriteRejected) {
+    throw new Error("AI translation drafting overwrote an already-approved translation");
+  }
+  const matrixAfterApprovedAttempt = await getTranslationMatrix(
+    managerContext,
+    translationPublished.id,
+    "es",
+  );
+  const titleRowAfterApprovedAttempt = matrixAfterApprovedAttempt.rows.find(
+    (row) => row.entityType === "sop_version" && row.field === "title",
+  );
+  if (
+    !titleRowAfterApprovedAttempt ||
+    titleRowAfterApprovedAttempt.status !== "approved" ||
+    titleRowAfterApprovedAttempt.translatedText !== "Jarabe simple (actualizado)"
+  ) {
+    throw new Error("An approved translation changed after a rejected AI drafting attempt");
+  }
+
+  // The AI draft still flows through the exact same manual review/approval action: a manager must
+  // explicitly approve it.
+  const aiDraftApproved = await approveTranslation(
+    managerContext,
+    translationPublished.id,
+    aiDraftedRow.translationId,
+    "verify-phase20-translation-approve-ai-draft",
+  );
+  const approvedAiRow = aiDraftApproved.rows.find(
+    (row) => row.translationId === aiDraftedRow.translationId,
+  );
+  if (!approvedAiRow || approvedAiRow.status !== "approved" || !approvedAiRow.approvedAt) {
+    throw new Error(
+      "Approving an AI-drafted translation did not succeed through the normal approval action",
+    );
+  }
+
+  // Once approved, AI drafting refuses to touch it too — not just previously-manual approvals.
+  let approvedAiOverwriteRejected = false;
+  try {
+    await generateTranslationDraft(
+      managerContext,
+      translationPublished.id,
+      {
+        entityType: "sop_material",
+        entityId: materialNameField.entityId,
+        field: "name",
+        targetLocale: "es",
+      },
+      fakeTranslationDraftDeps,
+      "verify-phase20-translation-approved-ai-overwrite-rejected",
+    );
+  } catch {
+    approvedAiOverwriteRejected = true;
+  }
+  if (!approvedAiOverwriteRejected) {
+    throw new Error("AI translation drafting overwrote its own already-approved translation");
+  }
+
+  // Manual entry still works unchanged after AI drafting has touched other fields.
+  const manualAfterAi = await upsertTranslation(
+    managerContext,
+    translationPublished.id,
+    {
+      entityType: "sop_step",
+      entityId: stepInstructionField.entityId,
+      field: "instruction",
+      targetLocale: "es",
+      translatedText: "Combine el azúcar y el agua en una cacerola a fuego medio.",
+    },
+    "verify-phase20-translation-manual-after-ai",
+  );
+  const manualRow = manualAfterAi.rows.find(
+    (row) =>
+      row.entityType === "sop_step" &&
+      row.entityId === stepInstructionField.entityId &&
+      row.field === "instruction",
+  );
+  if (!manualRow || manualRow.status !== "pending_review" || manualRow.provider !== "manual") {
+    throw new Error("Manual translation entry stopped working after AI drafting was introduced");
+  }
+
+  // Manually editing an AI-drafted (not-yet-approved) translation reclaims it as provider manual.
+  const stepTitleAiDraft = await generateTranslationDraft(
+    managerContext,
+    translationPublished.id,
+    {
+      entityType: "sop_step",
+      entityId: stepTitleField.entityId,
+      field: "title",
+      targetLocale: "es",
+    },
+    fakeTranslationDraftDeps,
+    "verify-phase20-translation-step-title-draft",
+  );
+  const stepTitleAiRow = stepTitleAiDraft.rows.find(
+    (row) =>
+      row.entityType === "sop_step" &&
+      row.entityId === stepTitleField.entityId &&
+      row.field === "title",
+  );
+  if (!stepTitleAiRow || stepTitleAiRow.provider !== "ai") {
+    throw new Error("Generating an AI draft for a step title did not record provider ai");
+  }
+  const stepTitleManualEdit = await upsertTranslation(
+    managerContext,
+    translationPublished.id,
+    {
+      entityType: "sop_step",
+      entityId: stepTitleField.entityId,
+      field: "title",
+      targetLocale: "es",
+      translatedText: "Combinar y calentar",
+    },
+    "verify-phase20-translation-step-title-manual-reclaim",
+  );
+  const stepTitleManualRow = stepTitleManualEdit.rows.find(
+    (row) =>
+      row.entityType === "sop_step" &&
+      row.entityId === stepTitleField.entityId &&
+      row.field === "title",
+  );
+  if (!stepTitleManualRow || stepTitleManualRow.provider !== "manual") {
+    throw new Error(
+      "Manually editing an AI-drafted translation did not reclaim it as provider manual",
+    );
+  }
+
   const actions = new Set(
     (await getDb().select({ action: auditEvents.action }).from(auditEvents)).map(
       (event) => event.action,
@@ -5755,6 +6043,7 @@ async function verifyDatabase(): Promise<void> {
     "checklist_run.correction_resubmitted",
     "translation.updated",
     "translation.approved",
+    "translation.ai_drafted",
   ];
   if (requiredAuditActions.some((action) => !actions.has(action))) {
     throw new Error(
@@ -7497,7 +7786,7 @@ async function verifyDatabase(): Promise<void> {
   }
 
   process.stdout.write(
-    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, migrationConcurrencyLock: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true, employeeStationReader: true, employeeSopReader: true, employeeCategoryLibrary: true, employeeRecentViews: true, employeeMediaAuthorization: true, qrCreationAndTargetValidation: true, qrLocationScoping: true, qrRevocation: true, qrRotation: true, qrScanResolution: true, qrUnavailableTarget: true, qrEnumerationRateLimit: true, trainingConfigDefaultsAndScoping: true, trainingConfigStaleWriteRejection: true, trainingStepRequirementGuards: true, trainingQuestionCrudAndReorder: true, trainingPublishReadinessRules: true, trainingPublishedImmutability: true, trainingDraftCloning: true, trainingAssignmentCreationAndScoping: true, trainingSessionStartAndResume: true, trainingSequentialStepEnforcement: true, trainingWatchTimerQuestionEvidenceEnforcement: true, trainingDuplicateActionRejection: true, trainingScoringAndApprovalRouting: true, trainingSubmitIdempotency: true, trainingAttemptLimitsAndRetraining: true, bulkAssignmentAuthorizationScoping: true, bulkAssignmentByEmployeeListWithDueDate: true, bulkAssignmentByJobRole: true, bulkAssignmentByLocation: true, bulkAssignmentIndependentDuplicateSkip: true, approvalQueueLocationScoping: true, approvalEvidenceAuthorization: true, approvalDecisionNoteRules: true, approvalApprovedDecision: true, approvalRejectedDecision: true, approvalCorrectionRequest: true, approvalDecisionImmutability: true, correctionOwnershipEnforcement: true, correctionAppendOnlyEvidence: true, correctionResubmitIdempotency: true, approvalDecisionHistoryRetention: true, trainingPathAuthorizationScoping: true, trainingPathItemValidation: true, trainingPathOrderedBlocking: true, qualificationAward: true, qualificationRenewal: true, qualificationOverviewClassification: true, qualificationEmployeeView: true, qualificationRevocation: true, trainingPathArchiveStopsAwards: true, checklistAuthorizationScoping: true, checklistDuplicateTitleRejection: true, checklistRunStartAndResume: true, checklistAutoRequirementGuardsManualTick: true, checklistTimerPhotoNoteEnforcement: true, checklistSubmitRequiresAllRequiredItems: true, checklistDuplicateOccurrencePrevention: true, checklistApprovalRouting: true, checklistApprovalUnauthorizedRejection: true, checklistCorrectionRequestAndResubmit: true, checklistCorrectionResubmitIdempotency: true, checklistApprovalDecisionCompletesRun: true, checklistSubmitIdempotency: true, checklistRunListLocationScoping: true, checklistItemRemovalDisablesRatherThanDeletes: true, checklistHistoricalRunRetainsRemovedItem: true, translationMatrixExcludesProtectedFields: true, translationLocationScoping: true, translationEntityOwnershipGuard: true, translationEmptyApprovalRejected: true, translationEditResetsApproval: true, translationStaleSourceDetection: true, translationEmployeeLocaleSwitchPreservesProtectedFields: true, translationUnapprovedFallsBackToOriginal: true, domainEventEmissionCoverage: true, activityFeedLocationScoping: true, activityFeedTypeFilterAndPagination: true, trainingProgressReportFilteringAndScoping: true, qualificationsReportFilteringAndPagination: true, checklistCompletionReportFilteringAndScoping: true, sopVersionHistoryReportFilteringAndScoping: true, approvalHistoryReportUnionAndScoping: true, sopVersionPrintRecordFidelity: true, sopVersionPrintDraftRejection: true, sopVersionPrintLocationScoping: true, trainingSessionPrintRecordFidelity: true, trainingSessionPrintLocationScoping: true, printPdfGeneration: true, printPdfTextFidelity: true, csvExportRowFidelity: true, csvExportFormulaInjectionDefusing: true, notificationDomainEventCoverage: true, notificationNonNotificationTypesExcluded: true, notificationSynchronousDispatch: true, notificationEmployeeInbox: true, notificationMarkReadIdempotencyAndScoping: true, notificationManagerInboxAndLocationScoping: true, notificationDisabledEmployeeSuppression: true, notificationDisabledManagerSuppression: true, notificationDedupeKeyRetryIdempotency: true, notificationPendingEventReconcile: true, notificationEmailSkippedWithoutSmtp: true, notificationTimeBasedDueSoonAndOverdue: true, notificationTimeBasedExpiringSoon: true, notificationTimeReconcileSameDayGuard: true, notificationTimeReconcileTimezoneBoundary: true, mediaSignatureValidation: true, mediaManagerAuthoredLocationScoping: true, pwaManifestConfiguration: true, healthCheckLiveDatabase: true, notificationSmsSkippedWithoutTwilio: true, notificationSmsRequiresOptIn: true, employeePhoneAndSmsOptInPersistence: true, aiJobLifecycleUploadToReady: true, aiJobNeverAutoPublishes: true, aiJobApplyToDraft: true, aiJobDoubleApplyRejected: true, aiJobSingleStepRegeneration: true, aiJobDoubleDismissRejected: true, aiJobSchemaRejectionEventuallyFails: true, aiJobManualFallbackAfterFailure: true, aiJobRetryResumesFailedStepPreservingTranscript: true, aiJobStuckLeaseRecovery: true, aiJobActiveLeaseNotDoubleClaimed: true, aiJobLocationScoping: true, cronEndpointAuthGuard: true })}\n`,
+    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, migrationConcurrencyLock: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true, employeeStationReader: true, employeeSopReader: true, employeeCategoryLibrary: true, employeeRecentViews: true, employeeMediaAuthorization: true, qrCreationAndTargetValidation: true, qrLocationScoping: true, qrRevocation: true, qrRotation: true, qrScanResolution: true, qrUnavailableTarget: true, qrEnumerationRateLimit: true, trainingConfigDefaultsAndScoping: true, trainingConfigStaleWriteRejection: true, trainingStepRequirementGuards: true, trainingQuestionCrudAndReorder: true, trainingPublishReadinessRules: true, trainingPublishedImmutability: true, trainingDraftCloning: true, trainingAssignmentCreationAndScoping: true, trainingSessionStartAndResume: true, trainingSequentialStepEnforcement: true, trainingWatchTimerQuestionEvidenceEnforcement: true, trainingDuplicateActionRejection: true, trainingScoringAndApprovalRouting: true, trainingSubmitIdempotency: true, trainingAttemptLimitsAndRetraining: true, bulkAssignmentAuthorizationScoping: true, bulkAssignmentByEmployeeListWithDueDate: true, bulkAssignmentByJobRole: true, bulkAssignmentByLocation: true, bulkAssignmentIndependentDuplicateSkip: true, approvalQueueLocationScoping: true, approvalEvidenceAuthorization: true, approvalDecisionNoteRules: true, approvalApprovedDecision: true, approvalRejectedDecision: true, approvalCorrectionRequest: true, approvalDecisionImmutability: true, correctionOwnershipEnforcement: true, correctionAppendOnlyEvidence: true, correctionResubmitIdempotency: true, approvalDecisionHistoryRetention: true, trainingPathAuthorizationScoping: true, trainingPathItemValidation: true, trainingPathOrderedBlocking: true, qualificationAward: true, qualificationRenewal: true, qualificationOverviewClassification: true, qualificationEmployeeView: true, qualificationRevocation: true, trainingPathArchiveStopsAwards: true, checklistAuthorizationScoping: true, checklistDuplicateTitleRejection: true, checklistRunStartAndResume: true, checklistAutoRequirementGuardsManualTick: true, checklistTimerPhotoNoteEnforcement: true, checklistSubmitRequiresAllRequiredItems: true, checklistDuplicateOccurrencePrevention: true, checklistApprovalRouting: true, checklistApprovalUnauthorizedRejection: true, checklistCorrectionRequestAndResubmit: true, checklistCorrectionResubmitIdempotency: true, checklistApprovalDecisionCompletesRun: true, checklistSubmitIdempotency: true, checklistRunListLocationScoping: true, checklistItemRemovalDisablesRatherThanDeletes: true, checklistHistoricalRunRetainsRemovedItem: true, translationMatrixExcludesProtectedFields: true, translationLocationScoping: true, translationEntityOwnershipGuard: true, translationEmptyApprovalRejected: true, translationEditResetsApproval: true, translationStaleSourceDetection: true, translationEmployeeLocaleSwitchPreservesProtectedFields: true, translationUnapprovedFallsBackToOriginal: true, aiTranslationDraftLocationScoping: true, aiTranslationDraftLandsAsPendingReview: true, aiTranslationDraftSchemaRejection: true, aiTranslationDraftProviderFailureRejection: true, aiTranslationDraftNeverOverwritesApproved: true, aiTranslationDraftFlowsThroughNormalApproval: true, aiTranslationManualEntryUnaffected: true, aiTranslationManualEditReclaimsProvider: true, domainEventEmissionCoverage: true, activityFeedLocationScoping: true, activityFeedTypeFilterAndPagination: true, trainingProgressReportFilteringAndScoping: true, qualificationsReportFilteringAndPagination: true, checklistCompletionReportFilteringAndScoping: true, sopVersionHistoryReportFilteringAndScoping: true, approvalHistoryReportUnionAndScoping: true, sopVersionPrintRecordFidelity: true, sopVersionPrintDraftRejection: true, sopVersionPrintLocationScoping: true, trainingSessionPrintRecordFidelity: true, trainingSessionPrintLocationScoping: true, printPdfGeneration: true, printPdfTextFidelity: true, csvExportRowFidelity: true, csvExportFormulaInjectionDefusing: true, notificationDomainEventCoverage: true, notificationNonNotificationTypesExcluded: true, notificationSynchronousDispatch: true, notificationEmployeeInbox: true, notificationMarkReadIdempotencyAndScoping: true, notificationManagerInboxAndLocationScoping: true, notificationDisabledEmployeeSuppression: true, notificationDisabledManagerSuppression: true, notificationDedupeKeyRetryIdempotency: true, notificationPendingEventReconcile: true, notificationEmailSkippedWithoutSmtp: true, notificationTimeBasedDueSoonAndOverdue: true, notificationTimeBasedExpiringSoon: true, notificationTimeReconcileSameDayGuard: true, notificationTimeReconcileTimezoneBoundary: true, mediaSignatureValidation: true, mediaManagerAuthoredLocationScoping: true, pwaManifestConfiguration: true, healthCheckLiveDatabase: true, notificationSmsSkippedWithoutTwilio: true, notificationSmsRequiresOptIn: true, employeePhoneAndSmsOptInPersistence: true, aiJobLifecycleUploadToReady: true, aiJobNeverAutoPublishes: true, aiJobApplyToDraft: true, aiJobDoubleApplyRejected: true, aiJobSingleStepRegeneration: true, aiJobDoubleDismissRejected: true, aiJobSchemaRejectionEventuallyFails: true, aiJobManualFallbackAfterFailure: true, aiJobRetryResumesFailedStepPreservingTranscript: true, aiJobStuckLeaseRecovery: true, aiJobActiveLeaseNotDoubleClaimed: true, aiJobLocationScoping: true, cronEndpointAuthGuard: true })}\n`,
   );
 }
 

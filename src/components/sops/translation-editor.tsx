@@ -14,6 +14,7 @@ export interface TranslationMatrixRowData {
   status: "untranslated" | "pending_review" | "approved";
   stale: boolean;
   approvedAt: string | null;
+  provider: "manual" | "ai" | null;
 }
 
 interface ApiResult<T> {
@@ -111,6 +112,36 @@ export function TranslationEditor({
     }
   }
 
+  /**
+   * A manager's explicit per-row request to draft a translation with AI — never automatic. The
+   * result lands at the same "pending review" status manual entry produces; it still requires the
+   * manager to explicitly Approve it below before an employee ever sees it. The button itself is
+   * disabled once a row is approved (the server rejects it too — see `generateTranslationDraft` —
+   * this just avoids a round trip for an action that can never succeed).
+   */
+  async function generateWithAi(row: TranslationMatrixRowData) {
+    const key = rowKey(row);
+    setPendingKey(key);
+    setError(undefined);
+    try {
+      const response = await fetch(`/api/management/sops/${sopId}/translations/draft`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          entityType: row.entityType,
+          entityId: row.entityId,
+          field: row.field,
+          targetLocale,
+        }),
+      });
+      applyResult((await response.json()) as ApiResult<MatrixResponse>);
+    } catch {
+      setError("StationSnap could not be reached. Try again.");
+    } finally {
+      setPendingKey(null);
+    }
+  }
+
   return (
     <div className="page-stack">
       {error && (
@@ -128,11 +159,15 @@ export function TranslationEditor({
         const draft = drafts[key] ?? "";
         const isPending = pendingKey === key;
         const canApprove = row.translationId !== null && draft.trim().length > 0 && !row.stale;
+        const canGenerate = row.status !== "approved" && !row.stale;
         return (
           <Card key={key}>
             <div className="action-row">
               <p className="eyebrow">{row.contextLabel}</p>
-              {statusBadge(row)}
+              <div className="action-row">
+                {row.provider === "ai" && <StatusBadge tone="neutral">AI drafted</StatusBadge>}
+                {statusBadge(row)}
+              </div>
             </div>
             <p>{row.sourceText}</p>
             <Textarea
@@ -151,6 +186,19 @@ export function TranslationEditor({
               </p>
             )}
             <div className="action-row">
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={isPending || !canGenerate}
+                onClick={() => generateWithAi(row)}
+                title={
+                  row.status === "approved"
+                    ? "This translation is already approved. AI drafting never overwrites an approved translation."
+                    : undefined
+                }
+              >
+                {isPending ? "Generating…" : "Generate with AI"}
+              </Button>
               <Button
                 type="button"
                 variant="secondary"
