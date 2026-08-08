@@ -106,6 +106,11 @@ async function main(): Promise<void> {
       STORAGE_DRIVER: "vercel-blob",
       // Syntactically valid placeholder only — no storage operation is exercised in this check.
       BLOB_READ_WRITE_TOKEN: "vercel_blob_rw_release_check_placeholder_token",
+      // Placeholders only — no cron endpoint or AI provider call is exercised in this check, but
+      // Phase 20 requires all three to be present for a production-shaped configuration to parse.
+      CRON_SECRET: "release_check_placeholder_cron_secret",
+      ANTHROPIC_API_KEY: "sk-ant-release-check-placeholder",
+      OPENAI_API_KEY: "sk-release-check-placeholder",
       // Deliberately absent: SEED_MANAGER_PASSWORD / SEED_EMPLOYEE_PIN. parseSeedEnv rejects
       // NODE_ENV=production outright below, and a real production deploy never runs db:seed.
     };
