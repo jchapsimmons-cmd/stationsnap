@@ -29,8 +29,9 @@ const CLAIMABLE_STATUSES = ["upload_received", "transcribing", "drafting"] as co
 const LEASE_MS = 5 * 60_000;
 
 /** Exponential backoff between step attempts, capped at 15 minutes. Vercel Cron's minimum
- * granularity is 1 minute, so the first backoff (60s) is already the smallest meaningful delay. */
-function backoffMs(attempts: number): number {
+ * granularity is 1 minute, so the first backoff (60s) is already the smallest meaningful delay.
+ * Exported for its own focused unit test; every other function here needs a real database. */
+export function backoffMs(attempts: number): number {
   return Math.min(60_000 * 2 ** Math.max(0, attempts - 1), 15 * 60_000);
 }
 

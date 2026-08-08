@@ -2214,7 +2214,7 @@ export const aiSopJobOutputs = pgTable(
       .notNull()
       .references(() => organizations.id, { onDelete: "restrict" }),
     schemaVersion: integer("schema_version").notNull(),
-    structuredDraft: jsonb("structured_draft").notNull(),
+    structuredDraft: jsonb("structured_draft").$type<Record<string, unknown>>().notNull(),
     acceptanceState: aiSopJobOutputAcceptance("acceptance_state").notNull().default("pending"),
     appliedAt: timestamp("applied_at", { withTimezone: true }),
     appliedByManagerUserId: uuid("applied_by_manager_user_id").references(() => managerUsers.id, {
