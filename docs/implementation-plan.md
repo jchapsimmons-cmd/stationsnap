@@ -44,7 +44,7 @@ Exact package versions and providers must be selected in Phase 1 from maintained
 3. Typed PostgreSQL query/migration layer and local database workflow. Resolved in Phase 1.
 4. Manager identity provider or self-hosted session approach, including email delivery. Resolved in Phase 2 (self-hosted sessions; SMTP for email).
 5. Private object-storage provider and upload limits. Resolved: local disk for development, Vercel Blob in production (selected and configured directly against the live deployment).
-6. Durable job runner and scheduled-job host. Still open; not required until Phase 20 automation needs it, since no phase before Phase 20 depends on background jobs.
+6. Durable job runner and scheduled-job host. Resolved by the project owner on 2026-08-08: Vercel Cron Jobs triggering a protected endpoint (authenticated via `CRON_SECRET`, already configured on Vercel Production/Preview — verify the cron request's `Authorization` header against it before doing any work) against a durable Postgres job table, following the same `scheduled_job_runs`-style idempotency pattern Phase 16 already established. No new vendor. Because Vercel Cron's minimum granularity is 1 minute and a single serverless invocation cannot run the whole video-to-draft pipeline start-to-finish, each cron invocation must claim and advance exactly one short, resumable step of a job (e.g. one `video_draft_jobs` row moving through upload-received → transcribing → drafting → ready/failed), never attempt the full pipeline in one request, and never double-charge Anthropic/OpenAI on retry of a step that already succeeded.
 7. Production host, region, domain, backup objectives, retention policy, and privacy requirements. Hosting (Vercel) and the production database (Neon Postgres) are resolved and live; remaining items (backup/retention policy, privacy documentation) are covered in Phase 19.
 8. AI/transcription provider, AI-assisted translation provider, and SMS provider. Resolved by the project owner on 2026-08-06; see "Phase 20 provider decisions" below. Phase 20 may now proceed.
 
@@ -55,6 +55,15 @@ Exact package versions and providers must be selected in Phase 1 from maintained
 - **SMS notification channel (alongside Phase 16's email/in-app channels):** Twilio, authenticated via an API Key (not the primary Auth Token). Credentials: `TWILIO_ACCOUNT_SID`, `TWILIO_API_KEY_SID`, `TWILIO_API_KEY_SECRET`, `TWILIO_FROM_NUMBER` (E.164 format, e.g. `+1XXXXXXXXXX`).
 
 All six credentials are already configured on Vercel (Production and Preview), the same way `DATABASE_URL` and `BLOB_READ_WRITE_TOKEN` were for earlier phases — add matching entries to `src/lib/env.ts`'s server env schema rather than assuming they exist unchecked. **Automated tests (unit, `db:verify`, and the Playwright E2E suite) must use provider fakes for all three integrations, per `docs/testing-plan.md`'s established "provider fakes" principle — never call the real Anthropic, OpenAI, or Twilio APIs from a test.** These are paid, rate-limited, external services; real calls in CI-style runs would be slow, flaky, and cost money on every `npm run verify`. Only the live production deployment should ever call the real APIs.
+
+### Job runner decision (resolved 2026-08-08)
+
+See "Missing dependencies and decisions" item 6 above: Vercel Cron Jobs, a `CRON_SECRET`-protected
+endpoint, and a durable Postgres job table advancing one short step per invocation. `CRON_SECRET`
+is already configured on Vercel Production/Preview. The cron schedule itself belongs in
+`vercel.json`'s `crons` array as part of building this phase's code, the same way earlier phases
+added their own config (e.g. Phase 19's PWA manifest) rather than needing it provisioned ahead of
+time.
 
 ## Design conflicts
 
