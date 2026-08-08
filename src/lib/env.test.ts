@@ -138,6 +138,51 @@ describe("parseServerEnv", () => {
     ).toThrow(/STORAGE_DRIVER must be vercel-blob in production/);
   });
 
+  it("requires ANTHROPIC_API_KEY and OPENAI_API_KEY as a complete group", () => {
+    expect(() =>
+      parseServerEnv({
+        NODE_ENV: "test",
+        DATABASE_URL: "postgresql://user:password@localhost/stationsnap",
+        ANTHROPIC_API_KEY: "sk-ant-test",
+      }),
+    ).toThrow(/ANTHROPIC_API_KEY and OPENAI_API_KEY must be configured together/);
+    expect(
+      parseServerEnv({
+        NODE_ENV: "test",
+        DATABASE_URL: "postgresql://user:password@localhost/stationsnap",
+        ANTHROPIC_API_KEY: "sk-ant-test",
+        OPENAI_API_KEY: "sk-openai-test",
+      }),
+    ).toMatchObject({ ANTHROPIC_API_KEY: "sk-ant-test", OPENAI_API_KEY: "sk-openai-test" });
+  });
+
+  it("rejects production without CRON_SECRET", () => {
+    expect(() =>
+      parseServerEnv({
+        NODE_ENV: "production",
+        DATABASE_URL: "postgresql://user:password@localhost/stationsnap",
+        APP_URL: "https://stationsnap.example.com",
+        STORAGE_DRIVER: "vercel-blob",
+        BLOB_READ_WRITE_TOKEN: "vercel_blob_rw_test_token",
+        ANTHROPIC_API_KEY: "sk-ant-test",
+        OPENAI_API_KEY: "sk-openai-test",
+      }),
+    ).toThrow(/CRON_SECRET must be set in production/);
+  });
+
+  it("rejects production without both AI provider keys", () => {
+    expect(() =>
+      parseServerEnv({
+        NODE_ENV: "production",
+        DATABASE_URL: "postgresql://user:password@localhost/stationsnap",
+        APP_URL: "https://stationsnap.example.com",
+        STORAGE_DRIVER: "vercel-blob",
+        BLOB_READ_WRITE_TOKEN: "vercel_blob_rw_test_token",
+        CRON_SECRET: "production-cron-secret",
+      }),
+    ).toThrow(/ANTHROPIC_API_KEY and OPENAI_API_KEY must both be set in production/);
+  });
+
   it("accepts a fully configured production environment", () => {
     expect(
       parseServerEnv({
@@ -146,11 +191,15 @@ describe("parseServerEnv", () => {
         APP_URL: "https://stationsnap.example.com",
         STORAGE_DRIVER: "vercel-blob",
         BLOB_READ_WRITE_TOKEN: "vercel_blob_rw_test_token",
+        CRON_SECRET: "production-cron-secret",
+        ANTHROPIC_API_KEY: "sk-ant-test",
+        OPENAI_API_KEY: "sk-openai-test",
       }),
     ).toMatchObject({
       NODE_ENV: "production",
       APP_URL: "https://stationsnap.example.com",
       STORAGE_DRIVER: "vercel-blob",
+      CRON_SECRET: "production-cron-secret",
     });
   });
 

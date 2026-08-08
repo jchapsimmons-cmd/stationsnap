@@ -172,6 +172,34 @@ export const translationField = pgEnum("translation_field", [
 export const translationStatus = pgEnum("translation_status", ["pending_review", "approved"]);
 export const translationProvider = pgEnum("translation_provider", ["manual", "ai"]);
 
+// Phase 20: durable, cron-advanced AI jobs. `jobType` is a real column (not folded into the
+// primary key or a fixed check) so a later phase can add another AI job kind (e.g. translation
+// drafting) onto this same claim/lease/step machinery without a new migration; only
+// `video_to_draft` exists today; a future job type is added by extending this enum, exactly like
+// every other `pgEnum` in this schema has already grown across phases via `ALTER TYPE ... ADD
+// VALUE` migrations (see `sopCategory`, `checklistType`, etc.).
+export const aiSopJobType = pgEnum("ai_sop_job_type", ["video_to_draft"]);
+// Each value is a resting state a job can be found in between cron ticks, not merely an
+// in-flight label: `transcribing`/`drafting` cover both "this step has never been attempted yet"
+// and "a previous attempt at this exact step failed and is waiting to retry" (see
+// `src/server/jobs/ai-sop-job-runner.ts` for the exact state machine). `upload_received` is set
+// once at job creation and is left behind for good on the very first successful claim.
+export const aiSopJobStatus = pgEnum("ai_sop_job_status", [
+  "upload_received",
+  "transcribing",
+  "drafting",
+  "ready",
+  "failed",
+]);
+// Which step a permanently `failed` job died on, so a manager's retry resumes at the right step
+// rather than restarting the whole pipeline (and re-billing a step that already succeeded).
+export const aiSopJobFailedStep = pgEnum("ai_sop_job_failed_step", ["transcribing", "drafting"]);
+export const aiSopJobOutputAcceptance = pgEnum("ai_sop_job_output_acceptance", [
+  "pending",
+  "applied",
+  "dismissed",
+]);
+
 const timestamps = {
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
@@ -2094,5 +2122,123 @@ export const scheduledJobRuns = pgTable(
       table.timeBucket,
     ),
     index("scheduled_job_runs_org_status_idx").on(table.organizationId, table.status),
+  ],
+);
+
+/**
+ * Phase 20 durable job queue: one row per AI video-to-draft attempt, claimed and advanced exactly
+ * one step per Vercel Cron invocation by `src/server/jobs/ai-sop-job-runner.ts` (see that file for
+ * the full claim → step → finalize state machine). Reuses the `scheduled_job_runs` idempotency
+ * *pattern* — a lease/claim window instead of that table's once-per-day time bucket, since this is
+ * a real multi-step work queue rather than a once-a-day guard. Deliberately organization- and
+ * location-scoped like every other tenant-owned table; `sopId` is the draft SOP this job will
+ * populate, `sourceFileId` the uploaded video, both required at creation so a job can never exist
+ * without a target draft and a source video already on record.
+ */
+export const aiSopJobs = pgTable(
+  "ai_sop_jobs",
+  {
+    id: uuid("id").primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    locationId: uuid("location_id").notNull(),
+    jobType: aiSopJobType("job_type").notNull().default("video_to_draft"),
+    sopId: uuid("sop_id").notNull(),
+    sourceFileId: uuid("source_file_id").notNull(),
+    status: aiSopJobStatus("status").notNull().default("upload_received"),
+    failedStep: aiSopJobFailedStep("failed_step"),
+    // The original transcript is preserved verbatim once transcription succeeds and is never
+    // overwritten by a later drafting retry or regeneration — only a brand new job (a fresh
+    // video) gets a fresh transcript.
+    transcript: text("transcript").notNull().default(""),
+    transcriptProvider: text("transcript_provider").notNull().default(""),
+    transcriptModel: text("transcript_model").notNull().default(""),
+    draftProvider: text("draft_provider").notNull().default(""),
+    draftModel: text("draft_model").notNull().default(""),
+    draftSchemaVersion: integer("draft_schema_version"),
+    stepAttempts: integer("step_attempts").notNull().default(0),
+    maxStepAttempts: integer("max_step_attempts").notNull().default(5),
+    lastErrorCode: text("last_error_code").notNull().default(""),
+    lastErrorMessage: text("last_error_message").notNull().default(""),
+    claimedAt: timestamp("claimed_at", { withTimezone: true }),
+    leaseExpiresAt: timestamp("lease_expires_at", { withTimezone: true }),
+    nextAttemptAt: timestamp("next_attempt_at", { withTimezone: true }).notNull().defaultNow(),
+    createdByManagerUserId: uuid("created_by_manager_user_id")
+      .notNull()
+      .references(() => managerUsers.id, { onDelete: "restrict" }),
+    readyAt: timestamp("ready_at", { withTimezone: true }),
+    ...timestamps,
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.locationId, table.organizationId],
+      foreignColumns: [locations.id, locations.organizationId],
+      name: "ai_sop_jobs_location_org_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.sopId, table.organizationId],
+      foreignColumns: [sops.id, sops.organizationId],
+      name: "ai_sop_jobs_sop_org_fk",
+    }).onDelete("restrict"),
+    foreignKey({
+      columns: [table.sourceFileId, table.organizationId],
+      foreignColumns: [files.id, files.organizationId],
+      name: "ai_sop_jobs_source_file_org_fk",
+    }).onDelete("restrict"),
+    unique("ai_sop_jobs_id_org_unique").on(table.id, table.organizationId),
+    index("ai_sop_jobs_org_location_status_idx").on(
+      table.organizationId,
+      table.locationId,
+      table.status,
+    ),
+    index("ai_sop_jobs_sop_idx").on(table.sopId),
+    // The cron claim query's exact access path: eligible statuses, due for another attempt, not
+    // currently under another invocation's lease.
+    index("ai_sop_jobs_status_next_attempt_idx").on(table.status, table.nextAttemptAt),
+  ],
+);
+
+/**
+ * One row per completed drafting attempt of an `ai_sop_jobs` row — append-only like
+ * `approval_decisions` and `training_evidence`, so a manager's "regenerate the draft" action keeps
+ * every earlier attempt on record rather than overwriting it. `structuredDraft` is untrusted AI
+ * output that has already passed `src/server/ai/draft-schema.ts`'s versioned Zod schema by the
+ * time it is inserted here (an invalid response never reaches this table — the job step fails
+ * instead and retries); `schemaVersion` records exactly which schema shape it was validated
+ * against. `acceptanceState` starts `pending` and only ever moves to `applied` (a manager copied
+ * this structured draft onto the SOP draft's own editable fields — still just a draft, never
+ * published) or `dismissed` (a manager chose not to use it); nothing here ever writes to a
+ * published `sop_versions` row directly.
+ */
+export const aiSopJobOutputs = pgTable(
+  "ai_sop_job_outputs",
+  {
+    id: uuid("id").primaryKey(),
+    jobId: uuid("job_id").notNull(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "restrict" }),
+    schemaVersion: integer("schema_version").notNull(),
+    structuredDraft: jsonb("structured_draft").$type<Record<string, unknown>>().notNull(),
+    acceptanceState: aiSopJobOutputAcceptance("acceptance_state").notNull().default("pending"),
+    appliedAt: timestamp("applied_at", { withTimezone: true }),
+    appliedByManagerUserId: uuid("applied_by_manager_user_id").references(() => managerUsers.id, {
+      onDelete: "restrict",
+    }),
+    provenance: jsonb("provenance")
+      .$type<Record<string, string | number | boolean | null>>()
+      .notNull()
+      .default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    foreignKey({
+      columns: [table.jobId, table.organizationId],
+      foreignColumns: [aiSopJobs.id, aiSopJobs.organizationId],
+      name: "ai_sop_job_outputs_job_org_fk",
+    }).onDelete("cascade"),
+    index("ai_sop_job_outputs_job_idx").on(table.jobId, table.createdAt),
+    index("ai_sop_job_outputs_org_state_idx").on(table.organizationId, table.acceptanceState),
   ],
 );

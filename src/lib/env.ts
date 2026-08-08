@@ -42,6 +42,16 @@ const serverEnvSchema = z
         .regex(/^\+[1-9]\d{1,14}$/, "TWILIO_FROM_NUMBER must be in E.164 format, e.g. +15551234567")
         .optional(),
     ),
+    // Phase 20: shared secret Vercel Cron sends as `Authorization: Bearer <CRON_SECRET>` on every
+    // scheduled request to /api/cron/*; verified before any cron endpoint does work.
+    CRON_SECRET: optionalNonEmpty,
+    // Phase 20 video-to-draft AI workflow. OpenAI Whisper transcribes the uploaded video; Anthropic
+    // Claude turns that transcript into a schema-validated structured SOP draft (see
+    // docs/implementation-plan.md's "Phase 20 provider decisions"). Both are optional in
+    // development/test (every automated test injects provider fakes and never reads these), but
+    // configuring one without the other is always a mistake, and production must have both.
+    ANTHROPIC_API_KEY: optionalNonEmpty,
+    OPENAI_API_KEY: optionalNonEmpty,
   })
   .superRefine((value, context) => {
     const smtpValues = [value.SMTP_HOST, value.SMTP_USER, value.SMTP_PASSWORD, value.SMTP_FROM];
@@ -75,6 +85,15 @@ const serverEnvSchema = z
         message: "BLOB_READ_WRITE_TOKEN is required when STORAGE_DRIVER is vercel-blob",
       });
     }
+    const aiKeyCount = [value.ANTHROPIC_API_KEY, value.OPENAI_API_KEY].filter(Boolean).length;
+    if (aiKeyCount > 0 && aiKeyCount < 2) {
+      context.addIssue({
+        code: "custom",
+        path: ["ANTHROPIC_API_KEY"],
+        message:
+          "ANTHROPIC_API_KEY and OPENAI_API_KEY must be configured together (video-to-draft needs both transcription and drafting)",
+      });
+    }
     if (value.NODE_ENV === "production") {
       if (!value.APP_URL) {
         context.addIssue({
@@ -95,6 +114,21 @@ const serverEnvSchema = z
           path: ["STORAGE_DRIVER"],
           message:
             "STORAGE_DRIVER must be vercel-blob in production; local disk storage does not persist on serverless hosts",
+        });
+      }
+      if (!value.CRON_SECRET) {
+        context.addIssue({
+          code: "custom",
+          path: ["CRON_SECRET"],
+          message: "CRON_SECRET must be set in production so the cron endpoints can authenticate",
+        });
+      }
+      if (!value.ANTHROPIC_API_KEY || !value.OPENAI_API_KEY) {
+        context.addIssue({
+          code: "custom",
+          path: ["ANTHROPIC_API_KEY"],
+          message:
+            "ANTHROPIC_API_KEY and OPENAI_API_KEY must both be set in production for the video-to-draft AI workflow",
         });
       }
     }

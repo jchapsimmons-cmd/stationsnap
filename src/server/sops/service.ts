@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, ilike, inArray, isNull, lt, or, sql, type SQL } from "drizzle-orm";
 import { AppError } from "@/lib/errors";
+import type { AiDraftedSopV1 } from "@/server/ai/draft-schema";
 import { writeAuditEvent } from "@/server/audit";
 import { requireManagerManagedLocation } from "@/server/auth/authorization";
 import { writeDomainEvent } from "@/server/events";
@@ -586,6 +587,69 @@ export async function autosaveSopDraft(
   });
 
   await auditSop(actor, "sop.updated", sopId, nextLocationId, requestId);
+  return getSopDraft(actor, sopId);
+}
+
+/**
+ * Copies a schema-validated AI-drafted structure (see `src/server/ai/draft-schema.ts`) onto this
+ * SOP's current draft version's own editable fields — title, description, materials, warnings,
+ * and steps — exactly the fields a manager could otherwise type in by hand. This never touches
+ * `status`, never publishes anything, and the result is simply a normal draft the manager can keep
+ * editing, preview, and eventually publish through the existing flow, satisfying the "AI never
+ * auto-publishes" invariant by construction: there is no code path here that reaches
+ * `publishSop`. Refuses to run over training questions already attached to a step on this
+ * version, since replacing steps would otherwise cascade-delete them (see `training_questions`'s
+ * `ON DELETE CASCADE` on `stepId`) — a manager who already built question content must remove it
+ * first rather than lose it silently.
+ */
+export async function applyAiDraftToSopDraft(
+  actor: ManagerSessionContext,
+  sopId: string,
+  draft: AiDraftedSopV1,
+  requestId?: string,
+) {
+  const detail = await requireDraftForEdit(actor, sopId);
+  const [existingQuestion] = await getDb()
+    .select({ id: trainingQuestions.id })
+    .from(trainingQuestions)
+    .where(eq(trainingQuestions.sopVersionId, detail.version.id))
+    .limit(1);
+  if (existingQuestion) {
+    throw new AppError(
+      "CONFLICT",
+      "This draft already has training questions attached to its steps. Remove them before applying a generated draft, since applying replaces the steps.",
+    );
+  }
+
+  await getDb().transaction(async (tx) => {
+    await tx
+      .update(sopVersions)
+      .set({ title: draft.title, description: draft.description, updatedAt: new Date() })
+      .where(eq(sopVersions.id, detail.version.id));
+    await replaceMaterials(tx, actor.organizationId, detail.version.id, draft.materials);
+    await replaceWarnings(tx, actor.organizationId, detail.version.id, draft.warnings);
+    await tx.delete(sopSteps).where(eq(sopSteps.sopVersionId, detail.version.id));
+    if (draft.steps.length > 0) {
+      await tx.insert(sopSteps).values(
+        draft.steps.map((step, index) => ({
+          id: randomUUID(),
+          sopVersionId: detail.version.id,
+          organizationId: actor.organizationId,
+          displayOrder: index + 1,
+          title: step.title,
+          instruction: step.instruction,
+          warning: step.warning,
+          quantity: step.quantity,
+          unit: step.unit,
+          equipmentSetting: step.equipmentSetting,
+          timerSeconds: step.timerSeconds,
+          isRequired: true,
+        })),
+      );
+    }
+  });
+
+  await auditSop(actor, "sop.updated", sopId, detail.sop.locationId, requestId);
   return getSopDraft(actor, sopId);
 }
 

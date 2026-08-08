@@ -1,6 +1,6 @@
 {
-  "id": "8865730f-1a4a-4a06-8ab6-05dcb43a9dc0",
-  "prevId": "ec41ae13-f9ba-4d52-8c97-31b44311f086",
+  "id": "4c5b2c26-a968-4409-b46a-27a223cffbf0",
+  "prevId": "8865730f-1a4a-4a06-8ab6-05dcb43a9dc0",
   "version": "7",
   "dialect": "postgresql",
   "tables": {
@@ -3317,6 +3317,20 @@
           "primaryKey": false,
           "notNull": true,
           "default": "'active'"
+        },
+        "phone": {
+          "name": "phone",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "default": "''"
+        },
+        "sms_opt_in": {
+          "name": "sms_opt_in",
+          "type": "boolean",
+          "primaryKey": false,
+          "notNull": true,
+          "default": false
         },
         "created_at": {
           "name": "created_at",
@@ -9360,7 +9374,8 @@
       "schema": "public",
       "values": [
         "in_app",
-        "email"
+        "email",
+        "sms"
       ]
     },
     "public.notification_delivery_status": {

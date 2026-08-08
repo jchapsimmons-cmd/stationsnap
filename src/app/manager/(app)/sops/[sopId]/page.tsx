@@ -44,6 +44,9 @@ export default async function SopOverviewPage({ params }: { params: Promise<{ so
                 <Link className="button button--secondary" href={`/manager/sops/${sop.id}/steps`}>
                   Edit steps
                 </Link>
+                <Link className="button button--secondary" href={`/manager/sops/${sop.id}/ai`}>
+                  AI draft
+                </Link>
                 <Link
                   className="button button--secondary"
                   href={`/manager/sops/${sop.id}/training`}
