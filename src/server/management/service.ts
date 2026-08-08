@@ -387,6 +387,8 @@ export async function listEmployees(actor: ManagerSessionContext, query: Employe
       jobRole: employees.jobRole,
       language: employees.language,
       status: employees.status,
+      phone: employees.phone,
+      smsOptIn: employees.smsOptIn,
     })
     .from(employees)
     .innerJoin(
@@ -411,6 +413,8 @@ export async function getEmployee(actor: ManagerSessionContext, employeeId: stri
       jobRole: employees.jobRole,
       language: employees.language,
       status: employees.status,
+      phone: employees.phone,
+      smsOptIn: employees.smsOptIn,
     })
     .from(employees)
     .innerJoin(

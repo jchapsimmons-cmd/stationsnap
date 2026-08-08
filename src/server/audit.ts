@@ -63,7 +63,14 @@ export type AuditAction =
   | "checklist_run.correction_requested"
   | "checklist_run.correction_resubmitted"
   | "translation.updated"
-  | "translation.approved";
+  | "translation.approved"
+  | "translation.ai_drafted"
+  | "ai_sop_job.created"
+  | "ai_sop_job.retried"
+  | "ai_sop_job.regenerated"
+  | "ai_sop_job.output_applied"
+  | "ai_sop_job.output_dismissed"
+  | "cron.unauthorized";
 
 export interface AuditEventInput {
   organizationId?: string;

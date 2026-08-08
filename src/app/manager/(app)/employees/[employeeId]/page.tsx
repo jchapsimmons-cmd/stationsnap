@@ -47,6 +47,12 @@ export default async function EmployeeDetailPage({
           <p className="eyebrow">Language</p>
           <strong>{employee.language === "es" ? "Spanish" : "English"}</strong>
         </Card>
+        <Card>
+          <p className="eyebrow">SMS notifications</p>
+          <StatusBadge tone={employee.smsOptIn && employee.phone ? "success" : "neutral"}>
+            {employee.phone ? (employee.smsOptIn ? "Enabled" : "Opted out") : "No phone on file"}
+          </StatusBadge>
+        </Card>
       </div>
       <Card>
         <h2>Training summary</h2>

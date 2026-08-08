@@ -48,6 +48,11 @@ export const employeeSeed = [
     displayName: "Maya Chen",
     jobRole: "Cook",
     language: "en" as const,
+    // Phase 20: the one seed employee with SMS notifications opted in, so db:verify has a real
+    // row to exercise the SMS delivery-attempt path (skipped in this Twilio-less environment,
+    // the same way the existing manager seed exercises the SMTP-less email path).
+    phone: "+15555550101",
+    smsOptIn: true,
   },
   {
     id: "60000000-0000-4000-8000-000000000002",

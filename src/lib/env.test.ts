@@ -35,6 +35,42 @@ describe("parseServerEnv", () => {
     ).toThrow(/must be configured together/);
   });
 
+  it("requires Twilio settings as a complete group", () => {
+    expect(() =>
+      parseServerEnv({
+        NODE_ENV: "test",
+        DATABASE_URL: "postgresql://user:password@localhost/stationsnap",
+        TWILIO_ACCOUNT_SID: "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      }),
+    ).toThrow(/TWILIO_ACCOUNT_SID.*must be configured together/);
+  });
+
+  it("rejects a non-E.164 Twilio from-number", () => {
+    expect(() =>
+      parseServerEnv({
+        NODE_ENV: "test",
+        DATABASE_URL: "postgresql://user:password@localhost/stationsnap",
+        TWILIO_ACCOUNT_SID: "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        TWILIO_API_KEY_SID: "SKxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        TWILIO_API_KEY_SECRET: "secret",
+        TWILIO_FROM_NUMBER: "555-123-4567",
+      }),
+    ).toThrow(/TWILIO_FROM_NUMBER must be in E\.164 format/);
+  });
+
+  it("accepts a fully configured Twilio group", () => {
+    expect(
+      parseServerEnv({
+        NODE_ENV: "test",
+        DATABASE_URL: "postgresql://user:password@localhost/stationsnap",
+        TWILIO_ACCOUNT_SID: "ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        TWILIO_API_KEY_SID: "SKxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        TWILIO_API_KEY_SECRET: "secret",
+        TWILIO_FROM_NUMBER: "+15551234567",
+      }),
+    ).toMatchObject({ TWILIO_FROM_NUMBER: "+15551234567" });
+  });
+
   it("defaults to local storage and requires a token for vercel-blob", () => {
     expect(
       parseServerEnv({
@@ -102,6 +138,51 @@ describe("parseServerEnv", () => {
     ).toThrow(/STORAGE_DRIVER must be vercel-blob in production/);
   });
 
+  it("requires ANTHROPIC_API_KEY and OPENAI_API_KEY as a complete group", () => {
+    expect(() =>
+      parseServerEnv({
+        NODE_ENV: "test",
+        DATABASE_URL: "postgresql://user:password@localhost/stationsnap",
+        ANTHROPIC_API_KEY: "sk-ant-test",
+      }),
+    ).toThrow(/ANTHROPIC_API_KEY and OPENAI_API_KEY must be configured together/);
+    expect(
+      parseServerEnv({
+        NODE_ENV: "test",
+        DATABASE_URL: "postgresql://user:password@localhost/stationsnap",
+        ANTHROPIC_API_KEY: "sk-ant-test",
+        OPENAI_API_KEY: "sk-openai-test",
+      }),
+    ).toMatchObject({ ANTHROPIC_API_KEY: "sk-ant-test", OPENAI_API_KEY: "sk-openai-test" });
+  });
+
+  it("rejects production without CRON_SECRET", () => {
+    expect(() =>
+      parseServerEnv({
+        NODE_ENV: "production",
+        DATABASE_URL: "postgresql://user:password@localhost/stationsnap",
+        APP_URL: "https://stationsnap.example.com",
+        STORAGE_DRIVER: "vercel-blob",
+        BLOB_READ_WRITE_TOKEN: "vercel_blob_rw_test_token",
+        ANTHROPIC_API_KEY: "sk-ant-test",
+        OPENAI_API_KEY: "sk-openai-test",
+      }),
+    ).toThrow(/CRON_SECRET must be set in production/);
+  });
+
+  it("rejects production without both AI provider keys", () => {
+    expect(() =>
+      parseServerEnv({
+        NODE_ENV: "production",
+        DATABASE_URL: "postgresql://user:password@localhost/stationsnap",
+        APP_URL: "https://stationsnap.example.com",
+        STORAGE_DRIVER: "vercel-blob",
+        BLOB_READ_WRITE_TOKEN: "vercel_blob_rw_test_token",
+        CRON_SECRET: "production-cron-secret",
+      }),
+    ).toThrow(/ANTHROPIC_API_KEY and OPENAI_API_KEY must both be set in production/);
+  });
+
   it("accepts a fully configured production environment", () => {
     expect(
       parseServerEnv({
@@ -110,11 +191,15 @@ describe("parseServerEnv", () => {
         APP_URL: "https://stationsnap.example.com",
         STORAGE_DRIVER: "vercel-blob",
         BLOB_READ_WRITE_TOKEN: "vercel_blob_rw_test_token",
+        CRON_SECRET: "production-cron-secret",
+        ANTHROPIC_API_KEY: "sk-ant-test",
+        OPENAI_API_KEY: "sk-openai-test",
       }),
     ).toMatchObject({
       NODE_ENV: "production",
       APP_URL: "https://stationsnap.example.com",
       STORAGE_DRIVER: "vercel-blob",
+      CRON_SECRET: "production-cron-secret",
     });
   });
 

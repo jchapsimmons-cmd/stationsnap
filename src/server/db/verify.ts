@@ -6,6 +6,7 @@ import EmbeddedPostgres from "embedded-postgres";
 import { Pool } from "pg";
 import { PDFDocument } from "pdf-lib";
 import { GET as healthCheck } from "@/app/api/health/route";
+import { GET as videoDraftCronRoute } from "@/app/api/cron/video-drafts/route";
 import manifest from "@/app/manifest";
 import { calendarDateInTimeZone, endOfDayInTimeZone } from "@/lib/timezone";
 import { changeManagerRole, disableManagerAccount, resetEmployeePin } from "@/server/auth/admin";
@@ -53,6 +54,8 @@ import {
   updateStation,
 } from "@/server/management/service";
 import {
+  aiSopJobOutputs,
+  aiSopJobs,
   approvalDecisions,
   approvalSubmissions,
   checklistItems,
@@ -68,6 +71,24 @@ import {
   translations as translationsTable,
   trainingAssignments,
 } from "@/server/db/schema";
+import { parseAiDraftedSop } from "@/server/ai/draft-schema";
+import {
+  alwaysFailingTranslationDraftingProvider,
+  fakeDraftingProvider,
+  fakeTranscriptionProvider,
+  fakeTranslationDraftingProvider,
+  malformedDraftingProvider,
+  malformedTranslationDraftingProvider,
+} from "@/server/ai/fakes";
+import { advanceOneAiSopJobStep } from "@/server/jobs/ai-sop-job-runner";
+import {
+  applyAiJobOutput,
+  createVideoDraftJob,
+  dismissAiJobOutput,
+  getAiJob,
+  regenerateAiJobDraft,
+  retryAiJob,
+} from "@/server/sops/ai-jobs";
 import { domainEventTypeValues, listActivity, type DomainEventRecord } from "@/server/events";
 import {
   dispatchNotificationsForDomainEvent,
@@ -126,6 +147,7 @@ import {
 } from "@/server/sops/service";
 import {
   approveTranslation,
+  generateTranslationDraft,
   getLocalizedSopForEmployee,
   getTranslationMatrix,
   upsertTranslation,
@@ -403,6 +425,11 @@ async function verifyDatabase(): Promise<void> {
     NODE_ENV: "test",
     SEED_MANAGER_PASSWORD: managerPassword,
     SEED_EMPLOYEE_PIN: employeePin,
+    // Phase 20: exercises the cron endpoint's auth gate below. ANTHROPIC_API_KEY/OPENAI_API_KEY
+    // are deliberately left unset — every AI job step in this script runs through explicit
+    // provider fakes, never the real HTTP clients, per docs/testing-plan.md's "provider fakes"
+    // principle.
+    CRON_SECRET: "verify-script-cron-secret",
   });
 
   await runMigrations();
@@ -584,6 +611,8 @@ async function verifyDatabase(): Promise<void> {
     language: "en",
     pin: phaseThreePin,
     status: "active",
+    phone: "",
+    smsOptIn: false,
   });
   const [phaseThreeCredential] = await getDb()
     .select({ pinHash: employees.pinHash })
@@ -613,6 +642,8 @@ async function verifyDatabase(): Promise<void> {
       jobRole: phaseThreeEmployee.jobRole,
       language: phaseThreeEmployee.language,
       status: phaseThreeEmployee.status,
+      phone: phaseThreeEmployee.phone,
+      smsOptIn: phaseThreeEmployee.smsOptIn,
     });
   } catch {
     scopedEmployeeMoveRejected = true;
@@ -625,6 +656,8 @@ async function verifyDatabase(): Promise<void> {
     jobRole: phaseThreeEmployee.jobRole,
     language: phaseThreeEmployee.language,
     status: "disabled",
+    phone: phaseThreeEmployee.phone,
+    smsOptIn: phaseThreeEmployee.smsOptIn,
   });
   let disabledPhaseThreeLoginRejected = false;
   try {
@@ -3533,6 +3566,8 @@ async function verifyDatabase(): Promise<void> {
     language: "en",
     pin: "9001",
     status: "active",
+    phone: "",
+    smsOptIn: false,
   });
 
   const explicitDueDate = "2026-09-01";
@@ -3635,6 +3670,8 @@ async function verifyDatabase(): Promise<void> {
     language: "en",
     pin: "9002",
     status: "active",
+    phone: "",
+    smsOptIn: false,
   });
 
   const secondLocationAssignResult = await assignTraining(
@@ -4497,6 +4534,8 @@ async function verifyDatabase(): Promise<void> {
     language: "en",
     pin: "9101",
     status: "active",
+    phone: "",
+    smsOptIn: false,
   });
 
   const expiringSoonEmployee = await createEmployee(managerContext, {
@@ -4507,6 +4546,8 @@ async function verifyDatabase(): Promise<void> {
     language: "en",
     pin: "9102",
     status: "active",
+    phone: "",
+    smsOptIn: false,
   });
   const expiringAssignA = await assignTraining(
     managerContext,
@@ -4553,6 +4594,8 @@ async function verifyDatabase(): Promise<void> {
     language: "en",
     pin: "9103",
     status: "active",
+    phone: "",
+    smsOptIn: false,
   });
   const lapsedAssignA = await assignTraining(
     managerContext,
@@ -4777,6 +4820,8 @@ async function verifyDatabase(): Promise<void> {
     language: "en",
     pin: "9104",
     status: "active",
+    phone: "",
+    smsOptIn: false,
   });
   const archivedAssignA = await assignTraining(
     managerContext,
@@ -4955,6 +5000,8 @@ async function verifyDatabase(): Promise<void> {
     language: "en",
     pin: "9201",
     status: "active",
+    phone: "",
+    smsOptIn: false,
   });
   const rileyContext = await loginNewEmployee("9201", "9201", "phase12-riley");
   if (checklistEmployee.primaryLocationId !== seedIds.locations.downtown) {
@@ -5571,6 +5618,8 @@ async function verifyDatabase(): Promise<void> {
     language: "es",
     pin: "9301",
     status: "active",
+    phone: "",
+    smsOptIn: false,
   });
   const caseyContext = await loginNewEmployee("9301", "9301", "phase13-casey");
   if (translationEmployee.primaryLocationId !== seedIds.locations.downtown) {
@@ -5651,6 +5700,290 @@ async function verifyDatabase(): Promise<void> {
     throw new Error("A stale translation was approved without being re-saved");
   }
 
+  // --- Phase 20: AI-assisted translation drafting (upgrades the Phase 13 flow above) ---
+  // Reuses `translationPublished`, the manager/riverside contexts, and the matrix rows from the
+  // Phase 13 section above. Every provider call below goes through src/server/ai/fakes.ts — never
+  // the real Anthropic HTTP client — per docs/testing-plan.md's "provider fakes" principle and the
+  // Phase 20 provider decisions in docs/implementation-plan.md. Translation drafting is
+  // synchronous (see the Phase 20 job-runner decision), so there is no job/cron machinery to
+  // drive here — just direct calls to `generateTranslationDraft`.
+
+  const fakeTranslationDraftDeps = { drafting: fakeTranslationDraftingProvider };
+
+  const materialNameField = initialTranslationMatrix.rows.find(
+    (row) => row.entityType === "sop_material" && row.field === "name",
+  );
+  const warningField = initialTranslationMatrix.rows.find(
+    (row) => row.entityType === "sop_warning",
+  );
+  const stepTitleField = initialTranslationMatrix.rows.find(
+    (row) => row.entityType === "sop_step" && row.field === "title",
+  );
+  const stepInstructionField = initialTranslationMatrix.rows.find(
+    (row) => row.entityType === "sop_step" && row.field === "instruction",
+  );
+  if (!materialNameField || !warningField || !stepTitleField || !stepInstructionField) {
+    throw new Error(
+      "The Phase 13 translation matrix was missing a field needed for the Phase 20 AI drafting fixtures",
+    );
+  }
+
+  // Org/location isolation: a manager without access to this location cannot generate a draft.
+  let unauthorizedDraftRejected = false;
+  try {
+    await generateTranslationDraft(
+      riversideManagerContext,
+      translationPublished.id,
+      {
+        entityType: "sop_material",
+        entityId: materialNameField.entityId,
+        field: "name",
+        targetLocale: "es",
+      },
+      fakeTranslationDraftDeps,
+      "verify-phase20-translation-unauthorized",
+    );
+  } catch {
+    unauthorizedDraftRejected = true;
+  }
+  if (!unauthorizedDraftRejected) {
+    throw new Error(
+      "A manager without access to the location generated an AI translation draft for another location",
+    );
+  }
+
+  // Happy path: a schema-valid AI draft lands as an editable, unapproved, pending-review row.
+  const afterAiDraft = await generateTranslationDraft(
+    managerContext,
+    translationPublished.id,
+    {
+      entityType: "sop_material",
+      entityId: materialNameField.entityId,
+      field: "name",
+      targetLocale: "es",
+    },
+    fakeTranslationDraftDeps,
+    "verify-phase20-translation-draft",
+  );
+  const aiDraftedRow = afterAiDraft.rows.find(
+    (row) => row.entityType === "sop_material" && row.entityId === materialNameField.entityId,
+  );
+  if (
+    !aiDraftedRow ||
+    !aiDraftedRow.translationId ||
+    aiDraftedRow.status !== "pending_review" ||
+    aiDraftedRow.provider !== "ai" ||
+    aiDraftedRow.approvedAt ||
+    aiDraftedRow.translatedText !== `[es] ${materialNameField.sourceText}`
+  ) {
+    throw new Error(
+      "Generating an AI translation draft did not land as a schema-valid, pending-review, unapproved draft",
+    );
+  }
+
+  // Malformed AI output (fails the versioned schema) must never become a draft.
+  let malformedDraftRejected = false;
+  try {
+    await generateTranslationDraft(
+      managerContext,
+      translationPublished.id,
+      {
+        entityType: "sop_warning",
+        entityId: warningField.entityId,
+        field: "text",
+        targetLocale: "es",
+      },
+      { drafting: malformedTranslationDraftingProvider },
+      "verify-phase20-translation-malformed",
+    );
+  } catch {
+    malformedDraftRejected = true;
+  }
+  if (!malformedDraftRejected) {
+    throw new Error("Malformed AI translation output was not rejected");
+  }
+  const matrixAfterMalformed = await getTranslationMatrix(
+    managerContext,
+    translationPublished.id,
+    "es",
+  );
+  const warningRowAfterMalformed = matrixAfterMalformed.rows.find(
+    (row) => row.entityType === "sop_warning" && row.entityId === warningField.entityId,
+  );
+  if (!warningRowAfterMalformed || warningRowAfterMalformed.status !== "untranslated") {
+    throw new Error("A malformed AI translation output became a draft");
+  }
+
+  // A failing provider (network/service error) must also never produce a draft.
+  let providerFailureRejected = false;
+  try {
+    await generateTranslationDraft(
+      managerContext,
+      translationPublished.id,
+      {
+        entityType: "sop_warning",
+        entityId: warningField.entityId,
+        field: "text",
+        targetLocale: "es",
+      },
+      { drafting: alwaysFailingTranslationDraftingProvider },
+      "verify-phase20-translation-provider-failure",
+    );
+  } catch {
+    providerFailureRejected = true;
+  }
+  if (!providerFailureRejected) {
+    throw new Error(
+      "A failing AI translation provider did not surface as a rejected draft attempt",
+    );
+  }
+
+  // AI never overwrites an already-approved translation: the title field was approved earlier in
+  // the Phase 13 section above.
+  let approvedOverwriteRejected = false;
+  try {
+    await generateTranslationDraft(
+      managerContext,
+      translationPublished.id,
+      {
+        entityType: "sop_version",
+        entityId: versionTitleField.entityId,
+        field: "title",
+        targetLocale: "es",
+      },
+      fakeTranslationDraftDeps,
+      "verify-phase20-translation-approved-overwrite-rejected",
+    );
+  } catch {
+    approvedOverwriteRejected = true;
+  }
+  if (!approvedOverwriteRejected) {
+    throw new Error("AI translation drafting overwrote an already-approved translation");
+  }
+  const matrixAfterApprovedAttempt = await getTranslationMatrix(
+    managerContext,
+    translationPublished.id,
+    "es",
+  );
+  const titleRowAfterApprovedAttempt = matrixAfterApprovedAttempt.rows.find(
+    (row) => row.entityType === "sop_version" && row.field === "title",
+  );
+  if (
+    !titleRowAfterApprovedAttempt ||
+    titleRowAfterApprovedAttempt.status !== "approved" ||
+    titleRowAfterApprovedAttempt.translatedText !== "Jarabe simple (actualizado)"
+  ) {
+    throw new Error("An approved translation changed after a rejected AI drafting attempt");
+  }
+
+  // The AI draft still flows through the exact same manual review/approval action: a manager must
+  // explicitly approve it.
+  const aiDraftApproved = await approveTranslation(
+    managerContext,
+    translationPublished.id,
+    aiDraftedRow.translationId,
+    "verify-phase20-translation-approve-ai-draft",
+  );
+  const approvedAiRow = aiDraftApproved.rows.find(
+    (row) => row.translationId === aiDraftedRow.translationId,
+  );
+  if (!approvedAiRow || approvedAiRow.status !== "approved" || !approvedAiRow.approvedAt) {
+    throw new Error(
+      "Approving an AI-drafted translation did not succeed through the normal approval action",
+    );
+  }
+
+  // Once approved, AI drafting refuses to touch it too — not just previously-manual approvals.
+  let approvedAiOverwriteRejected = false;
+  try {
+    await generateTranslationDraft(
+      managerContext,
+      translationPublished.id,
+      {
+        entityType: "sop_material",
+        entityId: materialNameField.entityId,
+        field: "name",
+        targetLocale: "es",
+      },
+      fakeTranslationDraftDeps,
+      "verify-phase20-translation-approved-ai-overwrite-rejected",
+    );
+  } catch {
+    approvedAiOverwriteRejected = true;
+  }
+  if (!approvedAiOverwriteRejected) {
+    throw new Error("AI translation drafting overwrote its own already-approved translation");
+  }
+
+  // Manual entry still works unchanged after AI drafting has touched other fields.
+  const manualAfterAi = await upsertTranslation(
+    managerContext,
+    translationPublished.id,
+    {
+      entityType: "sop_step",
+      entityId: stepInstructionField.entityId,
+      field: "instruction",
+      targetLocale: "es",
+      translatedText: "Combine el azúcar y el agua en una cacerola a fuego medio.",
+    },
+    "verify-phase20-translation-manual-after-ai",
+  );
+  const manualRow = manualAfterAi.rows.find(
+    (row) =>
+      row.entityType === "sop_step" &&
+      row.entityId === stepInstructionField.entityId &&
+      row.field === "instruction",
+  );
+  if (!manualRow || manualRow.status !== "pending_review" || manualRow.provider !== "manual") {
+    throw new Error("Manual translation entry stopped working after AI drafting was introduced");
+  }
+
+  // Manually editing an AI-drafted (not-yet-approved) translation reclaims it as provider manual.
+  const stepTitleAiDraft = await generateTranslationDraft(
+    managerContext,
+    translationPublished.id,
+    {
+      entityType: "sop_step",
+      entityId: stepTitleField.entityId,
+      field: "title",
+      targetLocale: "es",
+    },
+    fakeTranslationDraftDeps,
+    "verify-phase20-translation-step-title-draft",
+  );
+  const stepTitleAiRow = stepTitleAiDraft.rows.find(
+    (row) =>
+      row.entityType === "sop_step" &&
+      row.entityId === stepTitleField.entityId &&
+      row.field === "title",
+  );
+  if (!stepTitleAiRow || stepTitleAiRow.provider !== "ai") {
+    throw new Error("Generating an AI draft for a step title did not record provider ai");
+  }
+  const stepTitleManualEdit = await upsertTranslation(
+    managerContext,
+    translationPublished.id,
+    {
+      entityType: "sop_step",
+      entityId: stepTitleField.entityId,
+      field: "title",
+      targetLocale: "es",
+      translatedText: "Combinar y calentar",
+    },
+    "verify-phase20-translation-step-title-manual-reclaim",
+  );
+  const stepTitleManualRow = stepTitleManualEdit.rows.find(
+    (row) =>
+      row.entityType === "sop_step" &&
+      row.entityId === stepTitleField.entityId &&
+      row.field === "title",
+  );
+  if (!stepTitleManualRow || stepTitleManualRow.provider !== "manual") {
+    throw new Error(
+      "Manually editing an AI-drafted translation did not reclaim it as provider manual",
+    );
+  }
+
   const actions = new Set(
     (await getDb().select({ action: auditEvents.action }).from(auditEvents)).map(
       (event) => event.action,
@@ -5710,6 +6043,7 @@ async function verifyDatabase(): Promise<void> {
     "checklist_run.correction_resubmitted",
     "translation.updated",
     "translation.approved",
+    "translation.ai_drafted",
   ];
   if (requiredAuditActions.some((action) => !actions.has(action))) {
     throw new Error(
@@ -5869,6 +6203,8 @@ async function verifyDatabase(): Promise<void> {
     language: "en",
     pin: "9105",
     status: "active",
+    phone: "",
+    smsOptIn: false,
   });
   const reportPathAssign = await assignTraining(
     managerContext,
@@ -6295,6 +6631,8 @@ async function verifyDatabase(): Promise<void> {
     language: "en",
     pin: "9106",
     status: "active",
+    phone: "",
+    smsOptIn: false,
   });
   const csvInjectionAssign = await assignTraining(
     managerContext,
@@ -6672,6 +7010,8 @@ async function verifyDatabase(): Promise<void> {
     language: "en",
     pin: "9108",
     status: "active",
+    phone: "",
+    smsOptIn: false,
   });
   const dueSoonSopFixture = await createMinimalPublishedSop(
     managerContext,
@@ -6902,10 +7242,551 @@ async function verifyDatabase(): Promise<void> {
     throw new Error("The health check route did not report healthy against a live database");
   }
 
+  // --- Phase 20: durable video-to-draft AI job runner ---
+  // Every step below drives src/server/jobs/ai-sop-job-runner.ts through explicit provider fakes
+  // (src/server/ai/fakes.ts) — never the real Whisper/Claude HTTP clients — exactly like every
+  // other automated test in this repository, per docs/testing-plan.md's "provider fakes"
+  // principle and the Phase 20 provider decisions in docs/implementation-plan.md.
+  async function createAiDraftFixtureSop(
+    actor: ManagerSessionContext,
+    title: string,
+    prefix: string,
+  ) {
+    const video = await uploadTestVideo(actor);
+    const sop = await createSop(
+      actor,
+      {
+        title,
+        description: "",
+        category: "recipe",
+        locationId: seedIds.locations.downtown,
+        stationId: null,
+        estimatedMinutes: null,
+        difficulty: "beginner",
+        coverImageFileId: null,
+        sourceVideoFileId: null,
+        materials: [],
+        warnings: [],
+      },
+      `${prefix}-sop-create`,
+    );
+    return { video, sop };
+  }
+
+  // Happy path: upload_received -> transcribing -> drafting -> ready, one step per
+  // `advanceOneAiSopJobStep` call, matching the job-runner decision that a single invocation
+  // never processes more than one job's one step.
+  const happyPath = await createAiDraftFixtureSop(
+    managerContext,
+    "AI Draft Fixture SOP",
+    "verify-phase20-happy",
+  );
+  const happyJob = await createVideoDraftJob(
+    managerContext,
+    happyPath.sop.id,
+    { sourceFileId: happyPath.video.id },
+    "verify-phase20-happy-job-create",
+  );
+  if (happyJob.job.status !== "upload_received") {
+    throw new Error("A newly created AI job did not start in upload_received");
+  }
+  const aiTick = new Date();
+  const aiDeps = { transcription: fakeTranscriptionProvider, drafting: fakeDraftingProvider };
+  const transcribeOutcome = await advanceOneAiSopJobStep(aiDeps, aiTick);
+  if (
+    !transcribeOutcome.claimed ||
+    transcribeOutcome.jobId !== happyJob.job.id ||
+    transcribeOutcome.status !== "drafting"
+  ) {
+    throw new Error(
+      "The transcription step did not advance the job from upload_received to drafting",
+    );
+  }
+  const [afterTranscribe] = await getDb()
+    .select()
+    .from(aiSopJobs)
+    .where(eq(aiSopJobs.id, happyJob.job.id));
+  if (!afterTranscribe || !afterTranscribe.transcript.trim()) {
+    throw new Error("The transcript was not preserved after the transcription step");
+  }
+  const draftOutcome = await advanceOneAiSopJobStep(aiDeps, aiTick);
+  if (
+    !draftOutcome.claimed ||
+    draftOutcome.jobId !== happyJob.job.id ||
+    draftOutcome.status !== "ready"
+  ) {
+    throw new Error("The drafting step did not advance the job from drafting to ready");
+  }
+
+  const readyJob = await getAiJob(managerContext, happyPath.sop.id, happyJob.job.id);
+  const pendingOutput = readyJob.outputs.find((output) => output.acceptanceState === "pending");
+  if (readyJob.job.status !== "ready" || readyJob.outputs.length !== 1 || !pendingOutput) {
+    throw new Error("A ready job did not produce exactly one pending schema-validated output");
+  }
+
+  // Never-auto-publish: a ready job (and its still-unapplied output) must never change the SOP's
+  // own publish status.
+  const sopStillDraftBeforeApply = await getSop(managerContext, happyPath.sop.id);
+  if (sopStillDraftBeforeApply.status !== "draft") {
+    throw new Error("An AI job reaching ready must not publish the SOP it targets");
+  }
+
+  const appliedResult = await applyAiJobOutput(
+    managerContext,
+    happyPath.sop.id,
+    happyJob.job.id,
+    pendingOutput.id,
+    "verify-phase20-apply",
+  );
+  const appliedOutput = appliedResult.outputs.find((output) => output.id === pendingOutput.id);
+  if (appliedOutput?.acceptanceState !== "applied") {
+    throw new Error("Applying a generated draft did not mark it applied");
+  }
+  const draftAfterApply = await getSopDraft(managerContext, happyPath.sop.id);
+  const pendingDraft = parseAiDraftedSop(
+    pendingOutput.schemaVersion,
+    pendingOutput.structuredDraft,
+  );
+  if (draftAfterApply.version.title !== pendingDraft.title) {
+    throw new Error("Applying a generated draft did not copy its title onto the SOP draft");
+  }
+  if (draftAfterApply.steps.length !== pendingDraft.steps.length) {
+    throw new Error("Applying a generated draft did not copy its steps onto the SOP draft");
+  }
+  // Still never-auto-published, even after the manager applies the draft: only an explicit
+  // publishSop call (exercised by createMinimalPublishedSop and friends elsewhere in this script)
+  // may ever move a SOP to "published".
+  const sopStillDraftAfterApply = await getSop(managerContext, happyPath.sop.id);
+  if (sopStillDraftAfterApply.status !== "draft") {
+    throw new Error("Applying a generated AI draft must not publish the SOP");
+  }
+
+  let doubleApplyRejected = false;
+  try {
+    await applyAiJobOutput(
+      managerContext,
+      happyPath.sop.id,
+      happyJob.job.id,
+      pendingOutput.id,
+      "verify-phase20-double-apply",
+    );
+  } catch {
+    doubleApplyRejected = true;
+  }
+  if (!doubleApplyRejected) {
+    throw new Error("Applying an already-applied AI output a second time was not rejected");
+  }
+
+  // Single-step regeneration: re-run only the drafting step against the already-stored
+  // transcript. The transcript must survive untouched, and a brand new output row is added
+  // rather than overwriting the first one.
+  const regenerated = await regenerateAiJobDraft(
+    managerContext,
+    happyPath.sop.id,
+    happyJob.job.id,
+    "verify-phase20-regenerate",
+  );
+  if (regenerated.job.status !== "drafting") {
+    throw new Error("Regenerating a draft did not reset the job to the drafting step");
+  }
+  const [beforeRegenDraft] = await getDb()
+    .select()
+    .from(aiSopJobs)
+    .where(eq(aiSopJobs.id, happyJob.job.id));
+  if (beforeRegenDraft?.transcript !== afterTranscribe.transcript) {
+    throw new Error("Regenerating a draft must preserve the original transcript unchanged");
+  }
+  // `regenerateAiJobDraft` stamps `nextAttemptAt` with its own real "now" (a moment later than
+  // the stale `aiTick` snapshot above), so this claim must use a fresh timestamp too.
+  const regenerateOutcome = await advanceOneAiSopJobStep(aiDeps, new Date());
+  if (!regenerateOutcome.claimed || regenerateOutcome.status !== "ready") {
+    throw new Error("The regenerated drafting step did not complete");
+  }
+  const afterRegenJob = await getAiJob(managerContext, happyPath.sop.id, happyJob.job.id);
+  if (afterRegenJob.outputs.length !== 2) {
+    throw new Error("Regeneration must add a new output row rather than replacing the earlier one");
+  }
+  const secondPendingOutput = afterRegenJob.outputs.find(
+    (output) => output.acceptanceState === "pending",
+  );
+  if (!secondPendingOutput) {
+    throw new Error("Regeneration did not produce a new pending output to review");
+  }
+  const dismissedResult = await dismissAiJobOutput(
+    managerContext,
+    happyPath.sop.id,
+    happyJob.job.id,
+    secondPendingOutput.id,
+    "verify-phase20-dismiss",
+  );
+  const dismissedOutput = dismissedResult.outputs.find(
+    (output) => output.id === secondPendingOutput.id,
+  );
+  if (dismissedOutput?.acceptanceState !== "dismissed") {
+    throw new Error("Dismissing a generated output did not mark it dismissed");
+  }
+  let doubleDismissRejected = false;
+  try {
+    await dismissAiJobOutput(
+      managerContext,
+      happyPath.sop.id,
+      happyJob.job.id,
+      secondPendingOutput.id,
+      "verify-phase20-double-dismiss",
+    );
+  } catch {
+    doubleDismissRejected = true;
+  }
+  if (!doubleDismissRejected) {
+    throw new Error("Dismissing an already-dismissed AI output a second time was not rejected");
+  }
+
+  // Schema rejection of malformed AI output: a drafting step whose provider always returns a
+  // payload missing a required field must never produce an output row, and after exhausting its
+  // step attempts the job fails permanently with a safe, specific error code — never a raw
+  // provider error message.
+  const malformedPath = await createAiDraftFixtureSop(
+    managerContext,
+    "AI Draft Malformed Fixture SOP",
+    "verify-phase20-malformed",
+  );
+  const malformedJob = await createVideoDraftJob(
+    managerContext,
+    malformedPath.sop.id,
+    { sourceFileId: malformedPath.video.id },
+    "verify-phase20-malformed-job-create",
+  );
+  const malformedDeps = {
+    transcription: fakeTranscriptionProvider,
+    drafting: malformedDraftingProvider,
+  };
+  await advanceOneAiSopJobStep(malformedDeps, aiTick); // transcribe -> drafting
+  let malformedNow = aiTick;
+  let malformedFailed = false;
+  for (let attempt = 0; attempt < 6 && !malformedFailed; attempt += 1) {
+    malformedNow = new Date(malformedNow.getTime() + 20 * 60_000); // clear the backoff each time
+    const outcome = await advanceOneAiSopJobStep(malformedDeps, malformedNow);
+    if (outcome.claimed && outcome.status === "failed") malformedFailed = true;
+  }
+  if (!malformedFailed) {
+    throw new Error("A permanently schema-invalid AI drafting step never reached failed");
+  }
+  const [malformedFinal] = await getDb()
+    .select()
+    .from(aiSopJobs)
+    .where(eq(aiSopJobs.id, malformedJob.job.id));
+  if (
+    !malformedFinal ||
+    malformedFinal.status !== "failed" ||
+    malformedFinal.failedStep !== "drafting" ||
+    malformedFinal.lastErrorCode !== "schema_validation_failed"
+  ) {
+    throw new Error(
+      "A permanently failed drafting step did not record failedStep=drafting and a schema_validation_failed code",
+    );
+  }
+  const malformedOutputs = await getDb()
+    .select()
+    .from(aiSopJobOutputs)
+    .where(eq(aiSopJobOutputs.jobId, malformedJob.job.id));
+  if (malformedOutputs.length !== 0) {
+    throw new Error("A schema-invalid AI draft must never be stored as a job output");
+  }
+
+  // Manual fallback when AI fails: the underlying SOP draft this job targeted must remain fully
+  // editable by hand through the ordinary manual step editor.
+  const draftBeforeManualFallback = await getSopDraft(managerContext, malformedPath.sop.id);
+  const manualFallbackStep = await createStep(
+    managerContext,
+    malformedPath.sop.id,
+    {
+      title: "Manual fallback step",
+      instruction: "Authored by hand after the AI drafting job permanently failed.",
+      imageFileId: null,
+      videoFileId: null,
+      warning: "",
+      quantity: "",
+      unit: "",
+      equipmentSetting: "",
+      timerSeconds: null,
+      isRequired: true,
+      expectedRevision: draftBeforeManualFallback.version.revision,
+    },
+    "verify-phase20-manual-fallback",
+  );
+  if (!manualFallbackStep) {
+    throw new Error("Manual editing was not available after an AI drafting job permanently failed");
+  }
+
+  // Retry resumes at the step that failed (drafting) without discarding the already-transcribed
+  // text, and never re-attempts a step that already succeeded (transcription).
+  await retryAiJob(
+    managerContext,
+    malformedPath.sop.id,
+    malformedJob.job.id,
+    "verify-phase20-retry",
+  );
+  const [afterRetry] = await getDb()
+    .select()
+    .from(aiSopJobs)
+    .where(eq(aiSopJobs.id, malformedJob.job.id));
+  if (
+    !afterRetry ||
+    afterRetry.status !== "drafting" ||
+    afterRetry.stepAttempts !== 0 ||
+    afterRetry.failedStep !== null
+  ) {
+    throw new Error(
+      "Retrying a failed job did not resume at the failed step with a reset attempt counter",
+    );
+  }
+  if (!afterRetry.transcript.trim()) {
+    throw new Error("Retrying a job that failed during drafting must not discard its transcript");
+  }
+  const retrySuccessNow = new Date(malformedNow.getTime() + 60_000);
+  const retrySuccessOutcome = await advanceOneAiSopJobStep(aiDeps, retrySuccessNow);
+  if (!retrySuccessOutcome.claimed || retrySuccessOutcome.status !== "ready") {
+    throw new Error(
+      "Retrying with a working provider did not let the previously failed job reach ready",
+    );
+  }
+
+  // Stuck-job recovery: a job whose lease expired (simulating a crashed invocation that claimed
+  // it but never finalized) must be reclaimable and able to keep making progress.
+  const stuckPath = await createAiDraftFixtureSop(
+    managerContext,
+    "AI Draft Stuck Fixture SOP",
+    "verify-phase20-stuck",
+  );
+  const stuckJob = await createVideoDraftJob(
+    managerContext,
+    stuckPath.sop.id,
+    { sourceFileId: stuckPath.video.id },
+    "verify-phase20-stuck-job-create",
+  );
+  const stuckClaimedAt = new Date();
+  await getDb()
+    .update(aiSopJobs)
+    .set({
+      status: "transcribing",
+      claimedAt: stuckClaimedAt,
+      leaseExpiresAt: new Date(stuckClaimedAt.getTime() - 1_000), // already expired
+      updatedAt: stuckClaimedAt,
+    })
+    .where(eq(aiSopJobs.id, stuckJob.job.id));
+  const recoveredOutcome = await advanceOneAiSopJobStep(
+    aiDeps,
+    new Date(stuckClaimedAt.getTime() + 2_000),
+  );
+  if (!recoveredOutcome.claimed || recoveredOutcome.jobId !== stuckJob.job.id) {
+    throw new Error("A job with an expired lease was not reclaimed by the next invocation");
+  }
+  const stuckDraftOutcome = await advanceOneAiSopJobStep(
+    aiDeps,
+    new Date(stuckClaimedAt.getTime() + 3_000),
+  );
+  if (!stuckDraftOutcome.claimed || stuckDraftOutcome.status !== "ready") {
+    throw new Error("A recovered job did not keep making progress through to ready");
+  }
+
+  // A job whose lease has NOT yet expired must not be claimable by a concurrent invocation — the
+  // inverse of the recovery case above, proving the lease actually prevents double-processing.
+  const activeLeasePath = await createAiDraftFixtureSop(
+    managerContext,
+    "AI Draft Active Lease Fixture SOP",
+    "verify-phase20-active-lease",
+  );
+  const activeLeaseJob = await createVideoDraftJob(
+    managerContext,
+    activeLeasePath.sop.id,
+    { sourceFileId: activeLeasePath.video.id },
+    "verify-phase20-active-lease-job-create",
+  );
+  const activeLeaseNow = new Date();
+  await getDb()
+    .update(aiSopJobs)
+    .set({
+      status: "transcribing",
+      claimedAt: activeLeaseNow,
+      leaseExpiresAt: new Date(activeLeaseNow.getTime() + 5 * 60_000), // still active
+      updatedAt: activeLeaseNow,
+    })
+    .where(eq(aiSopJobs.id, activeLeaseJob.job.id));
+  const shouldSkipOutcome = await advanceOneAiSopJobStep(aiDeps, activeLeaseNow);
+  if (shouldSkipOutcome.claimed && shouldSkipOutcome.jobId === activeLeaseJob.job.id) {
+    throw new Error("A job with an unexpired lease was claimed by a concurrent invocation");
+  }
+
+  // Org/location isolation: a Riverside-only manager must not be able to read, create, or retry
+  // an AI job belonging to a Downtown SOP.
+  let crossLocationReadBlocked = false;
+  try {
+    await getAiJob(riversideManagerContext, happyPath.sop.id, happyJob.job.id);
+  } catch {
+    crossLocationReadBlocked = true;
+  }
+  if (!crossLocationReadBlocked) {
+    throw new Error("A Riverside-only manager was able to read a Downtown SOP's AI job");
+  }
+  let crossLocationCreateBlocked = false;
+  try {
+    await createVideoDraftJob(
+      riversideManagerContext,
+      happyPath.sop.id,
+      { sourceFileId: happyPath.video.id },
+      "verify-phase20-cross-location-create",
+    );
+  } catch {
+    crossLocationCreateBlocked = true;
+  }
+  if (!crossLocationCreateBlocked) {
+    throw new Error("A Riverside-only manager was able to start an AI job for a Downtown SOP");
+  }
+  let crossLocationRetryBlocked = false;
+  try {
+    await retryAiJob(
+      riversideManagerContext,
+      malformedPath.sop.id,
+      malformedJob.job.id,
+      "verify-phase20-cross-location-retry",
+    );
+  } catch {
+    crossLocationRetryBlocked = true;
+  }
+  if (!crossLocationRetryBlocked) {
+    throw new Error("A Riverside-only manager was able to retry a Downtown SOP's AI job");
+  }
+
+  // The CRON_SECRET-protected cron endpoint: rejects a missing/wrong Authorization header with
+  // 401 before doing any work, and only proceeds once the header matches exactly.
+  const cronUrl = "http://localhost/api/cron/video-drafts";
+  const noAuthResponse = await videoDraftCronRoute(new Request(cronUrl));
+  if (noAuthResponse.status !== 401) {
+    throw new Error("The cron endpoint accepted a request with no Authorization header");
+  }
+  const wrongAuthResponse = await videoDraftCronRoute(
+    new Request(cronUrl, { headers: { authorization: "Bearer not-the-secret" } }),
+  );
+  if (wrongAuthResponse.status !== 401) {
+    throw new Error("The cron endpoint accepted a request with the wrong Authorization header");
+  }
+  // Every fixture job above is now terminal (ready or failed) except the still-actively-leased
+  // `activeLeaseJob`, whose unexpired lease keeps it unclaimable — so this authenticated call is
+  // guaranteed to find nothing to claim and never reaches a provider client.
+  const validAuthResponse = await videoDraftCronRoute(
+    new Request(cronUrl, { headers: { authorization: "Bearer verify-script-cron-secret" } }),
+  );
+  const validAuthBody = (await validAuthResponse.json()) as { data?: { claimed?: boolean } };
+  if (validAuthResponse.status !== 200 || validAuthBody.data?.claimed !== false) {
+    throw new Error(
+      "The cron endpoint did not authenticate a correct Authorization header and report no claimable job",
+    );
+  }
+
   await verifyUpgradeMigration();
 
+  // --- Phase 20 (in progress): SMS notification channel ---
+  // Only the SMS channel (alongside Phase 16's in-app/email channels) is built so far this tick;
+  // the video-to-draft AI workflow, its durable Vercel Cron job runner, and AI-assisted
+  // translation drafting remain open scope for a future tick. Maya Chen (employeeSeed[0]) is
+  // seeded with a phone number and SMS opted in, and the Phase 8/9 assignment fixture far above
+  // already assigned her a training.assigned notification, so this section proves the resulting
+  // `notification_deliveries` SMS row rather than re-deriving a new fixture, mirroring how the
+  // Phase 16 section above proves email delivery bookkeeping.
+  const mayaSmsDeliveryRows = await getDb()
+    .select({
+      status: notificationDeliveries.status,
+      errorCode: notificationDeliveries.errorCode,
+      recipientAddress: notificationDeliveries.recipientAddress,
+    })
+    .from(notificationDeliveries)
+    .innerJoin(
+      notifications,
+      and(
+        eq(notifications.id, notificationDeliveries.notificationId),
+        eq(notifications.organizationId, notificationDeliveries.organizationId),
+      ),
+    )
+    .where(
+      and(
+        eq(notificationDeliveries.organizationId, seedIds.organization),
+        eq(notificationDeliveries.channel, "sms"),
+        eq(notifications.recipientId, employeeSeed[0].id),
+      ),
+    );
+  if (mayaSmsDeliveryRows.length === 0) {
+    throw new Error("An SMS-opted-in employee's notification never attempted an SMS delivery");
+  }
+  if (
+    mayaSmsDeliveryRows.some(
+      (row) => row.status !== "skipped" || row.errorCode !== "twilio_not_configured",
+    )
+  ) {
+    throw new Error(
+      "An SMS delivery attempt in a Twilio-less environment was not recorded as safely skipped",
+    );
+  }
+  if (mayaSmsDeliveryRows.some((row) => row.recipientAddress !== employeeSeed[0].phone)) {
+    throw new Error("The SMS delivery attempt did not record the employee's own phone number");
+  }
+
+  // An employee with no SMS opt-in never gets an SMS delivery attempt at all — not even a
+  // skipped one — even though they received notifications of the exact same types above. Riley
+  // Reportee (the Phase 14/16 report-path fixture) has no phone number and no opt-in.
+  const noOptInSmsDeliveryRows = await getDb()
+    .select({ id: notificationDeliveries.id })
+    .from(notificationDeliveries)
+    .innerJoin(
+      notifications,
+      and(
+        eq(notifications.id, notificationDeliveries.notificationId),
+        eq(notifications.organizationId, notificationDeliveries.organizationId),
+      ),
+    )
+    .where(
+      and(
+        eq(notificationDeliveries.organizationId, seedIds.organization),
+        eq(notificationDeliveries.channel, "sms"),
+        eq(notifications.recipientId, reportPathEmployee.id),
+      ),
+    );
+  if (noOptInSmsDeliveryRows.length !== 0) {
+    throw new Error("An employee with no SMS opt-in still received an SMS delivery attempt");
+  }
+
+  // Phone/SMS opt-in round-trip through the same createEmployee/updateEmployee/getEmployee path
+  // every other employee field already uses, proving the new columns persist and can be toggled
+  // off again without touching any other profile field.
+  const smsFixtureEmployee = await createEmployee(managerContext, {
+    primaryLocationId: seedIds.locations.downtown,
+    employeeNumber: "9120",
+    displayName: "Casey Textable",
+    jobRole: "Cook",
+    language: "en",
+    pin: "9120",
+    status: "active",
+    phone: "+15555550199",
+    smsOptIn: true,
+  });
+  if (smsFixtureEmployee.phone !== "+15555550199" || smsFixtureEmployee.smsOptIn !== true) {
+    throw new Error("createEmployee did not persist the phone number and SMS opt-in");
+  }
+  const smsFixtureAfterOptOut = await updateEmployee(managerContext, smsFixtureEmployee.id, {
+    primaryLocationId: seedIds.locations.downtown,
+    employeeNumber: "9120",
+    displayName: "Casey Textable",
+    jobRole: "Cook",
+    language: "en",
+    status: "active",
+    phone: "+15555550199",
+    smsOptIn: false,
+  });
+  if (smsFixtureAfterOptOut.smsOptIn !== false || smsFixtureAfterOptOut.phone !== "+15555550199") {
+    throw new Error("updateEmployee did not persist an SMS opt-out while keeping the phone number");
+  }
+
   process.stdout.write(
-    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, migrationConcurrencyLock: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true, employeeStationReader: true, employeeSopReader: true, employeeCategoryLibrary: true, employeeRecentViews: true, employeeMediaAuthorization: true, qrCreationAndTargetValidation: true, qrLocationScoping: true, qrRevocation: true, qrRotation: true, qrScanResolution: true, qrUnavailableTarget: true, qrEnumerationRateLimit: true, trainingConfigDefaultsAndScoping: true, trainingConfigStaleWriteRejection: true, trainingStepRequirementGuards: true, trainingQuestionCrudAndReorder: true, trainingPublishReadinessRules: true, trainingPublishedImmutability: true, trainingDraftCloning: true, trainingAssignmentCreationAndScoping: true, trainingSessionStartAndResume: true, trainingSequentialStepEnforcement: true, trainingWatchTimerQuestionEvidenceEnforcement: true, trainingDuplicateActionRejection: true, trainingScoringAndApprovalRouting: true, trainingSubmitIdempotency: true, trainingAttemptLimitsAndRetraining: true, bulkAssignmentAuthorizationScoping: true, bulkAssignmentByEmployeeListWithDueDate: true, bulkAssignmentByJobRole: true, bulkAssignmentByLocation: true, bulkAssignmentIndependentDuplicateSkip: true, approvalQueueLocationScoping: true, approvalEvidenceAuthorization: true, approvalDecisionNoteRules: true, approvalApprovedDecision: true, approvalRejectedDecision: true, approvalCorrectionRequest: true, approvalDecisionImmutability: true, correctionOwnershipEnforcement: true, correctionAppendOnlyEvidence: true, correctionResubmitIdempotency: true, approvalDecisionHistoryRetention: true, trainingPathAuthorizationScoping: true, trainingPathItemValidation: true, trainingPathOrderedBlocking: true, qualificationAward: true, qualificationRenewal: true, qualificationOverviewClassification: true, qualificationEmployeeView: true, qualificationRevocation: true, trainingPathArchiveStopsAwards: true, checklistAuthorizationScoping: true, checklistDuplicateTitleRejection: true, checklistRunStartAndResume: true, checklistAutoRequirementGuardsManualTick: true, checklistTimerPhotoNoteEnforcement: true, checklistSubmitRequiresAllRequiredItems: true, checklistDuplicateOccurrencePrevention: true, checklistApprovalRouting: true, checklistApprovalUnauthorizedRejection: true, checklistCorrectionRequestAndResubmit: true, checklistCorrectionResubmitIdempotency: true, checklistApprovalDecisionCompletesRun: true, checklistSubmitIdempotency: true, checklistRunListLocationScoping: true, checklistItemRemovalDisablesRatherThanDeletes: true, checklistHistoricalRunRetainsRemovedItem: true, translationMatrixExcludesProtectedFields: true, translationLocationScoping: true, translationEntityOwnershipGuard: true, translationEmptyApprovalRejected: true, translationEditResetsApproval: true, translationStaleSourceDetection: true, translationEmployeeLocaleSwitchPreservesProtectedFields: true, translationUnapprovedFallsBackToOriginal: true, domainEventEmissionCoverage: true, activityFeedLocationScoping: true, activityFeedTypeFilterAndPagination: true, trainingProgressReportFilteringAndScoping: true, qualificationsReportFilteringAndPagination: true, checklistCompletionReportFilteringAndScoping: true, sopVersionHistoryReportFilteringAndScoping: true, approvalHistoryReportUnionAndScoping: true, sopVersionPrintRecordFidelity: true, sopVersionPrintDraftRejection: true, sopVersionPrintLocationScoping: true, trainingSessionPrintRecordFidelity: true, trainingSessionPrintLocationScoping: true, printPdfGeneration: true, printPdfTextFidelity: true, csvExportRowFidelity: true, csvExportFormulaInjectionDefusing: true, notificationDomainEventCoverage: true, notificationNonNotificationTypesExcluded: true, notificationSynchronousDispatch: true, notificationEmployeeInbox: true, notificationMarkReadIdempotencyAndScoping: true, notificationManagerInboxAndLocationScoping: true, notificationDisabledEmployeeSuppression: true, notificationDisabledManagerSuppression: true, notificationDedupeKeyRetryIdempotency: true, notificationPendingEventReconcile: true, notificationEmailSkippedWithoutSmtp: true, notificationTimeBasedDueSoonAndOverdue: true, notificationTimeBasedExpiringSoon: true, notificationTimeReconcileSameDayGuard: true, notificationTimeReconcileTimezoneBoundary: true, mediaSignatureValidation: true, mediaManagerAuthoredLocationScoping: true, pwaManifestConfiguration: true, healthCheckLiveDatabase: true })}\n`,
+    `Database, authentication, and management verified: ${JSON.stringify({ ...counts, managerLogin: true, employeeLogin: true, sessionExpiry: true, passwordReset: true, pinReset: true, disabledAccount: true, lastOwnerProtection: true, locationRestriction: true, tenantIsolation: true, lockout: true, upgradeMigration: true, migrationConcurrencyLock: true, organizationSettings: true, locationManagement: true, stationManagement: true, employeeManagement: true, employeeSearch: true, managerAssignments: true, sopDraftAutosave: true, sopStaleWriteRejection: true, sopStepCrudAndReorder: true, sopPublishValidation: true, sopPublishedImmutability: true, sopArchive: true, sopLibraryFiltersAndPagination: true, mediaUploadValidation: true, mediaIncompleteUploadBlocksPublish: true, sopVersionImmutability: true, sopDraftCloning: true, sopVersionHistory: true, sopVersionComparison: true, sopVersionRestoration: true, sopRetrainingRules: true, sopStableCurrentVersionResolution: true, employeeStationReader: true, employeeSopReader: true, employeeCategoryLibrary: true, employeeRecentViews: true, employeeMediaAuthorization: true, qrCreationAndTargetValidation: true, qrLocationScoping: true, qrRevocation: true, qrRotation: true, qrScanResolution: true, qrUnavailableTarget: true, qrEnumerationRateLimit: true, trainingConfigDefaultsAndScoping: true, trainingConfigStaleWriteRejection: true, trainingStepRequirementGuards: true, trainingQuestionCrudAndReorder: true, trainingPublishReadinessRules: true, trainingPublishedImmutability: true, trainingDraftCloning: true, trainingAssignmentCreationAndScoping: true, trainingSessionStartAndResume: true, trainingSequentialStepEnforcement: true, trainingWatchTimerQuestionEvidenceEnforcement: true, trainingDuplicateActionRejection: true, trainingScoringAndApprovalRouting: true, trainingSubmitIdempotency: true, trainingAttemptLimitsAndRetraining: true, bulkAssignmentAuthorizationScoping: true, bulkAssignmentByEmployeeListWithDueDate: true, bulkAssignmentByJobRole: true, bulkAssignmentByLocation: true, bulkAssignmentIndependentDuplicateSkip: true, approvalQueueLocationScoping: true, approvalEvidenceAuthorization: true, approvalDecisionNoteRules: true, approvalApprovedDecision: true, approvalRejectedDecision: true, approvalCorrectionRequest: true, approvalDecisionImmutability: true, correctionOwnershipEnforcement: true, correctionAppendOnlyEvidence: true, correctionResubmitIdempotency: true, approvalDecisionHistoryRetention: true, trainingPathAuthorizationScoping: true, trainingPathItemValidation: true, trainingPathOrderedBlocking: true, qualificationAward: true, qualificationRenewal: true, qualificationOverviewClassification: true, qualificationEmployeeView: true, qualificationRevocation: true, trainingPathArchiveStopsAwards: true, checklistAuthorizationScoping: true, checklistDuplicateTitleRejection: true, checklistRunStartAndResume: true, checklistAutoRequirementGuardsManualTick: true, checklistTimerPhotoNoteEnforcement: true, checklistSubmitRequiresAllRequiredItems: true, checklistDuplicateOccurrencePrevention: true, checklistApprovalRouting: true, checklistApprovalUnauthorizedRejection: true, checklistCorrectionRequestAndResubmit: true, checklistCorrectionResubmitIdempotency: true, checklistApprovalDecisionCompletesRun: true, checklistSubmitIdempotency: true, checklistRunListLocationScoping: true, checklistItemRemovalDisablesRatherThanDeletes: true, checklistHistoricalRunRetainsRemovedItem: true, translationMatrixExcludesProtectedFields: true, translationLocationScoping: true, translationEntityOwnershipGuard: true, translationEmptyApprovalRejected: true, translationEditResetsApproval: true, translationStaleSourceDetection: true, translationEmployeeLocaleSwitchPreservesProtectedFields: true, translationUnapprovedFallsBackToOriginal: true, aiTranslationDraftLocationScoping: true, aiTranslationDraftLandsAsPendingReview: true, aiTranslationDraftSchemaRejection: true, aiTranslationDraftProviderFailureRejection: true, aiTranslationDraftNeverOverwritesApproved: true, aiTranslationDraftFlowsThroughNormalApproval: true, aiTranslationManualEntryUnaffected: true, aiTranslationManualEditReclaimsProvider: true, domainEventEmissionCoverage: true, activityFeedLocationScoping: true, activityFeedTypeFilterAndPagination: true, trainingProgressReportFilteringAndScoping: true, qualificationsReportFilteringAndPagination: true, checklistCompletionReportFilteringAndScoping: true, sopVersionHistoryReportFilteringAndScoping: true, approvalHistoryReportUnionAndScoping: true, sopVersionPrintRecordFidelity: true, sopVersionPrintDraftRejection: true, sopVersionPrintLocationScoping: true, trainingSessionPrintRecordFidelity: true, trainingSessionPrintLocationScoping: true, printPdfGeneration: true, printPdfTextFidelity: true, csvExportRowFidelity: true, csvExportFormulaInjectionDefusing: true, notificationDomainEventCoverage: true, notificationNonNotificationTypesExcluded: true, notificationSynchronousDispatch: true, notificationEmployeeInbox: true, notificationMarkReadIdempotencyAndScoping: true, notificationManagerInboxAndLocationScoping: true, notificationDisabledEmployeeSuppression: true, notificationDisabledManagerSuppression: true, notificationDedupeKeyRetryIdempotency: true, notificationPendingEventReconcile: true, notificationEmailSkippedWithoutSmtp: true, notificationTimeBasedDueSoonAndOverdue: true, notificationTimeBasedExpiringSoon: true, notificationTimeReconcileSameDayGuard: true, notificationTimeReconcileTimezoneBoundary: true, mediaSignatureValidation: true, mediaManagerAuthoredLocationScoping: true, pwaManifestConfiguration: true, healthCheckLiveDatabase: true, notificationSmsSkippedWithoutTwilio: true, notificationSmsRequiresOptIn: true, employeePhoneAndSmsOptInPersistence: true, aiJobLifecycleUploadToReady: true, aiJobNeverAutoPublishes: true, aiJobApplyToDraft: true, aiJobDoubleApplyRejected: true, aiJobSingleStepRegeneration: true, aiJobDoubleDismissRejected: true, aiJobSchemaRejectionEventuallyFails: true, aiJobManualFallbackAfterFailure: true, aiJobRetryResumesFailedStepPreservingTranscript: true, aiJobStuckLeaseRecovery: true, aiJobActiveLeaseNotDoubleClaimed: true, aiJobLocationScoping: true, cronEndpointAuthGuard: true })}\n`,
   );
 }
 

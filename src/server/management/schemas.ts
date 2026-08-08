@@ -61,7 +61,33 @@ export const stationCreateSchema = z.object({
 
 export const stationUpdateSchema = stationCreateSchema;
 
-export const employeeCreateSchema = z.object({
+// Phase 20: employees have no email column, so a phone number is their only external
+// notification destination. Empty string means "no phone on file"; smsOptIn defaults false so
+// adding a phone number alone never starts sending messages without an explicit opt-in.
+const employeePhone = z
+  .union([
+    z.literal(""),
+    z
+      .string()
+      .trim()
+      .regex(/^\+[1-9]\d{1,14}$/, "Use E.164 format, e.g. +15551234567."),
+  ])
+  .default("");
+
+function requirePhoneForSmsOptIn(
+  value: { phone: string; smsOptIn: boolean },
+  context: z.RefinementCtx,
+): void {
+  if (value.smsOptIn && !value.phone) {
+    context.addIssue({
+      code: "custom",
+      path: ["smsOptIn"],
+      message: "A phone number is required to opt an employee into SMS.",
+    });
+  }
+}
+
+const employeeCreateShape = z.object({
   primaryLocationId: z.uuid(),
   employeeNumber: z.string().trim().min(1).max(40),
   displayName: name,
@@ -69,9 +95,15 @@ export const employeeCreateSchema = z.object({
   language,
   pin: z.string().regex(/^\d{4}$/, "PIN must contain exactly four digits."),
   status: status.default("active"),
+  phone: employeePhone,
+  smsOptIn: z.boolean().default(false),
 });
 
-export const employeeUpdateSchema = employeeCreateSchema.omit({ pin: true });
+export const employeeCreateSchema = employeeCreateShape.superRefine(requirePhoneForSmsOptIn);
+
+export const employeeUpdateSchema = employeeCreateShape
+  .omit({ pin: true })
+  .superRefine(requirePhoneForSmsOptIn);
 
 export const employeeQuerySchema = z.object({
   search: z.string().trim().max(120).default(""),

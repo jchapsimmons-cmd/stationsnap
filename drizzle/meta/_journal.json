@@ -113,6 +113,20 @@
       "when": 1785905986032,
       "tag": "0015_exotic_kulan_gath",
       "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1786203601432,
+      "tag": "0016_special_nuke",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1786204996173,
+      "tag": "0017_rare_blockbuster",
+      "breakpoints": true
     }
   ]
 }
